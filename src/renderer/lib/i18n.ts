@@ -6,7 +6,7 @@ export type Locale = "en" | "zh";
 const STORAGE_KEY = "lotion.locale";
 
 const EN = {
-  "sidebar.search": "Search pages, databases, and rows",
+  "sidebar.search": "Search",
   "sidebar.searchResults": "Search results",
   "sidebar.searching": "Searching...",
   "sidebar.noSearchResults": "No matches",
@@ -186,6 +186,9 @@ const EN = {
   "page.viewPickerNoViews": "No saved views",
   "page.viewPickerInsert": "Insert view",
   "page.actions": "Page actions",
+  "page.addIcon": "Add icon",
+  "page.addCover": "Add cover",
+  "page.setIcon": "Change icon",
   "page.options": "Page options",
   "page.favorite": "Add to favorites",
   "page.unfavorite": "Remove from favorites",
@@ -257,7 +260,7 @@ const EN = {
 export type TranslationKey = keyof typeof EN;
 
 const ZH: Record<TranslationKey, string> = {
-  "sidebar.search": "搜索页面、数据库和行",
+  "sidebar.search": "搜索",
   "sidebar.searchResults": "搜索结果",
   "sidebar.searching": "搜索中...",
   "sidebar.noSearchResults": "没有匹配",
@@ -437,6 +440,9 @@ const ZH: Record<TranslationKey, string> = {
   "page.viewPickerNoViews": "没有保存的视图",
   "page.viewPickerInsert": "插入视图",
   "page.actions": "页面操作",
+  "page.addIcon": "添加图标",
+  "page.addCover": "添加封面",
+  "page.setIcon": "更换图标",
   "page.options": "页面选项",
   "page.favorite": "收藏",
   "page.unfavorite": "取消收藏",

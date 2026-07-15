@@ -17,7 +17,7 @@ import { CodeMirrorMarkdownEditor, type CodeMirrorMarkdownEditorHandle, type Mar
 import { EntityIcon } from "../../components/EntityIcon";
 import { CoverArea } from "./CoverArea";
 import { PageLayout } from "./PageLayout";
-import { ArrowUpRight, CaseSensitive, History, Maximize2, MoreHorizontal, Star } from "lucide-react";
+import { ArrowUpRight, CaseSensitive, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus, Star } from "lucide-react";
 import { useDatabaseCache } from "../../context/database-cache";
 import { ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { pluginHost } from "../../plugin-host";
@@ -482,19 +482,27 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const headerSlot = (
     <>
       <div className="page-icon-row">
-        <button
-          type="button"
-          className="page-icon-button page-icon-button-large"
-          onClick={onPickIcon}
-          disabled={!onPickIcon}
-          title="Set icon"
-          aria-label="Set page icon"
-        >
-          <EntityIcon kind="page" icon={page.meta.icon} size={56} />
-        </button>
+        {page.meta.icon ? (
+          <button
+            type="button"
+            className="page-icon-button page-icon-button-large"
+            onClick={onPickIcon}
+            disabled={!onPickIcon}
+            title={t("page.setIcon")}
+            aria-label={t("page.setIcon")}
+          >
+            <EntityIcon kind="page" icon={page.meta.icon} size={64} />
+          </button>
+        ) : onPickIcon ? (
+          <button type="button" className="page-header-addition page-add-icon" onClick={onPickIcon}>
+            <SmilePlus size={14} strokeWidth={1.8} />
+            <span>{t("page.addIcon")}</span>
+          </button>
+        ) : null}
         {onPickCover && !page.meta.cover && (
-          <button type="button" className="page-add-cover" onClick={onPickCover}>
-            添加封面
+          <button type="button" className="page-header-addition page-add-cover" onClick={onPickCover}>
+            <ImagePlus size={14} strokeWidth={1.8} />
+            <span>{t("page.addCover")}</span>
           </button>
         )}
       </div>

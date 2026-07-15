@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowUpRight, RefreshCw } from "lucide-react";
+import { ArrowUpRight, ImagePlus, RefreshCw, SmilePlus } from "lucide-react";
 import type { DatabaseBundle, FieldSchema, TableView } from "../../../shared/types";
 import type { DatabaseViewProvider } from "../../../shared/plugin-api";
 import { EntityIcon } from "../../components/EntityIcon";
@@ -84,19 +84,27 @@ export function StandaloneDatabaseHeader({
       )}
       <div className="page-header">
         <div className="page-icon-row">
-          <button
-            type="button"
-            className="page-icon-button page-icon-button-large"
-            onClick={onPickIcon}
-            disabled={!onPickIcon}
-            title="Set database icon"
-            aria-label="Set database icon"
-          >
-            <EntityIcon kind="database" icon={bundle.schema.icon} size={56} />
-          </button>
+          {bundle.schema.icon ? (
+            <button
+              type="button"
+              className="page-icon-button page-icon-button-large"
+              onClick={onPickIcon}
+              disabled={!onPickIcon}
+              title={t("page.setIcon")}
+              aria-label={t("page.setIcon")}
+            >
+              <EntityIcon kind="database" icon={bundle.schema.icon} size={64} />
+            </button>
+          ) : onPickIcon ? (
+            <button type="button" className="page-header-addition page-add-icon" onClick={onPickIcon}>
+              <SmilePlus size={14} strokeWidth={1.8} />
+              <span>{t("page.addIcon")}</span>
+            </button>
+          ) : null}
           {onPickCover && !bundle.schema.cover && (
-            <button type="button" className="page-add-cover" onClick={onPickCover}>
-              添加封面
+            <button type="button" className="page-header-addition page-add-cover" onClick={onPickCover}>
+              <ImagePlus size={14} strokeWidth={1.8} />
+              <span>{t("page.addCover")}</span>
             </button>
           )}
         </div>

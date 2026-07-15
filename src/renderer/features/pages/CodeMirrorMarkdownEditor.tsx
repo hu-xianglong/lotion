@@ -152,6 +152,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
   // Compartments let us swap extensions in/out without tearing down
   // the editor (which would lose undo history + cursor position).
   const vimCompartment = useRef(new Compartment());
+  const lineNumbersCompartment = useRef(new Compartment());
   const decorationsCompartment = useRef(new Compartment());
   const embedSourceCompartment = useRef(new Compartment());
 
@@ -254,7 +255,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
         // vim must come early — it owns the keymap and would otherwise
         // be shadowed by defaultKeymap.
         vimCompartment.current.of(vimMode ? vim() : []),
-        lineNumbers(),
+        lineNumbersCompartment.current.of(rawMarkdown ? lineNumbers() : []),
         highlightActiveLine(),
         highlightSpecialChars(),
         history(),
@@ -388,7 +389,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: decorationsCompartment.current.reconfigure(markdownDecorationsEnabledFacet.of(!rawMarkdown))
+      effects: [
+        decorationsCompartment.current.reconfigure(markdownDecorationsEnabledFacet.of(!rawMarkdown)),
+        lineNumbersCompartment.current.reconfigure(rawMarkdown ? lineNumbers() : [])
+      ]
     });
   }, [rawMarkdown]);
 

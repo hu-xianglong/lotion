@@ -85,7 +85,19 @@ new reusable primitive.
 - Primary controls must remain visible and keyboard focusable on desktop and
   compact viewports.
 - App shell chrome should read as one system: `--sand` for sidebar/tab strip,
-  `--paper` for the editor canvas, and `--accent` only for the active trail.
+  `--paper` for the editor canvas, neutral fills for the active trail, and
+  `--accent` for focus, links, and primary commands.
+- Keep document content on one vertical baseline. Page icon actions,
+  breadcrumbs, titles, properties, secondary details, and the editor body must
+  share the same content inset without nested padding offsets.
+- Do not manufacture a large fallback icon when an entity has no custom icon.
+  Offer quiet add-icon/add-cover actions and let the document title lead.
+- Use entity icons in compact tabs instead of translated type badges. The tab
+  title or accessible label can retain the full entity type.
+- Normal rich editing hides source-only chrome such as line-number gutters.
+  Raw Markdown mode may restore those affordances because source is the task.
+- Sidebar active rows use a neutral selected surface. Reserve the accent for
+  keyboard focus, links, and commands instead of outlining every current item.
 
 ## State Patterns
 

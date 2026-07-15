@@ -301,7 +301,7 @@ function testPageEditorEmptyPrompt(html) {
   assert.match(html, /value="Empty Shell"/, "empty page editor should render the title input value");
   assert.match(html, /Workspace/, "empty page editor should render path context");
   assert.match(html, /aria-label="Page actions"/, "empty page editor should render the action bar");
-  assert.match(html, /aria-label="Set page icon"/, "empty page editor should expose the icon picker slot");
+  assert.match(html, /aria-label="Change icon"/, "empty page editor should expose the localized icon picker slot");
   assert.match(html, /class="empty-page-prompt"/, "empty page editor should render the empty-page prompt");
   assert.match(html, /Press Enter to continue with an empty page/, "empty prompt helper should render");
   assert.match(html, /Daily template/, "empty prompt should render supplied templates");
@@ -367,7 +367,7 @@ function testPageBacklinksPanel(html) {
   assert.match(html, /Workspace \/ Tasks/, "row backlink path should render database context");
   assert.match(html, /Property · Tasks · Related/, "property backlink context should include database and field names");
   assert.match(html, /Target is linked from a relation field/, "property backlink excerpt should render");
-  assert.match(html, /aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee Investigation/, "long imported backlink title should render");
+  assert.match(html, /2fd622e5-6282-47b7-aada-19390aaae913 Investigation/, "long imported backlink title should render");
   assert.match(html, /Property · pages · Parent entity/, "long imported property backlink context should render");
   assert.match(html, /entity-icon-emoji[^>]*>📘</, "page backlink icon should render");
   assert.match(html, /entity-icon-emoji[^>]*>✅</, "row backlink icon should render");
@@ -737,12 +737,12 @@ function testTabStrip(html) {
   assert.match(html, /class="tab-strip"/, "tab strip should render");
   assert.equal(count(html, 'draggable="true"'), 5, "tab strip should render all open tabs");
   assert.match(html, /class="tab active"/, "active tab should be marked");
-  assert.equal(count(html, 'class="tab-type"'), 3, "entity tabs should render type badges without duplicating management labels");
-  assert.match(html, /<span class="tab-type">页面<\/span><span class="tab-label">Home Page<\/span>/, "page tab should render a page type and page title");
-  assert.match(html, /<span class="tab-type">数据库<\/span><span class="tab-label">Daily Habits<\/span>/, "database tab should render database type and name");
-  assert.match(html, /<span class="tab-type">页面<\/span><span class="tab-label">Daily Habits\/2026\/06\/12 Review<\/span>/, "row page tab should render database context and row title");
+  assert.equal(count(html, 'class="tab-icon"'), 3, "entity tabs should render compact entity icons");
+  assert.match(html, /class="tab-icon"[\s\S]*class="tab-label">Home Page<\/span>/, "page tab should render an icon and page title");
+  assert.match(html, /class="tab-icon"[\s\S]*class="tab-label">Daily Habits<\/span>/, "database tab should render an icon and database name");
+  assert.match(html, /class="tab-icon"[\s\S]*class="tab-label">Daily Habits\/2026\/06\/12 Review<\/span>/, "row page tab should render an icon, database context, and row title");
   assert.match(html, /<span class="tab-label">所有页面<\/span>/, "management tab should render management label");
-  assert.doesNotMatch(html, /<span class="tab-type">管理<\/span>/, "management tab should not duplicate the management type label");
+  assert.doesNotMatch(html, /class="tab-type"/, "tabs should not render translated type badges");
   assert.match(html, /<span class="tab-label">新标签页<\/span>/, "blank tab should render the new-tab label");
   assert.doesNotMatch(html, /row_today/, "tab labels should not expose raw row ids");
   assert.equal(count(html, 'class="tab-pop-out"'), 4, "tabs with active items should expose pop-out actions");
@@ -763,7 +763,8 @@ function testSearchBox(html) {
   assert.match(html, /<button/, "search entry should render as a button");
   assert.match(html, /type="button"/, "search entry should not default to submit behavior");
   assert.match(html, /class="search-box search-box-button"/, "search entry should render stable sidebar search classes");
-  assert.match(html, />Search pages, databases, and rows<\/button>/, "search entry should render the localized search label");
+  assert.match(html, /class="search-box-label">Search<\/span>/, "search entry should render the concise localized search label");
+  assert.match(html, /class="search-box-shortcut">⌘K<\/kbd>/, "search entry should expose its keyboard shortcut");
   assert.doesNotMatch(html, /<input/, "search entry should not render an editable input before the global panel opens");
 }
 
@@ -771,7 +772,7 @@ function testSidebarShell(html) {
   assert.match(html, /class="sidebar"/, "sidebar shell should render");
   assert.match(html, /class="workspace-selector"/, "workspace selector should render");
   assert.match(html, /Renderer Workspace/, "workspace name should render");
-  assert.match(html, />Search pages, databases, and rows<\/button>/, "sidebar search entry should render");
+  assert.match(html, /class="search-box-label">Search<\/span>/, "sidebar search entry should render");
   assert.match(html, />Recent</, "recent section should render");
   assert.match(html, /Weekly Review/, "recent page title should render");
   assert.match(html, /Daily Habits/, "recent database title should render");
@@ -835,11 +836,11 @@ function testStartupLoadingScreen(html) {
 
 function testStandaloneDatabaseHeader(html) {
   assert.match(html, /class="page-header"/, "standalone database header should render");
-  assert.match(html, /aria-label="Set database icon"/, "database icon picker should be accessible");
+  assert.match(html, /aria-label="Change icon"/, "database icon picker should use the localized accessible label");
   assert.match(html, /Project Tracker/, "database title should render");
   assert.match(html, /Workspace \/ Operations/, "database path subtitle should render");
   assert.match(html, /3 fields · 2 rows/, "database subtitle should include visible field and row counts");
-  assert.match(html, />添加封面<\/button>/, "cover affordance should render when no cover is set");
+  assert.match(html, /class="page-header-addition page-add-cover"[\s\S]*Add cover/, "localized cover affordance should render when no cover is set");
   assert.match(html, /class="database-open-window"/, "open-in-new-window affordance should render");
   assert.match(html, /aria-label="Open in new window"/, "open-in-new-window affordance should be labelled");
 }
@@ -2435,17 +2436,17 @@ function rendererComponentEntry() {
               source: {
                 entityId: "pg_long_backlink",
                 kind: "page",
-                title: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee Investigation",
+                title: "2fd622e5-6282-47b7-aada-19390aaae913 Investigation",
                 path: [
                   "数据库",
                   "工作事项",
-                  "Example Campaign Banner Issue",
-                  "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee Investigation"
+                  "Campaign Doesn't Show up in Banner",
+                  "2fd622e5-6282-47b7-aada-19390aaae913 Investigation"
                 ]
               },
               databaseName: "pages",
               fieldName: "Parent entity",
-              excerpt: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee Investigation"
+              excerpt: "2fd622e5-6282-47b7-aada-19390aaae913 Investigation"
             }
           ],
           onOpenEntity: () => {}

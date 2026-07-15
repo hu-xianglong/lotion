@@ -1,5 +1,3 @@
-document.documentElement.classList.add("js");
-
 const menuButton = document.querySelector(".menu-button");
 const siteNav = document.querySelector(".site-nav");
 
@@ -38,7 +36,7 @@ for (const tab of viewerTabs) {
       if (captionTitle) captionTitle.textContent = tab.dataset.title ?? "";
       if (captionCopy) captionCopy.textContent = tab.dataset.copy ?? "";
       productImage.addEventListener("load", () => productImage.classList.remove("is-changing"), { once: true });
-    }, 90);
+    }, 80);
   });
 }
 
@@ -60,22 +58,6 @@ copyButton?.addEventListener("click", async () => {
     copyButton.textContent = "Select text";
   }
 });
-
-const revealTargets = Array.from(document.querySelectorAll(".reveal"));
-
-if ("IntersectionObserver" in window) {
-  const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      entry.target.classList.add("is-visible");
-      observer.unobserve(entry.target);
-    }
-  }, { rootMargin: "0px 0px -8%", threshold: 0.08 });
-
-  for (const target of revealTargets) observer.observe(target);
-} else {
-  for (const target of revealTargets) target.classList.add("is-visible");
-}
 
 const year = document.querySelector("#current-year");
 if (year) year.textContent = String(new Date().getFullYear());

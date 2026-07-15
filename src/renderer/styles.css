@@ -49,10 +49,11 @@
   --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 48px; --s-9: 64px;
 
   /* ── Page layout ────────────────────────────────────────────── */
+  --sidebar-width: 248px;
   --page-content-width: 760px;
   --page-preload-width: 920px;
   --page-gutter-x: 24px;
-  --page-header-top: 64px;
+  --page-header-top: 48px;
   --page-full-inset: clamp(72px, 6vw, 112px);
   --page-full-editor-offset: max(8px, calc(var(--page-full-inset) - 64px));
   --page-full-toc-width: 320px;
@@ -302,18 +303,16 @@ body,
 
   .cm-editor > .cm-md-floating-toc-host .cm-md-toc-toggle {
     position: absolute;
-    top: 50%;
-    right: -16px;
+    top: 0;
+    right: 0;
     z-index: 2;
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--rule-strong);
-    border-radius: 999px;
-    background: var(--paper);
-    box-shadow: var(--shadow-2);
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: var(--r-2);
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
     color: var(--ink-2);
-    font-size: 22px;
-    transform: translateY(-50%);
+    font-size: 18px;
   }
 
   .cm-editor > .cm-md-floating-toc-host .cm-md-toc-toggle:hover {
@@ -386,18 +385,16 @@ body,
 
 .cm-editor > .cm-md-floating-toc-host .cm-md-toc-toggle {
   position: absolute;
-  top: 50%;
-  right: -16px;
+  top: 0;
+  right: 0;
   z-index: 2;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--rule-strong);
-  border-radius: 999px;
-  background: var(--paper);
-  box-shadow: var(--shadow-2);
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
   color: var(--ink-2);
-  font-size: 22px;
-  transform: translateY(-50%);
+  font-size: 18px;
 }
 
 .cm-editor > .cm-md-floating-toc-host .cm-md-toc-toggle:hover,
@@ -4117,7 +4114,7 @@ button:disabled {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   height: 100vh;
   position: relative;
   background: var(--sand);
@@ -4130,43 +4127,41 @@ button:disabled {
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  border-right: 1px solid var(--rule-strong);
+  gap: 6px;
+  border-right: 1px solid var(--rule);
   background: var(--sand);
-  padding: 10px 8px 8px;
+  padding: 8px 6px 6px;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .sidebar-collapse-toggle {
   position: absolute;
-  left: 260px;
-  top: 50%;
+  left: calc(var(--sidebar-width) - 34px);
+  top: 8px;
   z-index: 40;
   width: 28px;
-  height: 42px;
+  height: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--rule-strong);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--paper) 92%, var(--sand));
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
   color: var(--ink-3);
-  box-shadow: var(--shadow-1);
   cursor: pointer;
-  transform: translate(-50%, -50%);
 }
 
 .sidebar-collapse-toggle:hover {
-  border-color: var(--accent);
-  background: var(--paper);
+  background: var(--vellum);
   color: var(--ink-1);
-  box-shadow: var(--shadow-2);
 }
 
 .app-shell.sidebar-collapsed .sidebar-collapse-toggle {
-  left: 14px;
+  left: 8px;
+  background: color-mix(in srgb, var(--paper) 90%, transparent);
+  box-shadow: var(--shadow-1);
 }
 
 .sidebar-collapse-toggle svg {
@@ -4184,8 +4179,9 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 30px;
-  font-weight: 700;
+  min-height: 32px;
+  padding-right: 28px;
+  font-weight: 650;
 }
 
 .nav-history {
@@ -4194,16 +4190,16 @@ button:disabled {
 }
 
 .nav-history-btn {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--rule-strong);
-  border-radius: 4px;
-  background: var(--paper);
-  color: var(--ink-2);
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--ink-3);
   cursor: pointer;
 }
 
@@ -5058,15 +5054,17 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 
 .page-icon-button-large {
   align-self: flex-start;
-  margin-bottom: 4px;
-  padding: 8px;
-  background: var(--vellum);
-  border: 1px solid var(--rule);
+  width: 72px;
+  height: 72px;
+  margin: 0 0 4px;
+  padding: 4px;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--r-3);
-  box-shadow: var(--shadow-1);
 }
 .page-icon-button-large:hover:not(:disabled) {
-  background: var(--kraft);
+  border-color: var(--rule);
+  background: var(--vellum);
 }
 
 .page-header {
@@ -5191,19 +5189,20 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 
 .page-icon-row {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
+  min-height: 30px;
+  align-items: center;
+  gap: 4px;
 }
 
 .page-path-label {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px;
   max-width: 100%;
-  margin: 10px 0 0;
+  margin: 2px 0 4px;
   color: var(--ink-4);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -5598,25 +5597,29 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   white-space: nowrap;
 }
 
-/* "添加封面" affordance — visible next to the icon when no cover set. */
-.page-add-cover {
+/* Quiet page setup actions replace the synthetic default icon tile. */
+.page-header-addition {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
   border: 0;
   background: transparent;
   color: var(--ink-3);
-  font-size: 13px;
-  padding: 6px 8px;
-  margin-bottom: 6px;
+  font: 500 12.5px/1 var(--font-ui);
+  padding: 5px 7px;
   border-radius: var(--r-2);
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
+  cursor: pointer;
 }
-.page-header:hover .page-add-cover { opacity: 1; }
-.page-add-cover:hover {
+.page-header:hover .page-header-addition { opacity: 1; }
+.page-header-addition:hover {
   background: var(--vellum);
   color: var(--ink-1);
 }
 
-.page-add-cover:focus-visible {
+.page-header-addition:focus-visible {
   background: var(--vellum);
   color: var(--ink-1);
   opacity: 1;
@@ -5777,11 +5780,12 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 
 .search-box {
   width: 100%;
-  border: 1px solid var(--rule-strong);
+  min-height: 30px;
+  border: 1px solid transparent;
   border-radius: var(--r-2);
-  padding: 5px 8px;
-  font-size: 12.5px;
-  background: var(--paper);
+  padding: 4px 7px;
+  font-size: 13px;
+  background: transparent;
   color: var(--ink-1);
 }
 .search-box::placeholder { color: var(--ink-4); }
@@ -5792,15 +5796,47 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 }
 
 .search-box-button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   text-align: left;
   color: var(--ink-4);
   cursor: pointer;
 }
 
 .search-box-button:hover {
-  border-color: var(--rule-strong);
-  color: var(--ink-3);
+  border-color: transparent;
+  background: var(--vellum);
+  color: var(--ink-2);
+}
+
+.search-box-content {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-box-content > svg,
+.search-box-content > .icon-accent-wrap {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.search-box-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-box-shortcut {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  font: 11px/1 var(--font-ui);
 }
 
 .sidebar-scroll {
@@ -5909,16 +5945,16 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 24px;
+  min-height: 28px;
   margin-top: 0;
-  padding: 3px 7px;
+  padding: 4px 7px;
   border-radius: var(--r-2);
   overflow: hidden;
   text-align: left;
   border: 1px solid transparent;
   background: transparent;
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: 13.5px;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
@@ -5974,15 +6010,15 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 }
 
 .nav-item.active {
-  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
-  background: color-mix(in srgb, var(--accent-soft) 72%, var(--paper));
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ink-1) 7%, transparent);
+  box-shadow: none;
   color: var(--ink-1);
   font-weight: 500;
 }
 
 .nav-item.active .nav-item-icon {
-  color: var(--accent);
+  color: var(--ink-2);
 }
 
 .nav-page-tree-row {
@@ -7243,7 +7279,7 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   margin-top: auto;
   padding: 7px 2px 2px;
   border-top: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--sand) 86%, var(--paper));
+  background: var(--sand);
 }
 
 .sidebar-quick-create {
@@ -7260,12 +7296,11 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   height: 30px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--rule-strong);
-  border-radius: 999px;
-  background: var(--paper);
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
   color: var(--ink-3);
   cursor: pointer;
-  box-shadow: var(--shadow-1);
 }
 
 .sidebar-quick-create-button svg {
@@ -7277,9 +7312,8 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 .sidebar-quick-create-button:hover,
 .sidebar-quick-create-button:focus-visible,
 .sidebar-quick-create-button.active {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--paper);
+  background: var(--vellum);
+  color: var(--ink-1);
   outline: none;
 }
 
@@ -7500,11 +7534,12 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 /* ── Tab strip (above main canvas) ─────────────────────────────── */
 .tab-strip {
   display: flex;
-  align-items: stretch;
-  gap: 1px;
+  min-height: 40px;
+  align-items: center;
+  gap: 3px;
   background: var(--sand);
   border-bottom: 1px solid var(--rule);
-  padding: 5px 8px 0;
+  padding: 5px 8px;
   overflow-x: auto;
   flex-shrink: 0;
 }
@@ -7513,13 +7548,12 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   align-items: center;
   gap: 6px;
   min-height: 30px;
-  padding: 5px 10px;
+  padding: 5px 8px;
   background: transparent;
   color: var(--ink-3);
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: var(--r-2) var(--r-2) 0 0;
-  font-size: 12px;
+  border: 0;
+  border-radius: var(--r-2);
+  font-size: 12.5px;
   cursor: pointer;
   max-width: 200px;
   overflow: hidden;
@@ -7537,15 +7571,7 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 .tab.active {
   background: var(--paper);
   color: var(--ink-1);
-  border-color: var(--rule-strong);
-  border-bottom-color: var(--paper);
-  box-shadow: 0 -1px 0 var(--accent) inset;
-  margin-bottom: -1px;
-}
-.tab.active .tab-type {
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--rule));
-  background: var(--accent-soft);
-  color: var(--accent);
+  box-shadow: var(--shadow-1);
 }
 .tab.dragging { opacity: 0.5; }
 .tab.drop-target { box-shadow: inset 2px 0 0 0 var(--accent); }
@@ -7556,16 +7582,17 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   min-width: 0;
   max-width: 130px;
 }
-.tab-type {
+.tab-icon {
   flex: 0 0 auto;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-1);
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--ink-3);
-  background: var(--sand);
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 1;
-  padding: 2px 4px;
+}
+.tab.active .tab-icon {
+  color: var(--ink-2);
 }
 .tab-close,
 .tab-pop-out {
@@ -7772,6 +7799,14 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   border-bottom: 1px solid var(--rule);
   padding: 12px var(--page-gutter-x);
   background: var(--paper);
+}
+
+.page-header .topbar,
+.page-header .database-toolbar {
+  min-height: 0;
+  gap: 8px;
+  border-bottom: 0;
+  padding: 6px 0 10px;
 }
 
 .page-action-bar {
@@ -8227,7 +8262,7 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   font-family: var(--font-display);
   font-size: 40px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   line-height: 1.15;
   color: var(--ink-1);
   outline: none;
@@ -8327,8 +8362,7 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
 }
 
 .page-editor:not(.full-width) .codemirror-editor .cm-content {
-  position: relative;
-  left: -19px;
+  position: static;
 }
 
 .page-editor.full-width .codemirror-editor .cm-content {

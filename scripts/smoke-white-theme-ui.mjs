@@ -167,10 +167,17 @@ async function assertPageTheme(page, viewportName) {
   assertBackground(state.surfaces.mainArea, EXPECTED.paper, "main area");
   assertBackground(state.surfaces.tabStrip, EXPECTED.sand, "tab strip");
   assertBackground(state.surfaces.activeTab, EXPECTED.paper, "active tab");
-  assertBackground(state.surfaces.searchBox, EXPECTED.paper, "search box");
-  assertBorderColor(state.surfaces.searchBox, EXPECTED.ruleStrong, "search box");
-  assertTextColor(state.surfaces.activeNavIcon, EXPECTED.accent, "active nav icon");
-  return state;
+  assertBackground(state.surfaces.searchBox, "transparent", "search box");
+  assertBorderColor(state.surfaces.searchBox, "transparent", "search box");
+  assertTextColor(state.surfaces.activeNavIcon, "#4c5049", "active nav icon");
+  const editorChrome = await page.evaluate(() => ({
+    gutterCount: document.querySelectorAll('[data-testid="markdown-editor"] .cm-gutters').length,
+    lineNumberCount: document.querySelectorAll('[data-testid="markdown-editor"] .cm-lineNumbers').length
+  }));
+  if (editorChrome.gutterCount !== 0 || editorChrome.lineNumberCount !== 0) {
+    throw new Error(`Normal Markdown editing should not expose source gutters: ${JSON.stringify(editorChrome)}`);
+  }
+  return { ...state, editorChrome };
 }
 
 async function assertSearchTheme(page, viewportName) {

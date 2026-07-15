@@ -3,6 +3,7 @@ import type { DatabaseBundle } from "../../shared/types";
 import { useDatabaseCache } from "../context/database-cache";
 import { tagFromManageKind, type ActiveItem, type TabState } from "../state/app-store";
 import type { AppState } from "../state/app-store";
+import { EntityIcon } from "./EntityIcon";
 
 interface TabStripProps {
   tabs: TabState[];
@@ -37,6 +38,7 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
         const active = i === activeIndex;
         const label = labelFor(tab.item, state, cache.getBundle, active);
         const typeLabel = typeLabelFor(tab.item);
+        const icon = iconFor(tab.item, state);
         const dragging = dragIndex === i;
         const dropTarget = dropIndex === i && dragIndex !== null && dragIndex !== i;
         return (
@@ -78,7 +80,7 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
             }}
             title={typeLabel ? `${typeLabel}: ${label}` : label}
           >
-            {typeLabel && <span className="tab-type">{typeLabel}</span>}
+            {icon && <span className="tab-icon" aria-hidden="true">{icon}</span>}
             <span className="tab-label">{label}</span>
             {tab.item && (
               <button
@@ -175,6 +177,22 @@ function typeLabelFor(item: ActiveItem | undefined): string | undefined {
   if (item.type === "database") return "数据库";
   if (item.type === "row_page") return "页面";
   if (item.type === "manage") return undefined;
+  return undefined;
+}
+
+function iconFor(item: ActiveItem | undefined, state: AppState) {
+  if (!item) return undefined;
+  if (item.type === "page") {
+    const icon = state.pages.find((page) => page.id === item.id)?.icon;
+    return <EntityIcon kind="page" icon={icon} size={15} />;
+  }
+  if (item.type === "database") {
+    const icon = state.databases.find((database) => database.id === item.id)?.icon;
+    return <EntityIcon kind="database" icon={icon} size={15} />;
+  }
+  if (item.type === "row_page") {
+    return <EntityIcon kind="row_page" size={15} />;
+  }
   return undefined;
 }
 
