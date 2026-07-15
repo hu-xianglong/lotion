@@ -1,31 +1,151 @@
+<div align="center">
+
 # Lotion
 
-An LLM-first local Notion.
+### A local-first knowledge workspace with Notion-like editing and files you can keep.
 
-Lotion is a local-first, plain-text-first personal knowledge workspace. It aims
-to provide a Notion-like interface while keeping user data portable, readable,
-Git-friendly, and LLM-friendly.
+Pages live in Markdown. Database rows live in CSV. Attachments stay as regular
+files. Lotion provides the interface without taking ownership of the data.
 
-The current source of truth for product requirements is:
+[Website](https://hu-xianglong.github.io/lotion/) ·
+[Documentation](docs/user-requirements.md) ·
+[Report an issue](https://github.com/hu-xianglong/lotion/issues)
 
-- [User Requirements](docs/user-requirements.md)
-- [Product Design](docs/design.md)
-- [Code Design](docs/code-design.md)
+![MIT License](https://img.shields.io/badge/license-MIT-1f6f4a)
+![Electron](https://img.shields.io/badge/desktop-Electron-5067a5)
+![Project status](https://img.shields.io/badge/status-early%20development-c28a24)
 
-## Development
+</div>
+
+![Lotion showing the synthetic demo workspace](website/assets/lotion-home.png)
+
+## Why Lotion
+
+Most workspace applications make the application database the only practical
+way to read your knowledge. Lotion takes a different approach: the interface is
+rich, but the underlying workspace remains transparent and portable.
+
+- **Local-first.** Workspaces live on your computer by default.
+- **Plain-text-first.** Page bodies use Markdown and database rows use CSV.
+- **Interface-first.** Normal use does not require editing raw files.
+- **Git-friendly.** Files can be inspected, diffed, backed up, and restored with
+  standard Git tooling.
+- **LLM-friendly.** The workspace and public API are structured for search,
+  automation, and assistant workflows.
+- **Extensible.** Plugins can provide commands, views, search providers, backup
+  providers, LLM integrations, and UI surfaces.
+
+Lotion is built for people who want a Notion-like working environment without
+giving up Obsidian-like ownership of their data.
+
+## What Works Today
+
+### Pages and editing
+
+- Markdown pages with a live, syntax-aware editing experience.
+- Slash commands for headings, lists, tasks, toggles, callouts, code, tables,
+  images, links, equations, embedded pages, and embedded database views.
+- Inline formatting, highlights, block formatting, Vim mode, and raw-source
+  editing when needed.
+- Nested pages, tabs, favorites, recent pages, backlinks, page history, and
+  workspace-wide navigation.
+
+### Databases
+
+- Editable rows, columns, and row pages.
+- Text, number, select, multi-select, date, checkbox, URL, formula, relation,
+  rollup, and entity-reference fields.
+- Table, board, calendar, list, and gallery views.
+- Sorting, filtering, visible-field configuration, column ordering, summaries,
+  templates, and embedded live views.
+- Virtualized rendering and latency gates for large CSV-backed datasets.
+
+### Search, import, backup, and extensions
+
+- Fast search across pages, databases, rows, references, tags, and commands.
+- Optional advanced search and LLM integrations through built-in plugins.
+- Notion HTML and CSV import with nested pages, databases, attachments, source
+  references, audit reports, and regression coverage for lossy exports.
+- Local Git backup and GitHub backup surfaces.
+- A typed plugin API and a stable customer API for automation and integrations.
+
+## Workspace Format
+
+The UI hides implementation details during normal use, but the files remain
+available when you need them.
+
+```text
+my-space/
+├── lotion.json
+├── attachments/
+│   ├── images/
+│   └── documents/
+└── databases/
+    ├── system/
+    │   └── pages--db_pages/
+    │       ├── data.csv
+    │       └── pages/*.md
+    └── user/
+        └── Tasks--db_tasks/
+            ├── schema.json
+            ├── data.csv
+            ├── views/*.json
+            └── pages/*.md
+```
+
+- Markdown stores page and row-page bodies.
+- CSV stores page metadata and database records.
+- JSON stores workspace, schema, and view configuration.
+- Attachments remain ordinary files inside the workspace.
+
+There is no required database server and no proprietary content store.
+
+## Product Tour
+
+### Write with a friendly Markdown editor
+
+Lotion renders formatting while keeping the source portable. You can use slash
+commands and familiar editing controls, then inspect or edit the underlying
+Markdown whenever you need to.
+
+![Lotion Markdown editor](website/assets/lotion-editor.png)
+
+### Work with structured data
+
+Database views are references over the same CSV-backed records. Changing a
+record or view is reflected everywhere that view appears.
+
+![Lotion database table](website/assets/lotion-database.png)
+
+## Getting Started
+
+Lotion is currently source-first and intended for developers and early
+adopters. Node.js 20 or newer and npm are recommended.
 
 ```sh
+git clone https://github.com/hu-xianglong/lotion.git
+cd lotion
 npm install
+npm run demo:reset
 npm run dev
 ```
 
-Load the demo workspace used for local testing:
+`npm run dev` starts Vite, the Electron main-process compiler, and the desktop
+application. The included demo workspace contains synthetic pages, databases,
+views, and scale fixtures.
+
+To create a production build:
 
 ```sh
-npm run demo:reset
+npm run build
+npm start
 ```
 
-Useful checks:
+## Quality Gates
+
+The default test lane covers the file-service boundary, public APIs, Notion
+import, formulas, slash commands, editor policies, renderer components,
+workspace integrity, links, hierarchy, fixture consistency, and latency budgets.
 
 ```sh
 npm test
@@ -33,6 +153,92 @@ npm run typecheck
 npm run build
 ```
 
+Focused lanes are available for UI regressions and performance work:
+
+```sh
+npm run test:ui-regression
+npm run test:production-visual
+npm run test:startup-latency
+npm run test:search-latency
+```
+
+The 500K-row stress CSV is generated locally because it exceeds GitHub's file
+size limit:
+
+```sh
+node scripts/generate-stress-fixtures.mjs
+```
+
+See [Testing](docs/testing.md) for the complete test matrix.
+
+## Architecture
+
+Lotion separates desktop privileges from UI code:
+
+```text
+React renderer
+    │ typed contextBridge API
+Electron preload
+    │ validated IPC
+Electron main process
+    ├── workspace and file services
+    ├── import and search services
+    ├── Git and attachment services
+    └── plugin host
+```
+
+The renderer never reads local files directly. Main-process services validate
+workspace-relative paths and own durable writes. This keeps the local-first
+model testable without coupling integrations to React or Electron UI details.
+
+For automation, `lotion/customer-api` exposes versioned workspace, page,
+database, view, row-page, attachment, search, entity, and Notion import
+operations. See the [Customer API](docs/customer-api.md).
+
+## Project Status
+
+Lotion is in early development. It is useful for hands-on testing, but the UI,
+workspace format, and plugin experience are still evolving. Keep backups of
+important workspaces and review generated changes before adopting them into an
+existing knowledge base.
+
+Current priorities include:
+
+- editor fidelity and Notion import compatibility;
+- responsive desktop and future mobile shells;
+- faster startup and large-workspace navigation;
+- stronger Git backup and sync workflows;
+- a documented third-party plugin development path.
+
+The active backlog lives in [`tasks/todo`](tasks/todo), and completed work is
+recorded in [`tasks/done`](tasks/done).
+
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [User requirements](docs/user-requirements.md) | Product vision and user-facing concepts |
+| [Frontend design system](docs/frontend-design-system.md) | UI rules, tokens, and regression expectations |
+| [Code design](docs/code-design.md) | Process boundaries and workspace architecture |
+| [Customer API](docs/customer-api.md) | Stable automation and integration surface |
+| [Notion compatibility](docs/notion-import-compat.md) | Supported import behavior and limitations |
+| [Testing](docs/testing.md) | Test lanes, fixtures, and performance gates |
+| [Roadmap](docs/roadmap.md) | Performance findings and architectural follow-ups |
+
+## Contributing
+
+Issues, focused pull requests, fixture improvements, and import edge cases are
+welcome. Before opening a pull request:
+
+1. Keep the change scoped to one behavior or product surface.
+2. Add regression coverage proportional to the risk.
+3. Run `npm test`, `npm run typecheck`, and `npm run build`.
+4. Include UI artifacts when changing visible behavior.
+5. Do not include personal workspaces, credentials, or proprietary exports.
+
+Use [GitHub Issues](https://github.com/hu-xianglong/lotion/issues) for bugs and
+proposals.
+
 ## License
 
-[MIT](LICENSE)
+Lotion is available under the [MIT License](LICENSE).
