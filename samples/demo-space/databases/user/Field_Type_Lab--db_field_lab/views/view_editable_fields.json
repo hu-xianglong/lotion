@@ -1,0 +1,31 @@
+{
+  "id": "view_editable_fields",
+  "databaseId": "db_field_lab",
+  "name": "Editable fields",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "count",
+    "status",
+    "labels",
+    "target_date",
+    "reference_url",
+    "enabled"
+  ],
+  "fieldOrder": [
+    "title",
+    "status",
+    "labels",
+    "count",
+    "target_date",
+    "reference_url",
+    "enabled"
+  ],
+  "sorts": [
+    {
+      "fieldId": "title",
+      "direction": "asc"
+    }
+  ],
+  "filters": []
+}

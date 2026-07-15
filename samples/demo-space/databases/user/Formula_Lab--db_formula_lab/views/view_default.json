@@ -1,0 +1,12 @@
+{
+  "id": "view_default",
+  "databaseId": "db_formula_lab",
+  "name": "Default",
+  "type": "table",
+  "visibleFieldIds": ["title", "base", "multiplier", "status", "arithmetic_result", "case_result", "average_result", "text_result", "boolean_result", "dataset_total"],
+  "fieldOrder": ["title", "base", "multiplier", "status", "arithmetic_result", "case_result", "average_result", "text_result", "boolean_result", "dataset_total"],
+  "sorts": [
+    { "fieldId": "base", "direction": "asc" }
+  ],
+  "filters": []
+}

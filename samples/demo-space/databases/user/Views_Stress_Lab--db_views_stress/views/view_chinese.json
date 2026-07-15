@@ -1,0 +1,40 @@
+{
+  "pageSize": 50,
+  "id": "view_chinese",
+  "name": "中文视图",
+  "visibleFieldIds": [
+    "chinese_title",
+    "status",
+    "priority",
+    "team",
+    "assignee",
+    "owner_notes_zh",
+    "last_reviewed_at"
+  ],
+  "fieldOrder": [
+    "chinese_title",
+    "status",
+    "priority",
+    "team",
+    "assignee",
+    "owner_notes_zh",
+    "last_reviewed_at"
+  ],
+  "sorts": [
+    {
+      "fieldId": "last_reviewed_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [],
+  "wrapFieldIds": [
+    "chinese_title",
+    "owner_notes_zh"
+  ],
+  "columnWidths": {
+    "chinese_title": 240,
+    "owner_notes_zh": 280
+  },
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

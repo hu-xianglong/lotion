@@ -1,0 +1,48 @@
+{
+  "pageSize": 50,
+  "id": "view_default",
+  "name": "All",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "status",
+    "priority",
+    "team",
+    "assignee",
+    "tags",
+    "due_date",
+    "last_reviewed_at",
+    "effort",
+    "progress",
+    "done",
+    "notes",
+    "owner_notes_zh",
+    "urgency"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "status",
+    "priority",
+    "team",
+    "assignee",
+    "tags",
+    "due_date",
+    "last_reviewed_at",
+    "effort",
+    "progress",
+    "done",
+    "notes",
+    "owner_notes_zh",
+    "urgency"
+  ],
+  "sorts": [
+    {
+      "fieldId": "due_date",
+      "direction": "asc"
+    }
+  ],
+  "filters": [],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

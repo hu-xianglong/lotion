@@ -1,0 +1,101 @@
+{
+  "id": "pages",
+  "name": "pages",
+  "created_time": "2026-05-28T21:46:11.120Z",
+  "updated_time": "2026-05-28T21:46:11.120Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Name",
+      "type": "text"
+    },
+    {
+      "id": "kind",
+      "name": "Kind",
+      "type": "text",
+      "system": true
+    },
+    {
+      "id": "body_path",
+      "name": "Body path",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    },
+    {
+      "id": "icon",
+      "name": "Icon",
+      "type": "text"
+    },
+    {
+      "id": "cover",
+      "name": "Cover",
+      "type": "text"
+    },
+    {
+      "id": "cover_offset",
+      "name": "Cover offset",
+      "type": "number"
+    },
+    {
+      "id": "tags",
+      "name": "Tags",
+      "type": "multi_select"
+    },
+    {
+      "id": "date",
+      "name": "Date",
+      "type": "text"
+    },
+    {
+      "id": "url",
+      "name": "URL",
+      "type": "url"
+    },
+    {
+      "id": "full_width",
+      "name": "Full width",
+      "type": "checkbox"
+    },
+    {
+      "id": "database_id",
+      "name": "Database ID",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    },
+    {
+      "id": "row_id",
+      "name": "Row ID",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>multi_select · 5 fresh directions</title>
+<style>
+  :root {
+    --paper: #fffdf8;
+    --sand: #faf6ee;
+    --vellum: #f4eee2;
+    --rule: #ece4d2;
+    --rule-strong: #ddd2ba;
+    --ink-1: #1f1d1a;
+    --ink-2: #4d473e;
+    --ink-3: #7a7268;
+    --ink-4: #a39988;
+    --terracotta: #c25434;
+    --font-display: "Fraunces", ui-serif, "Source Han Serif SC", "Songti SC", Georgia, serif;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--sand);
+    color: var(--ink-1);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    padding: 64px 56px 96px;
+  }
+  .hero {
+    max-width: 880px;
+    margin-bottom: 48px;
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 12px;
+    line-height: 1.1;
+  }
+  .hero p {
+    color: var(--ink-2);
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  .hero em {
+    font-family: var(--font-display);
+    font-style: italic;
+    color: var(--ink-1);
+  }
+
+  .directions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    max-width: 1240px;
+  }
+  .dir {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    padding: 24px 28px;
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    gap: 24px;
+  }
+  .dir-text { display: flex; flex-direction: column; gap: 8px; }
+  .dir-num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-4);
+    letter-spacing: 0.1em;
+  }
+  .dir-name {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink-1);
+    line-height: 1.15;
+  }
+  .dir-name em {
+    font-style: italic;
+    color: var(--terracotta);
+  }
+  .dir-desc {
+    color: var(--ink-2);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .dir-rationale {
+    font-size: 12px;
+    color: var(--ink-3);
+    line-height: 1.5;
+    border-left: 2px solid var(--rule-strong);
+    padding-left: 12px;
+    margin-top: 4px;
+  }
+
+  .specimens {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: 12px;
+  }
+  .specimen {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--sand);
+    border-radius: 10px;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+  .specimen.accent { background: var(--terracotta); }
+  .specimen .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .specimen.sand .tag { color: var(--ink-4); }
+  .specimen.accent .tag { color: rgba(255, 255, 255, 0.7); }
+
+  .sizes {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+  }
+  .sizes svg { display: block; }
+  .specimen.sand svg { color: var(--ink-2); }
+
+  footer {
+    margin-top: 64px;
+    color: var(--ink-3);
+    font-size: 13px;
+    max-width: 720px;
+    line-height: 1.6;
+  }
+  footer code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--vellum);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* In-sidebar comparison strip */
+  .sidebar-test {
+    margin-top: 48px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    padding: 24px 28px;
+    max-width: 720px;
+  }
+  .sidebar-test h2 {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 16px;
+  }
+  .sidebar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px;
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+  .sidebar-row .label-row {
+    flex: 1;
+  }
+  .sidebar-row .num {
+    color: var(--ink-4);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>multi_select, <em>reconsidered</em></h1>
+  <p>
+    All ten previous tries were stuck on the same metaphor — "more rectangles."
+    But <em>select</em> already is a rectangle. What makes the <em>multi</em>
+    version semantically different isn't the count of shapes; it's the
+    <em>act of picking</em>. Five fresh starts, each with a real conceptual
+    premise:
+  </p>
+</div>
+
+<div class="directions">
+
+  <!-- A: bubble sheet -->
+  <div class="dir">
+    <div class="dir-text">
+      <div class="dir-num">A · BUBBLE SHEET</div>
+      <div class="dir-name">The <em>ballot</em></div>
+      <div class="dir-desc">
+        Four small circles in a row, two filled — like a multiple-choice form.
+        Reads instantly as "pick any of these."
+      </div>
+      <div class="dir-rationale">
+        The only icon in the catalog that uses radio-bubble syntax. Distinct
+        from <em>checkbox</em> (singular, square) by the multiplicity and the
+        round shape. Holds up at 14px because the filled vs hollow contrast
+        is high.
+      </div>
+    </div>
+    <div class="specimens">
+      <div class="specimen sand">
+        <span class="tag">minimal</span>
+        <div class="sizes">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="2.5" cy="8" r="1.3"/>
+            <circle cx="6.5" cy="8" r="1.3" fill="currentColor"/>
+            <circle cx="10.5" cy="8" r="1.3"/>
+            <circle cx="13.5" cy="8" r="1.3" fill="currentColor"/>
+          </svg>
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="2.5" cy="8" r="1.3"/>
+            <circle cx="6.5" cy="8" r="1.3" fill="currentColor"/>
+            <circle cx="10.5" cy="8" r="1.3"/>
+            <circle cx="13.5" cy="8" r="1.3" fill="currentColor"/>
+          </svg>
+          <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="2.5" cy="8" r="1.3"/>
+            <circle cx="6.5" cy="8" r="1.3" fill="currentColor"/>
+            <circle cx="10.5" cy="8" r="1.3"/>
+            <circle cx="13.5" cy="8" r="1.3" fill="currentColor"/>
+          </svg>
+        </div>
+      </div>
+      <div class="specimen accent">
+        <span class="tag">accent</span>
+        <div class="sizes">
+          <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6">
+              <circle cx="2.5" cy="8" r="1.3"/>
+              <circle cx="6.5" cy="8" r="1.3" fill="white"/>
+              <circle cx="10.5" cy="8" r="1.3"/>
+              <circle cx="13.5" cy="8" r="1.3" fill="white"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:20px;height:20px;background:var(--terracotta);border-radius:5px;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5">
+              <circle cx="2.5" cy="8" r="1.3"/>
+              <circle cx="6.5" cy="8" r="1.3" fill="white"/>
+              <circle cx="10.5" cy="8" r="1.3"/>
+              <circle cx="13.5" cy="8" r="1.3" fill="white"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:32px;height:32px;background:var(--terracotta);border-radius:7px;align-items:center;justify-content:center">
+            <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4">
+              <circle cx="2.5" cy="8" r="1.3"/>
+              <circle cx="6.5" cy="8" r="1.3" fill="white"/>
+              <circle cx="10.5" cy="8" r="1.3"/>
+              <circle cx="13.5" cy="8" r="1.3" fill="white"/>
+            </svg>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B: Venn -->
+  <div class="dir">
+    <div class="dir-text">
+      <div class="dir-num">B · VENN</div>
+      <div class="dir-name">The <em>intersection</em></div>
+      <div class="dir-desc">
+        Two overlapping circles. Pure set theory — membership in
+        <em>multiple</em> sets at once.
+      </div>
+      <div class="dir-rationale">
+        Mathematical elegance. The visual lean is unique in the icon set
+        (no other icon uses overlapping curves). Reads as "things that
+        belong to more than one bucket" — which is exactly multi-select.
+      </div>
+    </div>
+    <div class="specimens">
+      <div class="specimen sand">
+        <span class="tag">minimal</span>
+        <div class="sizes">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="6" cy="8" r="4"/>
+            <circle cx="10" cy="8" r="4"/>
+          </svg>
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="6" cy="8" r="4"/>
+            <circle cx="10" cy="8" r="4"/>
+          </svg>
+          <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="6" cy="8" r="4"/>
+            <circle cx="10" cy="8" r="4"/>
+          </svg>
+        </div>
+      </div>
+      <div class="specimen accent">
+        <span class="tag">accent</span>
+        <div class="sizes">
+          <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.7">
+              <circle cx="6" cy="8" r="4"/>
+              <circle cx="10" cy="8" r="4"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:20px;height:20px;background:var(--terracotta);border-radius:5px;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6">
+              <circle cx="6" cy="8" r="4"/>
+              <circle cx="10" cy="8" r="4"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:32px;height:32px;background:var(--terracotta);border-radius:7px;align-items:center;justify-content:center">
+            <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5">
+              <circle cx="6" cy="8" r="4"/>
+              <circle cx="10" cy="8" r="4"/>
+            </svg>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- C: Tag with extra ribbons -->
+  <div class="dir">
+    <div class="dir-text">
+      <div class="dir-num">C · STREAMERS</div>
+      <div class="dir-name">The <em>handle</em></div>
+      <div class="dir-desc">
+        A single tag knot at the left with three ribbons fanning out. One
+        anchor, many strands — like a key ring with several keys.
+      </div>
+      <div class="dir-rationale">
+        Borrows from the <em>tags</em> icon family (you already have one) but
+        keeps the multi-ness through the fan, not stacking. Asymmetric, has
+        rhythm, doesn't look like another rectangle.
+      </div>
+    </div>
+    <div class="specimens">
+      <div class="specimen sand">
+        <span class="tag">minimal</span>
+        <div class="sizes">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <circle cx="3.5" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+            <line x1="5.5" y1="8" x2="13" y2="8"/>
+            <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+          </svg>
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <circle cx="3.5" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+            <line x1="5.5" y1="8" x2="13" y2="8"/>
+            <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+          </svg>
+          <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <circle cx="3.5" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+            <line x1="5.5" y1="8" x2="13" y2="8"/>
+            <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+          </svg>
+        </div>
+      </div>
+      <div class="specimen accent">
+        <span class="tag">accent</span>
+        <div class="sizes">
+          <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
+              <circle cx="3.5" cy="8" r="1.5" fill="white" stroke="none"/>
+              <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+              <line x1="5.5" y1="8" x2="13" y2="8"/>
+              <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:20px;height:20px;background:var(--terracotta);border-radius:5px;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
+              <circle cx="3.5" cy="8" r="1.5" fill="white" stroke="none"/>
+              <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+              <line x1="5.5" y1="8" x2="13" y2="8"/>
+              <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:32px;height:32px;background:var(--terracotta);border-radius:7px;align-items:center;justify-content:center">
+            <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round">
+              <circle cx="3.5" cy="8" r="1.5" fill="white" stroke="none"/>
+              <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+              <line x1="5.5" y1="8" x2="13" y2="8"/>
+              <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+            </svg>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- D: Plus N badge -->
+  <div class="dir">
+    <div class="dir-text">
+      <div class="dir-num">D · OVERFLOW</div>
+      <div class="dir-name">The <em>and more</em></div>
+      <div class="dir-desc">
+        A single chip with a small "<strong>+2</strong>" floating top-right —
+        like a notification badge for "two more behind this one."
+      </div>
+      <div class="dir-rationale">
+        Borrows the universally-understood badge pattern (unread mail count,
+        notification bell). The semantic load lives in the +N, not in shape
+        repetition. Most "literally readable" of the five.
+      </div>
+    </div>
+    <div class="specimens">
+      <div class="specimen sand">
+        <span class="tag">minimal</span>
+        <div class="sizes">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+            <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="currentColor" stroke="none" text-anchor="middle">+2</text>
+          </svg>
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+            <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="currentColor" stroke="none" text-anchor="middle">+2</text>
+          </svg>
+          <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+            <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="currentColor" stroke="none" text-anchor="middle">+2</text>
+          </svg>
+        </div>
+      </div>
+      <div class="specimen accent">
+        <span class="tag">accent</span>
+        <div class="sizes">
+          <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+              <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="white" stroke="none" text-anchor="middle">+2</text>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:20px;height:20px;background:var(--terracotta);border-radius:5px;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+              <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="white" stroke="none" text-anchor="middle">+2</text>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:32px;height:32px;background:var(--terracotta);border-radius:7px;align-items:center;justify-content:center">
+            <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+              <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="white" stroke="none" text-anchor="middle">+2</text>
+            </svg>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E: Constellation -->
+  <div class="dir">
+    <div class="dir-text">
+      <div class="dir-num">E · CONSTELLATION</div>
+      <div class="dir-name">The <em>web</em></div>
+      <div class="dir-desc">
+        Four dots connected by thin lines into a Y-shape. Picked items
+        linked into a small cluster.
+      </div>
+      <div class="dir-rationale">
+        The only icon in the set that's a graph. Implies relations
+        between selected items rather than a list of them. Reads
+        slightly more abstract — distinctive for a knowledge tool
+        like Lotion specifically.
+      </div>
+    </div>
+    <div class="specimens">
+      <div class="specimen sand">
+        <span class="tag">minimal</span>
+        <div class="sizes">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+            <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+            <line x1="8" y1="8" x2="8" y2="12.5"/>
+            <circle cx="3.5" cy="3.5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="12.5" cy="3.5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+            <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+            <line x1="8" y1="8" x2="8" y2="12.5"/>
+            <circle cx="3.5" cy="3.5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="12.5" cy="3.5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+          <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+            <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+            <line x1="8" y1="8" x2="8" y2="12.5"/>
+            <circle cx="3.5" cy="3.5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="12.5" cy="3.5" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+      </div>
+      <div class="specimen accent">
+        <span class="tag">accent</span>
+        <div class="sizes">
+          <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
+              <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+              <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+              <line x1="8" y1="8" x2="8" y2="12.5"/>
+              <circle cx="3.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+              <circle cx="12.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+              <circle cx="8" cy="8" r="1.5" fill="white" stroke="none"/>
+              <circle cx="8" cy="13" r="1.5" fill="white" stroke="none"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:20px;height:20px;background:var(--terracotta);border-radius:5px;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
+              <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+              <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+              <line x1="8" y1="8" x2="8" y2="12.5"/>
+              <circle cx="3.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+              <circle cx="12.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+              <circle cx="8" cy="8" r="1.5" fill="white" stroke="none"/>
+              <circle cx="8" cy="13" r="1.5" fill="white" stroke="none"/>
+            </svg>
+          </span>
+          <span style="display:inline-flex;width:32px;height:32px;background:var(--terracotta);border-radius:7px;align-items:center;justify-content:center">
+            <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round">
+              <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+              <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+              <line x1="8" y1="8" x2="8" y2="12.5"/>
+              <circle cx="3.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+              <circle cx="12.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+              <circle cx="8" cy="8" r="1.5" fill="white" stroke="none"/>
+              <circle cx="8" cy="13" r="1.5" fill="white" stroke="none"/>
+            </svg>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- All five inline in a real sidebar row, to test "does it actually read as multi-select?" -->
+<div class="sidebar-test">
+  <h2>In context — DB toolbar property type picker</h2>
+
+  <div class="sidebar-row">
+    <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6">
+        <circle cx="2.5" cy="8" r="1.3"/>
+        <circle cx="6.5" cy="8" r="1.3" fill="white"/>
+        <circle cx="10.5" cy="8" r="1.3"/>
+        <circle cx="13.5" cy="8" r="1.3" fill="white"/>
+      </svg>
+    </span>
+    <span class="label-row">Multi-select <span class="num">A · ballot</span></span>
+  </div>
+
+  <div class="sidebar-row">
+    <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.7">
+        <circle cx="6" cy="8" r="4"/>
+        <circle cx="10" cy="8" r="4"/>
+      </svg>
+    </span>
+    <span class="label-row">Multi-select <span class="num">B · venn</span></span>
+  </div>
+
+  <div class="sidebar-row">
+    <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
+        <circle cx="3.5" cy="8" r="1.5" fill="white" stroke="none"/>
+        <line x1="5.5" y1="8" x2="13" y2="3.5"/>
+        <line x1="5.5" y1="8" x2="13" y2="8"/>
+        <line x1="5.5" y1="8" x2="13" y2="12.5"/>
+      </svg>
+    </span>
+    <span class="label-row">Multi-select <span class="num">C · streamers</span></span>
+  </div>
+
+  <div class="sidebar-row">
+    <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1.5" y="6" width="9" height="6" rx="2.5"/>
+        <text x="12.5" y="6.5" font-family="-apple-system, sans-serif" font-size="6" font-weight="700" fill="white" stroke="none" text-anchor="middle">+2</text>
+      </svg>
+    </span>
+    <span class="label-row">Multi-select <span class="num">D · overflow</span></span>
+  </div>
+
+  <div class="sidebar-row">
+    <span style="display:inline-flex;width:14px;height:14px;background:var(--terracotta);border-radius:3.5px;align-items:center;justify-content:center">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round">
+        <line x1="3.5" y1="3.5" x2="8" y2="8"/>
+        <line x1="12.5" y1="3.5" x2="8" y2="8"/>
+        <line x1="8" y1="8" x2="8" y2="12.5"/>
+        <circle cx="3.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+        <circle cx="12.5" cy="3.5" r="1.5" fill="white" stroke="none"/>
+        <circle cx="8" cy="8" r="1.5" fill="white" stroke="none"/>
+        <circle cx="8" cy="13" r="1.5" fill="white" stroke="none"/>
+      </svg>
+    </span>
+    <span class="label-row">Multi-select <span class="num">E · constellation</span></span>
+  </div>
+</div>
+
+<footer>
+  My recommendation: <strong>A · ballot</strong> — it's the only one that
+  reads as "multi-select" without prior context, because the bubble-sheet
+  metaphor literally is multiple selection. <strong>B · venn</strong> if you
+  want something more graphic and confident; the math vibe also lands well
+  for a tool with formulas and database joins. Pick a letter and I'll wire
+  it into <code>FieldTypeIcon.tsx</code> alongside the single-accent theme.
+</footer>
+
+</body>
+</html>

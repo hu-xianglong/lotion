@@ -1,0 +1,9 @@
+id,created_time,updated_time,title,base,multiplier,status,arithmetic_result,case_result,average_result,text_result,boolean_result,dataset_total,page_file
+row_formula_1,2026-05-17T10:11:00.000Z,2026-05-17T10:11:00.000Z,Arithmetic small,2,3,Active,8,Small,2.5,Arithmetic small / Active,true,76,Arithmetic_small--row_formula_1.md
+row_formula_2,2026-05-17T10:12:00.000Z,2026-05-17T10:12:00.000Z,Arithmetic large,8,4,Active,34,Large,6,Arithmetic large / Active,true,76,Arithmetic_large--row_formula_2.md
+row_formula_3,2026-05-17T10:13:00.000Z,2026-05-17T10:13:00.000Z,Blocked case,1,9,Blocked,11,Needs help,5,Blocked case / Blocked,false,76,Blocked_case--row_formula_3.md
+row_formula_4,2026-05-17T10:14:00.000Z,2026-05-17T10:14:00.000Z,Zero base,0,5,Active,2,Small,2.5,Zero base / Active,false,76,
+row_formula_5,2026-05-17T10:15:00.000Z,2026-05-17T10:15:00.000Z,Large active,12,2,Active,26,Large,7,Large active / Active,false,76,
+row_formula_6,2026-05-17T10:16:00.000Z,2026-05-17T10:16:00.000Z,Blocked with multiplier,3,7,Blocked,23,Needs help,5,Blocked with multiplier / Blocked,true,76,
+row_formula_7,2026-05-17T10:17:00.000Z,2026-05-17T10:17:00.000Z,Equal values,5,5,Active,27,Small,5,Equal values / Active,true,76,
+row_formula_8,2026-05-17T10:18:00.000Z,2026-05-17T10:18:00.000Z,High multiplier,9,1,Active,11,Large,5,High multiplier / Active,false,76,

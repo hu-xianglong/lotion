@@ -1,0 +1,43 @@
+{
+  "pageSize": 50,
+  "id": "view_chinese",
+  "name": "中文视图",
+  "visibleFieldIds": [
+    "chinese_title",
+    "kind",
+    "source_channel",
+    "severity",
+    "topic",
+    "occurred_at",
+    "resolved",
+    "chinese_note"
+  ],
+  "fieldOrder": [
+    "chinese_title",
+    "kind",
+    "source_channel",
+    "severity",
+    "topic",
+    "occurred_at",
+    "resolved",
+    "chinese_note"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [],
+  "wrapFieldIds": [
+    "chinese_title",
+    "chinese_note"
+  ],
+  "columnWidths": {
+    "chinese_title": 260,
+    "chinese_note": 280,
+    "source_channel": 160
+  },
+  "databaseId": "db_rows_500k",
+  "type": "table"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "view_active_reading",
+  "databaseId": "db_reading",
+  "name": "Active reading",
+  "type": "table",
+  "visibleFieldIds": ["title", "author", "status", "rating", "next_action"],
+  "fieldOrder": ["title", "status", "author", "rating", "next_action"],
+  "sorts": [
+    { "fieldId": "rating", "direction": "desc" }
+  ],
+  "filters": [
+    { "fieldId": "status", "operator": "is", "value": "Reading" }
+  ]
+}

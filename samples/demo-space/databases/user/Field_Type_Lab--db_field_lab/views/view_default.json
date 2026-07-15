@@ -1,0 +1,35 @@
+{
+  "id": "view_default",
+  "databaseId": "db_field_lab",
+  "name": "Default",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "count",
+    "status",
+    "labels",
+    "target_date",
+    "reference_url",
+    "enabled",
+    "computed_count",
+    "updated_time"
+  ],
+  "fieldOrder": [
+    "title",
+    "count",
+    "status",
+    "labels",
+    "target_date",
+    "reference_url",
+    "enabled",
+    "computed_count",
+    "updated_time"
+  ],
+  "sorts": [
+    {
+      "fieldId": "count",
+      "direction": "asc"
+    }
+  ],
+  "filters": []
+}

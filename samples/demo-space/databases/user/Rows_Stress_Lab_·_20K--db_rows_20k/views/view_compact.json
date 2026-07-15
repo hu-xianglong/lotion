@@ -1,0 +1,28 @@
+{
+  "pageSize": 25,
+  "id": "view_compact",
+  "name": "Compact",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "kind",
+    "severity",
+    "occurred_at"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "kind",
+    "severity",
+    "occurred_at"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [],
+  "databaseId": "db_rows_20k",
+  "type": "table"
+}

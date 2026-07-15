@@ -1,0 +1,57 @@
+{
+  "pageSize": 50,
+  "id": "view_wide_wrap",
+  "name": "Wrapped notes",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "kind",
+    "source_channel",
+    "severity",
+    "topic",
+    "tags",
+    "occurred_at",
+    "count",
+    "resolved",
+    "note",
+    "chinese_note",
+    "urgency_score"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "kind",
+    "source_channel",
+    "severity",
+    "topic",
+    "tags",
+    "occurred_at",
+    "count",
+    "resolved",
+    "note",
+    "chinese_note",
+    "urgency_score"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [],
+  "wrapFieldIds": [
+    "note",
+    "title",
+    "chinese_title",
+    "chinese_note"
+  ],
+  "columnWidths": {
+    "title": 280,
+    "chinese_title": 240,
+    "note": 320,
+    "chinese_note": 280,
+    "source_channel": 160
+  },
+  "databaseId": "db_rows_2k",
+  "type": "table"
+}

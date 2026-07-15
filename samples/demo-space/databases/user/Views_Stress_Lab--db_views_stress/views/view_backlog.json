@@ -1,0 +1,36 @@
+{
+  "pageSize": 50,
+  "id": "view_backlog",
+  "name": "Backlog",
+  "visibleFieldIds": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "tags",
+    "due_date"
+  ],
+  "fieldOrder": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "tags",
+    "due_date"
+  ],
+  "sorts": [
+    {
+      "fieldId": "due_date",
+      "direction": "asc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "status",
+      "operator": "is",
+      "value": "Backlog"
+    }
+  ],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

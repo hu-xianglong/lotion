@@ -1,0 +1,34 @@
+{
+  "pageSize": 50,
+  "id": "view_bugs",
+  "name": "Bugs",
+  "visibleFieldIds": [
+    "title",
+    "severity",
+    "topic",
+    "occurred_at",
+    "resolved"
+  ],
+  "fieldOrder": [
+    "title",
+    "severity",
+    "topic",
+    "occurred_at",
+    "resolved"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "kind",
+      "operator": "is",
+      "value": "Bug"
+    }
+  ],
+  "databaseId": "db_rows_stress",
+  "type": "table"
+}

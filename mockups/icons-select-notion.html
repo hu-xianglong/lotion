@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Select / Multi_select · Notion-style</title>
+<style>
+  :root {
+    --paper: #fffdf8;
+    --sand: #faf6ee;
+    --vellum: #f4eee2;
+    --rule: #ece4d2;
+    --ink-1: #1f1d1a;
+    --ink-3: #7a7268;
+    --ink-4: #a39988;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--sand);
+    color: var(--ink-1);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    padding: 56px 48px;
+  }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  .lede { color: var(--ink-3); margin: 0 0 32px; max-width: 720px; }
+  .lede code {
+    font-family: "SF Mono", monospace;
+    font-size: 12px;
+    background: var(--vellum);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    margin: 32px 0 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    max-width: 1000px;
+  }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .row {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    color: var(--ink-1);
+  }
+  .row .s14 { display: flex; height: 14px; align-items: center; }
+  .row .s20 { display: flex; height: 20px; align-items: center; }
+  .row .s32 { display: flex; height: 32px; align-items: center; }
+  .label { font-size: 12px; color: var(--ink-3); }
+  .label b { color: var(--ink-1); }
+</style>
+</head>
+<body>
+
+<h1>Notion-style select / multi_select</h1>
+<p class="lede">
+  <b>select</b>：圆角小盒子 + chevron-down，就是 HTML <code>&lt;select&gt;</code> 的形态，一眼"下拉单选"。<br>
+  <b>multi_select</b>：三层水平 chip 堆叠，一眼"多个 tag"。
+</p>
+
+<h2>14 / 20 / 32 px</h2>
+<div class="grid">
+
+  <div class="card">
+    <div class="row">
+      <span class="s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="11" height="8" rx="2"/><path d="M6 7.5l2 2 2-2"/></svg></span>
+      <span class="s20"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="11" height="8" rx="2"/><path d="M6 7.5l2 2 2-2"/></svg></span>
+      <span class="s32"><svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="11" height="8" rx="2"/><path d="M6 7.5l2 2 2-2"/></svg></span>
+    </div>
+    <div class="label"><b>select</b> · 圆角盒 + chevron</div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span class="s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="6.75" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="10" width="13" height="2.5" rx="1.25"/></svg></span>
+      <span class="s20"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="6.75" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="10" width="13" height="2.5" rx="1.25"/></svg></span>
+      <span class="s32"><svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="6.75" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="10" width="13" height="2.5" rx="1.25"/></svg></span>
+    </div>
+    <div class="label"><b>multi_select v1</b> · 三层平行 chip</div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span class="s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3" width="9" height="3" rx="1.5"/><rect x="3.75" y="6.5" width="9" height="3" rx="1.5"/><rect x="2" y="10" width="9" height="3" rx="1.5"/></svg></span>
+      <span class="s20"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3" width="9" height="3" rx="1.5"/><rect x="3.75" y="6.5" width="9" height="3" rx="1.5"/><rect x="2" y="10" width="9" height="3" rx="1.5"/></svg></span>
+      <span class="s32"><svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3" width="9" height="3" rx="1.5"/><rect x="3.75" y="6.5" width="9" height="3" rx="1.5"/><rect x="2" y="10" width="9" height="3" rx="1.5"/></svg></span>
+    </div>
+    <div class="label"><b>multi_select v2</b> · 错位级联 chip</div>
+  </div>
+</div>
+
+<p style="color: var(--ink-3); font-size: 13px; max-width: 720px; margin-top: 32px;">
+  我推 <b>select</b> + <b>multi_select v1</b>（三层平行 chip）—— 静态、不偏移，跟 select 的对齐方向一致；v2 错位有点偷"sort"的感觉。
+</p>
+
+</body>
+</html>

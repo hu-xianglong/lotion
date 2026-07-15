@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "spaceId": "sp_demo",
+  "name": "Lotion Demo Space",
+  "pages": [
+    "pg_home",
+    "pg_weekly_review",
+    "pg_markdown_lab",
+    "pg_database_lab",
+    "pg_search_lab",
+    "pg_status_board",
+    "pg_triage",
+    "pg_kanban_plugin_test",
+    "pg_chinese_demo",
+    "pg_scale_demo",
+    "pg_markdown_showcase"
+  ],
+  "databases": [
+    "db_tasks",
+    "db_reading",
+    "db_field_lab",
+    "db_view_lab",
+    "db_csv_edges",
+    "db_formula_lab",
+    "db_views_stress",
+    "db_rows_stress",
+    "db_rows_2k",
+    "db_rows_20k",
+    "db_rows_100k",
+    "db_rows_500k"
+  ],
+  "systemDatabases": [
+    "workspaces",
+    "pages"
+  ],
+  "activePageId": "pg_home",
+  "recents": [
+    {
+      "type": "page",
+      "id": "pg_home",
+      "at": "2026-05-28T19:49:51.682Z",
+      "count": 1
+    },
+    {
+      "type": "page",
+      "id": "pg_markdown_showcase",
+      "at": "2026-05-28T00:36:23.005Z"
+    },
+    {
+      "type": "page",
+      "id": "pg_markdown_lab",
+      "at": "2026-05-28T00:36:16.867Z"
+    },
+    {
+      "type": "database",
+      "id": "db_field_lab",
+      "at": "2026-05-27T23:22:01.902Z"
+    },
+    {
+      "type": "row_page",
+      "databaseId": "db_tasks",
+      "rowId": "row_task_1",
+      "at": "2026-05-27T02:56:07.670Z"
+    },
+    {
+      "type": "page",
+      "id": "pg_weekly_review",
+      "at": "2026-05-27T01:52:05.812Z"
+    },
+    {
+      "type": "page",
+      "id": "pg_chinese_demo",
+      "at": "2026-05-26T23:31:11.609Z"
+    },
+    {
+      "type": "page",
+      "id": "pg_scale_demo",
+      "at": "2026-05-26T23:30:43.515Z"
+    },
+    {
+      "type": "page",
+      "id": "pg_triage",
+      "at": "2026-05-26T23:30:29.785Z"
+    }
+  ]
+}

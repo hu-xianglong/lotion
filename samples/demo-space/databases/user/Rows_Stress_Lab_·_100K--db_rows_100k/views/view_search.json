@@ -1,0 +1,34 @@
+{
+  "pageSize": 50,
+  "id": "view_search",
+  "name": "Search",
+  "visibleFieldIds": [
+    "title",
+    "kind",
+    "severity",
+    "occurred_at",
+    "resolved"
+  ],
+  "fieldOrder": [
+    "title",
+    "kind",
+    "severity",
+    "occurred_at",
+    "resolved"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "topic",
+      "operator": "is",
+      "value": "Search"
+    }
+  ],
+  "databaseId": "db_rows_100k",
+  "type": "table"
+}

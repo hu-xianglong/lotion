@@ -1,0 +1,23 @@
+{
+  "id": "view_default",
+  "databaseId": "workspaces",
+  "name": "All",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "icon",
+    "updated_time"
+  ],
+  "fieldOrder": [
+    "title",
+    "icon",
+    "updated_time"
+  ],
+  "wrapFieldIds": [
+    "title",
+    "icon",
+    "updated_time"
+  ],
+  "sorts": [],
+  "filters": []
+}

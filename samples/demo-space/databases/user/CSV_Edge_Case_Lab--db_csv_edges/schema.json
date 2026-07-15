@@ -1,0 +1,54 @@
+{
+  "id": "db_csv_edges",
+  "name": "CSV Edge Case Lab",
+  "created_time": "2026-05-17T10:00:00.000Z",
+  "updated_time": "2026-05-17T10:00:00.000Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "type": "text"
+    },
+    {
+      "id": "note",
+      "name": "Note",
+      "type": "text"
+    },
+    {
+      "id": "amount",
+      "name": "Amount",
+      "type": "number"
+    },
+    {
+      "id": "checked",
+      "name": "Checked",
+      "type": "checkbox"
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

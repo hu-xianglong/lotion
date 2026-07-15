@@ -1,0 +1,34 @@
+{
+  "pageSize": 50,
+  "id": "view_blocked",
+  "name": "Blocked",
+  "visibleFieldIds": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "notes"
+  ],
+  "fieldOrder": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "notes"
+  ],
+  "sorts": [
+    {
+      "fieldId": "priority",
+      "direction": "asc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "status",
+      "operator": "is",
+      "value": "Blocked"
+    }
+  ],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

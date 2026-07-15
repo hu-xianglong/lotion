@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-electron/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.#*
+
+# Tool-specific session caches.
+.claude/*
+.playwright-mcp/
+
+# Generated stress fixture — 175 MB CSV exceeds GitHub's 100 MB hard limit.
+# Recreate locally with `node scripts/generate-stress-fixtures.mjs`.
+samples/demo-space/databases/**/*db_rows_500k/data.csv
+
+.scratch/
+artifacts/

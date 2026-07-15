@@ -1,0 +1,250 @@
+{
+  "id": "db_views_stress",
+  "name": "Views Stress Lab",
+  "created_time": "2026-05-17T09:00:00.000Z",
+  "updated_time": "2026-05-17T09:00:00.000Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "type": "text"
+    },
+    {
+      "id": "chinese_title",
+      "name": "中文标题",
+      "type": "text"
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_backlog",
+          "name": "Backlog",
+          "color": "gray"
+        },
+        {
+          "id": "opt_todo",
+          "name": "Todo",
+          "color": "yellow"
+        },
+        {
+          "id": "opt_in_progress",
+          "name": "In Progress",
+          "color": "blue"
+        },
+        {
+          "id": "opt_blocked",
+          "name": "Blocked",
+          "color": "red"
+        },
+        {
+          "id": "opt_in_review",
+          "name": "In Review",
+          "color": "purple"
+        },
+        {
+          "id": "opt_done",
+          "name": "Done",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "priority",
+      "name": "Priority",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_low",
+          "name": "Low",
+          "color": "gray"
+        },
+        {
+          "id": "opt_medium",
+          "name": "Medium",
+          "color": "yellow"
+        },
+        {
+          "id": "opt_high",
+          "name": "High",
+          "color": "orange"
+        },
+        {
+          "id": "opt_critical",
+          "name": "Critical",
+          "color": "red"
+        }
+      ]
+    },
+    {
+      "id": "team",
+      "name": "Team",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_frontend",
+          "name": "Frontend",
+          "color": "blue"
+        },
+        {
+          "id": "opt_backend",
+          "name": "Backend",
+          "color": "purple"
+        },
+        {
+          "id": "opt_design",
+          "name": "Design",
+          "color": "pink"
+        },
+        {
+          "id": "opt_data",
+          "name": "Data",
+          "color": "orange"
+        },
+        {
+          "id": "opt_mobile",
+          "name": "Mobile",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "assignee",
+      "name": "Assignee",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_ada",
+          "name": "Ada",
+          "color": "purple"
+        },
+        {
+          "id": "opt_boris",
+          "name": "Boris",
+          "color": "blue"
+        },
+        {
+          "id": "opt_cleo",
+          "name": "Cleo",
+          "color": "pink"
+        },
+        {
+          "id": "opt_dimitri",
+          "name": "Dimitri",
+          "color": "orange"
+        },
+        {
+          "id": "opt_esma",
+          "name": "Esma",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "tags",
+      "name": "Tags",
+      "type": "multi_select",
+      "options": [
+        {
+          "id": "opt_bug",
+          "name": "bug",
+          "color": "red"
+        },
+        {
+          "id": "opt_feature",
+          "name": "feature",
+          "color": "blue"
+        },
+        {
+          "id": "opt_refactor",
+          "name": "refactor",
+          "color": "purple"
+        },
+        {
+          "id": "opt_docs",
+          "name": "docs",
+          "color": "gray"
+        },
+        {
+          "id": "opt_performance",
+          "name": "performance",
+          "color": "orange"
+        },
+        {
+          "id": "opt_accessibility",
+          "name": "accessibility",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "due_date",
+      "name": "Due date",
+      "type": "date"
+    },
+    {
+      "id": "last_reviewed_at",
+      "name": "Last reviewed at",
+      "type": "date"
+    },
+    {
+      "id": "effort",
+      "name": "Effort",
+      "type": "number"
+    },
+    {
+      "id": "progress",
+      "name": "Progress",
+      "type": "number"
+    },
+    {
+      "id": "done",
+      "name": "Done",
+      "type": "checkbox"
+    },
+    {
+      "id": "notes",
+      "name": "Notes",
+      "type": "text"
+    },
+    {
+      "id": "owner_notes_zh",
+      "name": "负责人备注",
+      "type": "text"
+    },
+    {
+      "id": "urgency",
+      "name": "Urgency",
+      "type": "formula",
+      "formula": "=IF(status=\"Done\", 0, IF(priority=\"Critical\", 100, IF(priority=\"High\", 50, IF(priority=\"Medium\", 20, 5))))"
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

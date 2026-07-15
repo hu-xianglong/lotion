@@ -1,0 +1,4 @@
+id,created_time,updated_time,title,author,status,rating,finished,next_action,page_file
+row_book_1,2026-05-17T09:21:00.000Z,2026-05-17T09:21:00.000Z,Designing Data-Intensive Applications,Martin Kleppmann,Reading,5,false,Keep reading,Designing_Data-Intensive_Applications--row_book_1.md
+row_book_2,2026-05-17T09:22:00.000Z,2026-05-17T09:22:00.000Z,How to Take Smart Notes,Sonke Ahrens,Done,4,true,Archive notes,How_to_Take_Smart_Notes--row_book_2.md
+row_book_3,2026-05-17T09:23:00.000Z,2026-05-17T09:23:00.000Z,The Humane Interface,Jef Raskin,Queued,4,false,Keep reading,The_Humane_Interface--row_book_3.md

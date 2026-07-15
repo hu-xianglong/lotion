@@ -1,0 +1,1529 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Lotion · Redesign Preview</title>
+<style>
+  /* ──────────────────────────────────────────────────────────────
+     Design tokens — warm-cream variant of Notion's system.
+     ── Lotion redesign mockup. Pure preview; no JS.
+     ────────────────────────────────────────────────────────────── */
+  :root {
+    /* Surfaces */
+    --paper:  #fffdf8;     /* main canvas */
+    --sand:   #faf6ee;     /* sidebar bg */
+    --vellum: #f4eee2;     /* hover/active */
+    --kraft:  #ebe3d1;     /* selected, popover bg */
+    --shell:  #e7e0d1;     /* deepest cream */
+
+    /* Ink scale */
+    --ink-1:  #1f1d1a;     /* primary text */
+    --ink-2:  #4d473e;     /* strong secondary */
+    --ink-3:  #7a7268;     /* secondary */
+    --ink-4:  #a39988;     /* tertiary, placeholder */
+    --ink-5:  #c7bdaa;     /* tinted disabled */
+
+    /* Hairlines */
+    --rule:        #ece4d2;
+    --rule-strong: #ddd2ba;
+
+    /* Accent — used sparingly: link, focus ring, mark highlight */
+    --accent:       #1f6feb;
+    --accent-soft:  #d8e5f9;
+    --highlight:    #fbe39a;
+    --danger:       #b34a3c;
+
+    /* Type */
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                    "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+
+    /* Spacing scale (4px base) */
+    --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+    --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 48px;
+    --s-9: 64px;
+
+    /* Radii */
+    --r-1: 3px;  --r-2: 5px;  --r-3: 8px;  --r-4: 12px;
+
+    /* Shadows */
+    --shadow-1: 0 1px 2px rgba(31,29,26,0.05);
+    --shadow-2: 0 6px 16px rgba(31,29,26,0.08), 0 1px 2px rgba(31,29,26,0.05);
+    --shadow-3: 0 20px 56px rgba(31,29,26,0.18), 0 2px 6px rgba(31,29,26,0.06);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { background: #e1d8c5; }
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    color: var(--ink-1);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    padding: 56px 48px 96px;
+  }
+
+  .review-header {
+    max-width: 1240px;
+    margin: 0 auto 48px;
+    color: var(--ink-2);
+  }
+  .review-header h1 {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--ink-1);
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  .review-header p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--ink-3);
+    max-width: 720px;
+  }
+  .review-header code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--vellum);
+    color: var(--ink-2);
+    padding: 1px 5px;
+    border-radius: var(--r-1);
+  }
+
+  .section-title {
+    max-width: 1240px;
+    margin: 64px auto 16px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-title::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule-strong);
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+     Tokens panel
+     ────────────────────────────────────────────────────────────── */
+  .tokens {
+    max-width: 1240px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .tokens-card {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-4);
+    padding: 24px;
+    box-shadow: var(--shadow-1);
+  }
+  .tokens-card h3 {
+    margin: 0 0 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .swatch {
+    border: 1px solid var(--rule);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    font-size: 11px;
+  }
+  .swatch .chip {
+    height: 56px;
+  }
+  .swatch .meta {
+    padding: 6px 8px;
+    background: var(--paper);
+    color: var(--ink-2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+  }
+  .swatch .meta b {
+    color: var(--ink-1);
+    font-weight: 600;
+    font-family: var(--font-ui);
+  }
+
+  .type-sample {
+    display: grid;
+    gap: 14px;
+  }
+  .type-row {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 16px;
+    align-items: baseline;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--rule);
+  }
+  .type-row:last-child { border-bottom: 0; padding-bottom: 0; }
+  .type-row .tag {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .type-row .demo { color: var(--ink-1); }
+
+  /* ──────────────────────────────────────────────────────────────
+     Window mockup chrome
+     ────────────────────────────────────────────────────────────── */
+  .window {
+    width: 1240px;
+    margin: 0 auto;
+    border-radius: var(--r-4);
+    overflow: hidden;
+    background: var(--paper);
+    box-shadow: var(--shadow-3);
+    border: 1px solid var(--rule-strong);
+  }
+  .titlebar {
+    height: 36px;
+    background: #f0e9d8;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+  }
+  .titlebar .traffic {
+    display: flex;
+    gap: 8px;
+  }
+  .titlebar .traffic span {
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.08);
+  }
+  .titlebar .traffic span:nth-child(1) { background: #ff5f57; }
+  .titlebar .traffic span:nth-child(2) { background: #febc2e; }
+  .titlebar .traffic span:nth-child(3) { background: #28c840; }
+  .titlebar .title {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-3);
+    font-size: 12px;
+    font-weight: 500;
+    pointer-events: none;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: 760px;
+    background: var(--paper);
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+     Sidebar
+     ────────────────────────────────────────────────────────────── */
+  .sidebar {
+    background: var(--sand);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    padding: 12px 8px 8px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .ws-switcher {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px;
+    border-radius: var(--r-3);
+    cursor: pointer;
+  }
+  .ws-switcher:hover { background: var(--vellum); }
+  .ws-switcher .avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    background: linear-gradient(135deg, #d8c89a, #b89a52);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .ws-switcher .name {
+    flex: 1;
+    font-weight: 600;
+    color: var(--ink-1);
+  }
+  .ws-switcher .chev {
+    color: var(--ink-4);
+  }
+
+  .nav-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--r-2);
+    cursor: pointer;
+    color: var(--ink-2);
+  }
+  .nav-row svg { color: var(--ink-4); flex-shrink: 0; }
+  .nav-row:hover { background: var(--vellum); }
+  .nav-row.active { background: var(--kraft); color: var(--ink-1); }
+  .nav-row.active svg { color: var(--ink-2); }
+  .nav-row .label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav-row .right {
+    display: none;
+    color: var(--ink-4);
+  }
+  .nav-row:hover .right { display: inline-flex; }
+
+  .sb-search {
+    margin: 8px 4px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-2);
+    color: var(--ink-4);
+    font-size: 13px;
+  }
+  .sb-search kbd {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--vellum);
+    color: var(--ink-3);
+    padding: 1px 5px;
+    border-radius: var(--r-1);
+  }
+
+  .sb-section {
+    margin-top: 10px;
+    padding: 0 4px;
+  }
+  .sb-section-header {
+    display: flex;
+    align-items: center;
+    padding: 0 8px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-4);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .sb-section-header .plus {
+    margin-left: auto;
+    color: var(--ink-4);
+    cursor: pointer;
+  }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .footer-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .toggle {
+    display: inline-flex;
+    background: var(--vellum);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+  .toggle span {
+    padding: 3px 10px;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .toggle span.on {
+    background: var(--ink-1);
+    color: var(--paper);
+    border-radius: 999px;
+  }
+
+  .backup-btn {
+    margin: 6px 4px 0;
+    padding: 8px 10px;
+    border-radius: var(--r-2);
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink-2);
+    text-align: center;
+    font-size: 13px;
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+     Page editor
+     ────────────────────────────────────────────────────────────── */
+  .canvas {
+    overflow-y: auto;
+    background: var(--paper);
+  }
+  .page-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 24px;
+    color: var(--ink-3);
+    font-size: 13px;
+    border-bottom: 1px solid transparent;
+  }
+  .page-top .crumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: var(--r-2);
+    cursor: pointer;
+  }
+  .page-top .crumb:hover { background: var(--vellum); color: var(--ink-1); }
+  .page-top .sep { color: var(--ink-4); }
+  .page-top .actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 4px;
+  }
+  .page-top .actions button {
+    border: 0;
+    background: transparent;
+    padding: 6px;
+    border-radius: var(--r-2);
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+  .page-top .actions button:hover { background: var(--vellum); color: var(--ink-1); }
+
+  .page-cover {
+    height: 180px;
+    background:
+      radial-gradient(ellipse at 30% 40%, #e6d3a2 0%, transparent 60%),
+      radial-gradient(ellipse at 70% 60%, #c8a87a 0%, transparent 55%),
+      linear-gradient(135deg, #efdcb0, #d6b07c);
+    position: relative;
+  }
+  .page-cover::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, transparent 60%, rgba(31,29,26,0.06));
+  }
+  .page-cover-actions {
+    position: absolute;
+    bottom: 8px; right: 16px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .page-cover:hover .page-cover-actions { opacity: 1; }
+  .page-cover-actions button {
+    border: 0;
+    background: rgba(255,253,248,0.9);
+    color: var(--ink-2);
+    padding: 5px 10px;
+    border-radius: var(--r-2);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .page-column {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 12px 24px 80px;
+  }
+  .page-icon-row {
+    margin-top: -42px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+  }
+  .page-icon-big {
+    width: 72px;
+    height: 72px;
+    background: var(--vellum);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    line-height: 1;
+    box-shadow: var(--shadow-1);
+  }
+  .page-icon-actions {
+    display: flex;
+    gap: 4px;
+    padding-bottom: 6px;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .page-icon-row:hover .page-icon-actions { opacity: 1; }
+  .page-icon-actions button {
+    border: 0;
+    background: transparent;
+    color: var(--ink-3);
+    padding: 4px 8px;
+    border-radius: var(--r-2);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .page-icon-actions button:hover { background: var(--vellum); color: var(--ink-1); }
+
+  .page-title {
+    font-family: var(--font-display);
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--ink-1);
+    margin: 12px 0 16px;
+    outline: none;
+  }
+
+  .page-props {
+    display: grid;
+    gap: 1px;
+    margin-bottom: 24px;
+  }
+  .prop {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: var(--r-2);
+    min-height: 30px;
+  }
+  .prop:hover { background: var(--vellum); }
+  .prop-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+  .prop-label svg { color: var(--ink-4); }
+  .prop-value {
+    color: var(--ink-1);
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .prop-empty {
+    color: var(--ink-4);
+    font-style: normal;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: var(--vellum);
+    color: var(--ink-2);
+  }
+  .pill.amber { background: #f5e2bb; color: #6a4d10; }
+  .pill.sage  { background: #dfe7d6; color: #3f5b32; }
+  .pill.rose  { background: #f1d6d0; color: #7d2f24; }
+  .pill.sky   { background: #d8e3ef; color: #2a4d70; }
+
+  .body-text {
+    font-size: 16px;
+    line-height: 1.65;
+    color: var(--ink-1);
+  }
+  .body-text h2 {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 28px 0 8px;
+  }
+  .body-text h3 {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 20px 0 6px;
+  }
+  .body-text p { margin: 0 0 12px; }
+  .body-text ul { padding-left: 22px; margin: 0 0 12px; }
+  .body-text li { margin: 2px 0; }
+  .body-text a {
+    color: var(--ink-1);
+    background-image: linear-gradient(var(--ink-4), var(--ink-4));
+    background-size: 100% 1px;
+    background-repeat: no-repeat;
+    background-position: 0 100%;
+    text-decoration: none;
+  }
+  .body-text a:hover { background-image: linear-gradient(var(--accent), var(--accent)); color: var(--accent); }
+  .body-text blockquote {
+    border-left: 3px solid var(--ink-1);
+    padding: 2px 0 2px 16px;
+    color: var(--ink-2);
+    margin: 0 0 12px;
+  }
+  .body-text code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--vellum);
+    padding: 1px 5px;
+    border-radius: var(--r-1);
+    color: var(--ink-1);
+  }
+  .callout {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #fbf3df;
+    border-left: 3px solid #d4a648;
+    border-radius: var(--r-2);
+    color: var(--ink-2);
+    margin: 12px 0;
+    align-items: start;
+  }
+  .callout .ico { font-size: 20px; line-height: 1; }
+  .internal-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--ink-1);
+    background: var(--vellum);
+    padding: 1px 6px;
+    border-radius: var(--r-1);
+    text-decoration: none;
+    font-size: 14px;
+    border: 1px solid var(--rule);
+  }
+  .internal-link svg { color: var(--ink-3); }
+  .internal-link:hover { background: var(--kraft); }
+
+  /* ──────────────────────────────────────────────────────────────
+     Database table view
+     ────────────────────────────────────────────────────────────── */
+  .db-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 24px 0;
+  }
+  .db-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--r-3);
+    background: var(--vellum);
+    border: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    line-height: 1;
+  }
+  .db-title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .db-title {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink-1);
+  }
+  .db-sub {
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+
+  .view-tabs-bar {
+    display: flex;
+    align-items: center;
+    padding: 8px 24px 0;
+    gap: 14px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .view-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 4px 10px;
+    color: var(--ink-3);
+    font-size: 13px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+  }
+  .view-tab svg { color: var(--ink-4); }
+  .view-tab.active {
+    color: var(--ink-1);
+    border-bottom-color: var(--ink-1);
+  }
+  .view-tab.active svg { color: var(--ink-1); }
+  .view-tab:hover:not(.active) { color: var(--ink-2); }
+  .view-tab-add {
+    color: var(--ink-4);
+    padding: 6px 4px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .view-tools {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding-bottom: 6px;
+  }
+  .icon-btn {
+    border: 0;
+    background: transparent;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-2);
+    color: var(--ink-3);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--vellum); color: var(--ink-1); }
+  .primary-btn {
+    border: 0;
+    background: var(--ink-1);
+    color: var(--paper);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: var(--r-2);
+    cursor: pointer;
+    margin-left: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .primary-btn:hover { background: #000; }
+
+  .db-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    table-layout: fixed;
+  }
+  .db-table colgroup col:nth-child(1) { width: 38px; }
+  .db-table th, .db-table td {
+    border-right: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    padding: 0 10px;
+    text-align: left;
+    height: 38px;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .db-table th {
+    font-weight: 500;
+    color: var(--ink-3);
+    background: #fcf8ee;
+    font-size: 12px;
+    position: sticky; top: 0;
+  }
+  .db-table th .col {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .db-table th svg { color: var(--ink-4); }
+  .db-table tbody tr:hover { background: var(--vellum); }
+  .db-table tbody td.title-cell {
+    color: var(--ink-1);
+    font-weight: 500;
+  }
+  .db-table tbody td.muted {
+    color: var(--ink-3);
+  }
+  .db-table .row-num {
+    color: var(--ink-4);
+    font-size: 11px;
+    text-align: center;
+    padding: 0;
+  }
+  .new-row {
+    color: var(--ink-3);
+    cursor: pointer;
+    padding-left: 14px !important;
+  }
+  .new-row:hover { color: var(--ink-1); }
+
+  .db-footer {
+    padding: 8px 24px;
+    color: var(--ink-3);
+    font-size: 12px;
+    border-top: 1px solid var(--rule);
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+     Search overlay
+     ────────────────────────────────────────────────────────────── */
+  .search-stage {
+    position: relative;
+    background: rgba(31,29,26,0.18);
+    backdrop-filter: blur(2px);
+    padding: 48px;
+    border-radius: var(--r-4);
+  }
+  .search-stage .behind {
+    height: 480px;
+    border-radius: var(--r-3);
+    background:
+      linear-gradient(180deg, var(--sand), var(--paper) 30%);
+    opacity: 0.6;
+    border: 1px solid var(--rule);
+  }
+  .search-panel {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 680px;
+    max-height: 460px;
+    background: var(--paper);
+    border-radius: var(--r-4);
+    box-shadow: var(--shadow-3);
+    border: 1px solid var(--rule-strong);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .search-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .search-input input {
+    border: 0;
+    background: transparent;
+    outline: none;
+    font-size: 16px;
+    color: var(--ink-1);
+    flex: 1;
+    font-family: var(--font-ui);
+  }
+  .search-meta {
+    padding: 6px 18px;
+    color: var(--ink-3);
+    font-size: 12px;
+    background: #fbf6ec;
+    border-bottom: 1px solid var(--rule);
+  }
+  .search-results {
+    overflow-y: auto;
+    padding: 4px 0 6px;
+  }
+  .search-group-title {
+    padding: 10px 18px 4px;
+    color: var(--ink-3);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .search-group-title .count {
+    color: var(--ink-4);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .search-hit {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 18px;
+    cursor: pointer;
+  }
+  .search-hit:hover, .search-hit.active { background: var(--vellum); }
+  .search-hit-label {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .search-hit-label .ctx { color: var(--ink-3); font-size: 12px; }
+  .search-hit-label .sep { color: var(--ink-4); }
+  .search-hit-label .ttl { color: var(--ink-1); font-weight: 600; }
+  .search-hit-preview {
+    color: var(--ink-3);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search-hit-preview mark {
+    background: var(--highlight);
+    color: var(--ink-1);
+    padding: 0 1px;
+    border-radius: 2px;
+  }
+
+  /* Misc helpers / labels */
+  .stage-label {
+    max-width: 1240px;
+    margin: 0 auto 8px;
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+  .stage-label b { color: var(--ink-1); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="review-header">
+  <h1>Lotion · Frontend Redesign Preview</h1>
+  <p>方向：Notion-restraint × warm-cream。系统字体栈，13/16/40 px 的紧凑节奏，
+     hairline 1px 分隔，仅 ink 灰阶 + 一个克制的蓝色用于 link/focus；
+     全局 design tokens 抽到 <code>:root</code>。下方是五个表面的 mockup。
+     OK 了我就直接把 tokens 和样式落到 <code>styles.css</code>。</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     1. Tokens — palette + type
+     ════════════════════════════════════════════════════════════ -->
+<div class="section-title">01 · Design Tokens</div>
+<div class="tokens">
+
+  <div class="tokens-card">
+    <h3>Palette</h3>
+    <div class="swatch-grid" style="grid-template-columns: repeat(5, 1fr)">
+      <div class="swatch"><div class="chip" style="background: var(--paper)"></div>
+        <div class="meta"><b>paper</b><span>#fffdf8</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--sand)"></div>
+        <div class="meta"><b>sand</b><span>#faf6ee</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--vellum)"></div>
+        <div class="meta"><b>vellum</b><span>#f4eee2</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--kraft)"></div>
+        <div class="meta"><b>kraft</b><span>#ebe3d1</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--shell)"></div>
+        <div class="meta"><b>shell</b><span>#e7e0d1</span></div></div>
+    </div>
+    <div class="swatch-grid" style="margin-top: 12px">
+      <div class="swatch"><div class="chip" style="background: var(--ink-1)"></div>
+        <div class="meta"><b>ink-1</b><span>#1f1d1a</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--ink-2)"></div>
+        <div class="meta"><b>ink-2</b><span>#4d473e</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--ink-3)"></div>
+        <div class="meta"><b>ink-3</b><span>#7a7268</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--ink-4)"></div>
+        <div class="meta"><b>ink-4</b><span>#a39988</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--ink-5)"></div>
+        <div class="meta"><b>ink-5</b><span>#c7bdaa</span></div></div>
+    </div>
+    <div class="swatch-grid" style="margin-top: 12px; grid-template-columns: repeat(4, 1fr)">
+      <div class="swatch"><div class="chip" style="background: var(--rule)"></div>
+        <div class="meta"><b>rule</b><span>#ece4d2</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--rule-strong)"></div>
+        <div class="meta"><b>rule-strong</b><span>#ddd2ba</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--accent)"></div>
+        <div class="meta" style="color:#fff;background:var(--accent)"><b style="color:#fff">accent</b><span>#1f6feb</span></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--highlight)"></div>
+        <div class="meta"><b>highlight</b><span>#fbe39a</span></div></div>
+    </div>
+  </div>
+
+  <div class="tokens-card">
+    <h3>Typography</h3>
+    <div class="type-sample">
+      <div class="type-row">
+        <span class="tag">display</span>
+        <span class="demo" style="font-family: var(--font-display); font-size: 40px; font-weight: 700; line-height: 1.15; letter-spacing: -0.02em">和恺媛约会 @4月23日</span>
+      </div>
+      <div class="type-row">
+        <span class="tag">h2 / db</span>
+        <span class="demo" style="font-family: var(--font-display); font-size: 32px; font-weight: 700; letter-spacing: -0.01em">身体管理</span>
+      </div>
+      <div class="type-row">
+        <span class="tag">h3</span>
+        <span class="demo" style="font-family: var(--font-display); font-size: 18px; font-weight: 600">小标题 · Section heading</span>
+      </div>
+      <div class="type-row">
+        <span class="tag">body</span>
+        <span class="demo" style="font-size: 16px; line-height: 1.65">正文 16/1.65 —— 段落、笔记、行 detail body 全部用这个节奏。</span>
+      </div>
+      <div class="type-row">
+        <span class="tag">ui</span>
+        <span class="demo" style="font-size: 13px">侧边栏、属性 label、按钮、tab —— 13px UI baseline。</span>
+      </div>
+      <div class="type-row">
+        <span class="tag">caption</span>
+        <span class="demo" style="font-size: 11px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.06em; text-transform: uppercase">Section Header</span>
+      </div>
+      <div class="type-row">
+        <span class="tag">mono</span>
+        <span class="demo" style="font-family: var(--font-mono); font-size: 13px">db_07a006f9 · row_dd0c5ccc</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     2. Sidebar + Top-level Page Editor
+     ════════════════════════════════════════════════════════════ -->
+<div class="section-title">02 · Sidebar + Page Editor</div>
+<div class="stage-label"><b>Top-level page</b>　·　封面 + 大标题 + 属性面板 + Markdown body，全列单栏滚动</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><span></span><span></span><span></span></div>
+    <div class="title">Lotion</div>
+  </div>
+  <div class="app">
+
+    <aside class="sidebar">
+      <div class="ws-switcher">
+        <div class="avatar">N</div>
+        <div class="name">Notion Import</div>
+        <div class="chev">⌄</div>
+      </div>
+      <div class="sb-search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>搜索页面和数据库</span>
+        <kbd>⌘⇧F</kbd>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-header">页面 <span class="plus">+</span></div>
+        <div class="nav-row active">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h4"/></svg>
+          <span class="label">和恺媛约会 @April 23, 2026 8:00 PM</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h4"/></svg>
+          <span class="label">Home</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h4"/></svg>
+          <span class="label">个人主页</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h4"/></svg>
+          <span class="label">内容创作</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h4"/></svg>
+          <span class="label">书写</span>
+        </div>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-header">数据库 <span class="plus">+</span></div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">成功日记</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">身体管理</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">活动 &amp; 社群</span>
+        </div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">我的昨天值得过吗</span>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="footer-row">语言 <div class="toggle"><span>EN</span><span class="on">中文</span></div></div>
+        <div class="footer-row">Vim 模式 <div class="toggle"><span>关</span><span class="on">开</span></div></div>
+        <div class="footer-row">原文模式 <div class="toggle"><span class="on">关</span><span>开</span></div></div>
+        <button class="backup-btn">备份</button>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <div class="page-top">
+        <div class="actions">
+          <button title="返回">‹</button>
+          <button title="前进">›</button>
+          <button title="更多">⋯</button>
+        </div>
+      </div>
+      <div class="page-cover">
+        <div class="page-cover-actions">
+          <button>更换封面</button>
+          <button>重新定位</button>
+          <button>移除</button>
+        </div>
+      </div>
+      <div class="page-column">
+        <div class="page-icon-row">
+          <div class="page-icon-big">📔</div>
+          <div class="page-icon-actions">
+            <button>添加封面</button>
+            <button>添加图标</button>
+            <button>添加评论</button>
+          </div>
+        </div>
+        <h1 class="page-title">和恺媛约会 @April 23, 2026 8:00 PM</h1>
+
+        <div class="page-props">
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/><path d="m15 5 4 4"/><path d="M14 11 22 3"/></svg>
+              标签
+            </span>
+            <span class="prop-value"><span class="pill amber">约会</span> <span class="pill sage">日记</span></span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h12"/></svg>
+              内容
+            </span>
+            <span class="prop-value prop-empty">空</span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 14a5 5 0 0 0 7.07 0l3-3a5 5 0 1 0-7.07-7.07L11.5 5.5"/><path d="M14 10a5 5 0 0 0-7.07 0l-3 3a5 5 0 1 0 7.07 7.07L12.5 18.5"/></svg>
+              链接
+            </span>
+            <span class="prop-value prop-empty">空</span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              日期
+            </span>
+            <span class="prop-value">February 20, 2026 8:05 PM</span>
+          </div>
+        </div>
+
+        <div class="body-text">
+          <p>2026/02/20 恺媛生病了。去看完她。本来只是想聊聊天，结果没想到又做了一下午的爱。还做了两次。
+            本来早上还撸了一管。挺神奇的。昨天的感觉很好。刻意动的节奏慢了一点。好像效果还行。但是确实没有必要特地的控制节奏。</p>
+
+          <h2>反思</h2>
+          <p>关于亲密关系里的节奏 —— 不必刻意。状态自然带出，反而更松弛。
+            参考 <a class="internal-link" href="#"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>晨间日记 · 2026/05/19</a> 里的对照记录。</p>
+
+          <div class="callout">
+            <div class="ico">💡</div>
+            <div>不必把 "节奏控制" 当成目标 —— 它是结果，不是手段。下次试着只关注当下的状态。</div>
+          </div>
+
+          <h3>待整理</h3>
+          <ul>
+            <li>问 <a href="#">@满雨</a> 周末有没有空，咖啡。</li>
+            <li>把上周的健身笔记搬进 <code>身体管理</code>。</li>
+            <li>给恺媛回个消息。</li>
+          </ul>
+
+          <blockquote>真美好啊。</blockquote>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
+     3. Database table
+     ════════════════════════════════════════════════════════════ -->
+<div class="section-title">03 · Database Table</div>
+<div class="stage-label"><b>Database</b>　·　顶部 DB 标题/图标 + view tabs，工具条右侧 filter/sort/search/settings + primary New 按钮</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><span></span><span></span><span></span></div>
+    <div class="title">Lotion</div>
+  </div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="ws-switcher">
+        <div class="avatar">N</div>
+        <div class="name">Notion Import</div>
+        <div class="chev">⌄</div>
+      </div>
+      <div class="sb-search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>搜索页面和数据库</span>
+        <kbd>⌘⇧F</kbd>
+      </div>
+      <div class="sb-section">
+        <div class="sb-section-header">页面</div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>
+          <span class="label">Home</span></div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>
+          <span class="label">个人主页</span></div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>
+          <span class="label">内容创作</span></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-section-header">数据库</div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">成功日记</span></div>
+        <div class="nav-row active">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">身体管理</span></div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">活动 &amp; 社群</span></div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="footer-row">语言 <div class="toggle"><span>EN</span><span class="on">中文</span></div></div>
+        <button class="backup-btn">备份</button>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <div class="db-toolbar">
+        <div class="db-icon">🏃</div>
+        <div class="db-title-wrap">
+          <div class="db-title">身体管理</div>
+          <div class="db-sub">8 个字段 · 124 行</div>
+        </div>
+      </div>
+
+      <div class="view-tabs-bar">
+        <div class="view-tab active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+          全部
+        </div>
+        <div class="view-tab">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+          本月
+        </div>
+        <div class="view-tab">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          看板
+        </div>
+        <div class="view-tab-add">+ 添加视图</div>
+        <div class="view-tools">
+          <button class="icon-btn" title="筛选">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18l-7 8v6l-4-2v-4z"/></svg>
+          </button>
+          <button class="icon-btn" title="排序">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/></svg>
+          </button>
+          <button class="icon-btn" title="表内搜索">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          </button>
+          <button class="icon-btn" title="设置">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.4.9a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.4-.9c.6.5 1.3.9 2 1.2L10 21h4l.5-2.6c.7-.3 1.4-.7 2-1.2l2.4.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
+          </button>
+          <button class="primary-btn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+            新建
+          </button>
+        </div>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="db-table">
+          <colgroup>
+            <col><col style="width: 280px"><col style="width: 120px"><col style="width: 100px"><col style="width: 110px"><col style="width: 140px"><col><col style="width: 130px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="row-num"></th>
+              <th><span class="col"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M5 12h14M5 17h10"/></svg>Name</span></th>
+              <th><span class="col"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Created</span></th>
+              <th><span class="col">手动日期</span></th>
+              <th><span class="col">新增痘痘</span></th>
+              <th><span class="col">Tags</span></th>
+              <th><span class="col">内容</span></th>
+              <th><span class="col">日期</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="row-num">1</td><td class="title-cell">Untitled</td><td class="muted">Oct 29, 1:02 PM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill rose">头痛</span></td><td>昨晚在恺媛家犯了一次偏头痛，可能是撸管撸多了…</td><td class="muted">Oct 29, 1:02 PM</td></tr>
+            <tr><td class="row-num">2</td><td class="title-cell">补剂吃的时候还是要喝水</td><td class="muted">May 19, 8:14 AM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill sage">补剂</span></td><td>昨晚发现一颗维 D 卡在了喉咙里，今天感觉吞咽稍有问题…</td><td class="muted">May 19, 8:14 AM</td></tr>
+            <tr><td class="row-num">3</td><td class="title-cell">又是一个很好的 workout</td><td class="muted">May 19, 7:32 AM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill sky">健身</span></td><td>今天用 5×5 跟着练，最后一组深蹲腿软了 30 秒…</td><td class="muted">May 19, 7:32 AM</td></tr>
+            <tr><td class="row-num">4</td><td class="title-cell">昨天和乐群聊天</td><td class="muted">May 18, 11:02 PM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill amber">社交</span></td><td>聊到了她妹妹去年的事，我感觉我有点共情过头…</td><td class="muted">May 18, 11:02 PM</td></tr>
+            <tr><td class="row-num">5</td><td class="title-cell">8:30 起 · 11:30 第一觉</td><td class="muted">May 18, 8:30 AM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill sage">睡眠</span></td><td>第一觉醒的时候挺爽的，但又躺回去睡到 10 点…</td><td class="muted">May 18, 8:30 AM</td></tr>
+            <tr><td class="row-num">6</td><td class="title-cell">晚上喝汤了</td><td class="muted">May 17, 7:14 PM</td><td class="muted">—</td><td class="muted">1</td><td><span class="pill rose">饮食</span></td><td>表格：和满雨恺媛，zoey 去 hiking。8，晚上喝汤了…</td><td class="muted">May 17, 7:14 PM</td></tr>
+            <tr><td class="row-num">7</td><td class="title-cell">入睡有点困难</td><td class="muted">May 17, 12:08 AM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill sage">睡眠</span></td><td>和满雨聊天，和恺媛聊天，昨天有点吵，中间醒了一下…</td><td class="muted">May 17, 12:08 AM</td></tr>
+            <tr><td class="row-num">8</td><td class="title-cell">和恺媛一起 cuddle</td><td class="muted">May 16, 11:00 PM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill amber">亲密</span></td><td>一起过生日，和恺媛一起 cuddle。6.75，睡晚了 8:34…</td><td class="muted">May 16, 11:00 PM</td></tr>
+            <tr><td class="row-num">9</td><td class="title-cell">补剂吃完了</td><td class="muted">May 15, 9:14 AM</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill sage">补剂</span></td><td>把上一瓶维 D 吃完了，今天开始换一瓶新的…</td><td class="muted">May 15, 9:14 AM</td></tr>
+            <tr><td class="row-num"></td><td class="new-row" colspan="7">+ 新建</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="db-footer">显示 9 / 124 行</div>
+    </main>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
+     4. Row detail page
+     ════════════════════════════════════════════════════════════ -->
+<div class="section-title">04 · Row Detail Page</div>
+<div class="stage-label"><b>Database row</b>　·　顶栏 breadcrumb 点击回到所属数据库，icon + 标题 + Notion 风格属性栈 + body</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><span></span><span></span><span></span></div>
+    <div class="title">Lotion</div>
+  </div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="ws-switcher">
+        <div class="avatar">N</div>
+        <div class="name">Notion Import</div>
+        <div class="chev">⌄</div>
+      </div>
+      <div class="sb-search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>搜索页面和数据库</span>
+        <kbd>⌘⇧F</kbd>
+      </div>
+      <div class="sb-section">
+        <div class="sb-section-header">页面</div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>
+          <span class="label">Home</span></div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>
+          <span class="label">个人主页</span></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-section-header">数据库</div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">成功日记</span></div>
+        <div class="nav-row">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span class="label">身体管理</span></div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="footer-row">语言 <div class="toggle"><span>EN</span><span class="on">中文</span></div></div>
+        <button class="backup-btn">备份</button>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <div class="page-top">
+        <div class="crumb">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span>身体管理</span>
+        </div>
+        <span class="sep">/</span>
+        <span style="color: var(--ink-2)">2026/02/20 · 偏头痛</span>
+        <div class="actions">
+          <button title="收藏">★</button>
+          <button title="分享">⇪</button>
+          <button title="更多">⋯</button>
+        </div>
+      </div>
+
+      <div class="page-column" style="padding-top: 28px">
+        <div class="page-icon-row" style="margin-top: 0">
+          <div class="page-icon-big">🌱</div>
+          <div class="page-icon-actions">
+            <button>添加封面</button>
+            <button>添加图标</button>
+            <button>添加评论</button>
+          </div>
+        </div>
+        <h1 class="page-title">2026/02/20 恺媛生病了。去看完她。</h1>
+
+        <div class="page-props">
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M5 12h14M5 17h10"/></svg>
+              标签
+            </span>
+            <span class="prop-value"><span class="pill rose">头痛</span></span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h12"/></svg>
+              内容
+            </span>
+            <span class="prop-value prop-empty">空</span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 14a5 5 0 0 0 7.07 0l3-3a5 5 0 1 0-7.07-7.07L11.5 5.5"/></svg>
+              URL
+            </span>
+            <span class="prop-value prop-empty">空</span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              手动日期
+            </span>
+            <span class="prop-value prop-empty">空</span>
+          </div>
+          <div class="prop">
+            <span class="prop-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              日期
+            </span>
+            <span class="prop-value">February 20, 2026 8:05 PM</span>
+          </div>
+        </div>
+
+        <div class="body-text">
+          <p>2026/02/20 恺媛生病了。去看完她。本来只是想要聊聊天，结果没想到又做了一下午的爱。还做了两次。
+            本来早上还撸了一管。挺神奇的。昨天的感觉很好。刻意动的节奏慢了一点。好像效果还行。
+            但是确实没有必要特地的控制节奏。</p>
+          <p>感觉这一段时间状态都还不错，<a class="internal-link" href="#"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/></svg>晨间日记 5/19</a> 也记了类似的。</p>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
+     5. Global search
+     ════════════════════════════════════════════════════════════ -->
+<div class="section-title">05 · Global Search (⌘⇧F)</div>
+<div class="stage-label"><b>Global search</b>　·　按 Lotion 的逻辑模型分组 —— 页面 / 数据库 / 数据库行 / 行的页面</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><span></span><span></span><span></span></div>
+    <div class="title">Lotion</div>
+  </div>
+  <div class="search-stage" style="border-radius: 0">
+    <div class="behind"></div>
+    <div class="search-panel">
+      <div class="search-input">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ink-3)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input value="恺媛" />
+        <kbd style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); background: var(--vellum); padding: 2px 6px; border-radius: var(--r-1)">ESC</kbd>
+      </div>
+      <div class="search-meta">293 个结果</div>
+      <div class="search-results">
+
+        <div class="search-group-title">页面 <span class="count">1</span></div>
+        <div class="search-hit">
+          <div class="search-hit-label"><span class="ttl">和恺媛约会 @April 23, 2026 8:00 PM</span></div>
+          <div class="search-hit-preview">title: "和<mark>恺媛</mark>约会 @April 23, 2026 8:00 PM"</div>
+        </div>
+
+        <div class="search-group-title">数据库 <span class="count">1</span></div>
+        <div class="search-hit">
+          <div class="search-hit-label"><span class="ttl">和恺媛的愿望清单</span></div>
+        </div>
+
+        <div class="search-group-title">数据库行 <span class="count">80</span></div>
+        <div class="search-hit active">
+          <div class="search-hit-label">
+            <span class="ctx">身体管理</span>
+            <span class="sep">·</span>
+            <span class="ttl">Untitled</span>
+          </div>
+          <div class="search-hit-preview">昨晚在<mark>恺媛</mark>家犯了一次偏头痛，可能是撸管撸多了。</div>
+        </div>
+        <div class="search-hit">
+          <div class="search-hit-label">
+            <span class="ctx">茶友们</span>
+            <span class="sep">·</span>
+            <span class="ttl">杨恺媛</span>
+          </div>
+          <div class="search-hit-preview">…19T05:11:50.318Z,杨<mark>恺媛</mark>,杨<mark>恺媛</mark>.md</div>
+        </div>
+        <div class="search-hit">
+          <div class="search-hit-label">
+            <span class="ctx">我的昨天值得过吗</span>
+            <span class="sep">·</span>
+            <span class="ttl">Untitled</span>
+          </div>
+          <div class="search-hit-preview">和 Heddy 聊天，和 <mark>恺媛</mark> 聊天。7.75，睡的太晚…</div>
+        </div>
+
+        <div class="search-group-title">行的页面 <span class="count">211</span></div>
+        <div class="search-hit">
+          <div class="search-hit-label">
+            <span class="ctx">成功日记</span>
+            <span class="sep">·</span>
+            <span class="ttl">2026/01/24 满雨聊天</span>
+          </div>
+          <div class="search-hit-preview"># 2026/01/24 和 <mark>恺媛</mark> 满雨一起聊天，感觉我们三个人在一起聊天的时候…</div>
+        </div>
+        <div class="search-hit">
+          <div class="search-hit-label">
+            <span class="ctx">成功日记</span>
+            <span class="sep">·</span>
+            <span class="ttl">2026/01/12 上海聊天</span>
+          </div>
+          <div class="search-hit-preview"># 2026/01/12 昨天去 kelly 家聊天，原来她也是上海人。…我不想让 <mark>恺媛</mark> 多等</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="max-width: 1240px; margin: 80px auto 0; color: var(--ink-3); font-size: 13px;">
+  <p>—— 以上五屏全部 mockup。OK 我就把这一套 tokens、字号、间距、组件类名落到
+    <code style="font-family: var(--font-mono); background: var(--vellum); padding: 1px 5px; border-radius: var(--r-1); color: var(--ink-2)">src/renderer/styles.css</code>，
+    然后按需对组件文件做最小改动（主要是 className 重命名 + 删除冗余规则）。</p>
+</div>
+
+</body>
+</html>

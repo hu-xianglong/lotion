@@ -1,0 +1,12 @@
+{
+  "id": "view_default",
+  "databaseId": "db_csv_edges",
+  "name": "Default",
+  "type": "table",
+  "visibleFieldIds": ["title", "note", "amount", "checked"],
+  "fieldOrder": ["title", "note", "amount", "checked"],
+  "sorts": [
+    { "fieldId": "amount", "direction": "desc" }
+  ],
+  "filters": []
+}

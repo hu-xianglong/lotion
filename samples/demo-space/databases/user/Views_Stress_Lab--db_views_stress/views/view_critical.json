@@ -1,0 +1,36 @@
+{
+  "pageSize": 50,
+  "id": "view_critical",
+  "name": "Critical",
+  "visibleFieldIds": [
+    "title",
+    "status",
+    "team",
+    "assignee",
+    "due_date",
+    "urgency"
+  ],
+  "fieldOrder": [
+    "title",
+    "status",
+    "team",
+    "assignee",
+    "due_date",
+    "urgency"
+  ],
+  "sorts": [
+    {
+      "fieldId": "due_date",
+      "direction": "asc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "priority",
+      "operator": "is",
+      "value": "Critical"
+    }
+  ],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

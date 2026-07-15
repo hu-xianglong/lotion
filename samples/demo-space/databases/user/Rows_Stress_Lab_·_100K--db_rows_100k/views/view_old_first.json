@@ -1,0 +1,28 @@
+{
+  "pageSize": 50,
+  "id": "view_old_first",
+  "name": "Oldest first",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "kind",
+    "severity",
+    "occurred_at"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "kind",
+    "severity",
+    "occurred_at"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "asc"
+    }
+  ],
+  "filters": [],
+  "databaseId": "db_rows_100k",
+  "type": "table"
+}

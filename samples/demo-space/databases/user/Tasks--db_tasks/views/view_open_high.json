@@ -1,0 +1,14 @@
+{
+  "id": "view_open_high",
+  "databaseId": "db_tasks",
+  "name": "Open high priority",
+  "type": "table",
+  "visibleFieldIds": ["title", "status", "priority", "tags", "due_date", "score"],
+  "fieldOrder": ["title", "priority", "status", "tags", "due_date", "score"],
+  "sorts": [
+    { "fieldId": "due_date", "direction": "asc" }
+  ],
+  "filters": [
+    { "fieldId": "priority", "operator": "is", "value": "High" }
+  ]
+}

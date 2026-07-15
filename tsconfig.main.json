@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "outDir": "dist-electron",
+    "rootDir": "src",
+    "types": ["node", "electron"]
+  },
+  "include": [
+    "src/main",
+    "src/preload",
+    "src/shared",
+    "src/builtin-plugins/llm-openai",
+    "src/builtin-plugins/advanced-search/service.ts",
+    "src/builtin-plugins/github-backup/service.ts"
+  ]
+}

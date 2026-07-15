@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+enabled="$(git config --bool lotion.buildAppOnCommit || echo false)"
+if [ "$enabled" != "true" ]; then
+  exit 0
+fi
+
+short_sha="$(git rev-parse --short HEAD)"
+echo "Building Lotion .app for commit ${short_sha}..."
+if ! npm run app:commit; then
+  echo "Lotion .app build failed for commit ${short_sha}; commit was kept." >&2
+fi

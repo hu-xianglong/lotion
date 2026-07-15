@@ -1,0 +1,32 @@
+{
+  "pageSize": 50,
+  "id": "view_done",
+  "name": "Done",
+  "visibleFieldIds": [
+    "title",
+    "team",
+    "assignee",
+    "updated_time"
+  ],
+  "fieldOrder": [
+    "title",
+    "team",
+    "assignee",
+    "updated_time"
+  ],
+  "sorts": [
+    {
+      "fieldId": "updated_time",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "done",
+      "operator": "checked",
+      "value": true
+    }
+  ],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

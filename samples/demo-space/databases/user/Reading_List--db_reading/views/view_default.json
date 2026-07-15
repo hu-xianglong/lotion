@@ -1,0 +1,12 @@
+{
+  "id": "view_default",
+  "databaseId": "db_reading",
+  "name": "Default",
+  "type": "table",
+  "visibleFieldIds": ["title", "author", "status", "rating", "finished", "next_action"],
+  "fieldOrder": ["title", "author", "status", "rating", "finished", "next_action"],
+  "sorts": [
+    { "fieldId": "rating", "direction": "desc" }
+  ],
+  "filters": []
+}

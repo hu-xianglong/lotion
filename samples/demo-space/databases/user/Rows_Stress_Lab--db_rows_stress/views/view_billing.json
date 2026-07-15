@@ -1,0 +1,34 @@
+{
+  "pageSize": 50,
+  "id": "view_billing",
+  "name": "Billing",
+  "visibleFieldIds": [
+    "title",
+    "kind",
+    "severity",
+    "occurred_at",
+    "resolved"
+  ],
+  "fieldOrder": [
+    "title",
+    "kind",
+    "severity",
+    "occurred_at",
+    "resolved"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "topic",
+      "operator": "is",
+      "value": "Billing"
+    }
+  ],
+  "databaseId": "db_rows_stress",
+  "type": "table"
+}

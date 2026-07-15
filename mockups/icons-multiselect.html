@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>multi_select · 10 variants</title>
+<style>
+  :root {
+    --paper: #fffdf8;
+    --sand: #faf6ee;
+    --vellum: #f4eee2;
+    --rule: #ece4d2;
+    --ink-1: #1f1d1a;
+    --ink-3: #7a7268;
+    --ink-4: #a39988;
+    --terracotta: #c25434;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--sand);
+    color: var(--ink-1);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    padding: 56px 48px;
+  }
+  h1 { font-size: 24px; margin: 0 0 12px; }
+  .lede { color: var(--ink-3); margin: 0 0 40px; max-width: 720px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+    max-width: 1240px;
+  }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .row {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    height: 48px;
+  }
+  .row .dop {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background: var(--terracotta);
+    color: white;
+  }
+  .row .s14 { width: 14px; height: 14px; }
+  .row .s20 { width: 20px; height: 20px; border-radius: 5px; }
+  .row .s32 { width: 32px; height: 32px; border-radius: 7px; }
+  .row .raw {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-2);
+  }
+  .row .raw-s14 { width: 14px; height: 14px; }
+  .row .raw-s20 { width: 20px; height: 20px; }
+  .label {
+    font-size: 12px;
+    color: var(--ink-3);
+    font-weight: 500;
+    text-align: center;
+  }
+  .label b { color: var(--ink-1); }
+  .desc {
+    color: var(--ink-4);
+    font-size: 11px;
+    text-align: center;
+    line-height: 1.3;
+  }
+</style>
+</head>
+<body>
+
+<h1>multi_select · 10 个变种</h1>
+<p class="lede">
+  每个 icon 两种渲染：左 = minimal（纯 stroke），右 = accent（terracotta 方块色）。每个尺寸 14 / 20 / 32 三档。挑编号告我。
+</p>
+
+<div class="grid">
+
+  <!-- 01: 当前的三层堆叠 + ✓ -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><rect x="3.5" y="3.5" width="8" height="8" rx="1.5"/><rect x="1.5" y="1.5" width="8" height="8" rx="1.5" fill="var(--sand)"/><path d="M3.5 5.5l1.5 1.5L7.5 3.5"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><rect x="3.5" y="3.5" width="8" height="8" rx="1.5"/><rect x="1.5" y="1.5" width="8" height="8" rx="1.5" fill="white"/><path d="M3.5 5.5l1.5 1.5L7.5 3.5" stroke="var(--terracotta)"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><rect x="3.5" y="3.5" width="8" height="8" rx="1.5"/><rect x="1.5" y="1.5" width="8" height="8" rx="1.5" fill="white"/><path d="M3.5 5.5l1.5 1.5L7.5 3.5" stroke="var(--terracotta)"/></svg></span>
+    </div>
+    <div class="label"><b>01</b> · 三层方块 + ✓</div>
+    <div class="desc">当前版本（参考图）</div>
+  </div>
+
+  <!-- 02: 三行平行 chip -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="6.75" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="10" width="13" height="2.5" rx="1.25"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="6.75" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="10" width="13" height="2.5" rx="1.25"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="6.75" width="13" height="2.5" rx="1.25"/><rect x="1.5" y="10" width="13" height="2.5" rx="1.25"/></svg></span>
+    </div>
+    <div class="label"><b>02</b> · 三层平行 chip</div>
+    <div class="desc">tag 列表的感觉</div>
+  </div>
+
+  <!-- 03: 错开级联 chip -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.75" width="9" height="2.5" rx="1.25"/><rect x="4" y="6.75" width="9" height="2.5" rx="1.25"/><rect x="2" y="10.75" width="9" height="2.5" rx="1.25"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.75" width="9" height="2.5" rx="1.25"/><rect x="4" y="6.75" width="9" height="2.5" rx="1.25"/><rect x="2" y="10.75" width="9" height="2.5" rx="1.25"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.75" width="9" height="2.5" rx="1.25"/><rect x="4" y="6.75" width="9" height="2.5" rx="1.25"/><rect x="2" y="10.75" width="9" height="2.5" rx="1.25"/></svg></span>
+    </div>
+    <div class="label"><b>03</b> · 错位 chip</div>
+    <div class="desc">凌乱有节奏</div>
+  </div>
+
+  <!-- 04: 两片标签（tag）叠加 -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8.5V3.5a.5.5 0 0 1 .5-.5h4.5L13.5 6.5 10 10z"/><path d="M2.5 11V6a.5.5 0 0 1 .5-.5h4.5L11 9 7.5 12.5z" fill="var(--sand)"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8.5V3.5a.5.5 0 0 1 .5-.5h4.5L13.5 6.5 10 10z"/><path d="M2.5 11V6a.5.5 0 0 1 .5-.5h4.5L11 9 7.5 12.5z" fill="var(--terracotta)"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8.5V3.5a.5.5 0 0 1 .5-.5h4.5L13.5 6.5 10 10z"/><path d="M2.5 11V6a.5.5 0 0 1 .5-.5h4.5L11 9 7.5 12.5z" fill="var(--terracotta)"/></svg></span>
+    </div>
+    <div class="label"><b>04</b> · 双 tag 重叠</div>
+    <div class="desc">物理感更强</div>
+  </div>
+
+  <!-- 05: 一个 pill 里 3 个点 -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="5" width="13" height="6" rx="3"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="11" cy="8" r="1" fill="currentColor"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="5" width="13" height="6" rx="3"/><circle cx="5" cy="8" r="1" fill="white"/><circle cx="8" cy="8" r="1" fill="white"/><circle cx="11" cy="8" r="1" fill="white"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="5" width="13" height="6" rx="3"/><circle cx="5" cy="8" r="1" fill="white"/><circle cx="8" cy="8" r="1" fill="white"/><circle cx="11" cy="8" r="1" fill="white"/></svg></span>
+    </div>
+    <div class="label"><b>05</b> · 单 pill + 三点</div>
+    <div class="desc">"三选"暗示</div>
+  </div>
+
+  <!-- 06: 三个迷你 checkbox -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6" width="4" height="4" rx="1"/><rect x="6" y="6" width="4" height="4" rx="1"/><rect x="10.5" y="6" width="4" height="4" rx="1"/><path d="M7 7.8l0.8 0.8L9 7.4"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6" width="4" height="4" rx="1"/><rect x="6" y="6" width="4" height="4" rx="1" fill="white"/><rect x="10.5" y="6" width="4" height="4" rx="1"/><path d="M7 7.8l0.8 0.8L9 7.4" stroke="var(--terracotta)"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6" width="4" height="4" rx="1"/><rect x="6" y="6" width="4" height="4" rx="1" fill="white"/><rect x="10.5" y="6" width="4" height="4" rx="1"/><path d="M7 7.8l0.8 0.8L9 7.4" stroke="var(--terracotta)"/></svg></span>
+    </div>
+    <div class="label"><b>06</b> · 三 checkbox</div>
+    <div class="desc">中间已选</div>
+  </div>
+
+  <!-- 07: ✓ + 三横线 -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5l1.5 1.5L7 3"/><path d="M2.5 8.5l1.5 1.5L7 7"/><path d="M2.5 12.5l1.5 1.5L7 11"/><line x1="9" y1="4.5" x2="13.5" y2="4.5"/><line x1="9" y1="8.5" x2="13.5" y2="8.5"/><line x1="9" y1="12.5" x2="13.5" y2="12.5"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5l1.5 1.5L7 3"/><path d="M2.5 8.5l1.5 1.5L7 7"/><path d="M2.5 12.5l1.5 1.5L7 11"/><line x1="9" y1="4.5" x2="13.5" y2="4.5"/><line x1="9" y1="8.5" x2="13.5" y2="8.5"/><line x1="9" y1="12.5" x2="13.5" y2="12.5"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5l1.5 1.5L7 3"/><path d="M2.5 8.5l1.5 1.5L7 7"/><path d="M2.5 12.5l1.5 1.5L7 11"/><line x1="9" y1="4.5" x2="13.5" y2="4.5"/><line x1="9" y1="8.5" x2="13.5" y2="8.5"/><line x1="9" y1="12.5" x2="13.5" y2="12.5"/></svg></span>
+    </div>
+    <div class="label"><b>07</b> · 三 ✓ + 三行</div>
+    <div class="desc">checklist 风</div>
+  </div>
+
+  <!-- 08: 双 chip 重叠 -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="9" height="5" rx="2.5"/><rect x="2" y="7.5" width="9" height="5" rx="2.5" fill="var(--sand)"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="9" height="5" rx="2.5"/><rect x="2" y="7.5" width="9" height="5" rx="2.5" fill="var(--terracotta)"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="9" height="5" rx="2.5"/><rect x="2" y="7.5" width="9" height="5" rx="2.5" fill="var(--terracotta)"/></svg></span>
+    </div>
+    <div class="label"><b>08</b> · 双 pill 错位</div>
+    <div class="desc">极简，两个 chip</div>
+  </div>
+
+  <!-- 09: 三个 tag (旗) 并排 -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5V3a.5.5 0 0 1 .5-.5h2L6 4l-1.5 1.5h-2a.5.5 0 0 1-.5-.5z"/><path d="M2 9.5V8a.5.5 0 0 1 .5-.5h6L10 9l-1.5 1.5h-6a.5.5 0 0 1-.5-.5z"/><path d="M2 14V12.5a.5.5 0 0 1 .5-.5h4L8 13.5 6.5 14.5h-4a.5.5 0 0 1-.5-.5z"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5V3a.5.5 0 0 1 .5-.5h2L6 4l-1.5 1.5h-2a.5.5 0 0 1-.5-.5z"/><path d="M2 9.5V8a.5.5 0 0 1 .5-.5h6L10 9l-1.5 1.5h-6a.5.5 0 0 1-.5-.5z"/><path d="M2 14V12.5a.5.5 0 0 1 .5-.5h4L8 13.5 6.5 14.5h-4a.5.5 0 0 1-.5-.5z"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5V3a.5.5 0 0 1 .5-.5h2L6 4l-1.5 1.5h-2a.5.5 0 0 1-.5-.5z"/><path d="M2 9.5V8a.5.5 0 0 1 .5-.5h6L10 9l-1.5 1.5h-6a.5.5 0 0 1-.5-.5z"/><path d="M2 14V12.5a.5.5 0 0 1 .5-.5h4L8 13.5 6.5 14.5h-4a.5.5 0 0 1-.5-.5z"/></svg></span>
+    </div>
+    <div class="label"><b>09</b> · 三 tag 旗</div>
+    <div class="desc">三段标签</div>
+  </div>
+
+  <!-- 10: 项目符号列表 -->
+  <div class="card">
+    <div class="row">
+      <span class="raw raw-s14"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.5" cy="4.5" r="1" fill="currentColor"/><line x1="6.5" y1="4.5" x2="13.5" y2="4.5"/><circle cx="3.5" cy="8" r="1" fill="currentColor"/><line x1="6.5" y1="8" x2="13.5" y2="8"/><circle cx="3.5" cy="11.5" r="1" fill="currentColor"/><line x1="6.5" y1="11.5" x2="13.5" y2="11.5"/></svg></span>
+      <span class="dop s20"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.5" cy="4.5" r="1" fill="white"/><line x1="6.5" y1="4.5" x2="13.5" y2="4.5"/><circle cx="3.5" cy="8" r="1" fill="white"/><line x1="6.5" y1="8" x2="13.5" y2="8"/><circle cx="3.5" cy="11.5" r="1" fill="white"/><line x1="6.5" y1="11.5" x2="13.5" y2="11.5"/></svg></span>
+      <span class="dop s32"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.5" cy="4.5" r="1" fill="white"/><line x1="6.5" y1="4.5" x2="13.5" y2="4.5"/><circle cx="3.5" cy="8" r="1" fill="white"/><line x1="6.5" y1="8" x2="13.5" y2="8"/><circle cx="3.5" cy="11.5" r="1" fill="white"/><line x1="6.5" y1="11.5" x2="13.5" y2="11.5"/></svg></span>
+    </div>
+    <div class="label"><b>10</b> · bullet 列表</div>
+    <div class="desc">无序列表暗示</div>
+  </div>
+</div>
+
+<p style="color: var(--ink-3); font-size: 13px; max-width: 720px; margin-top: 48px;">
+  挑编号告我（也可以混搭，比如"主题色用 Navy + multi_select 用 02"）。
+</p>
+
+</body>
+</html>

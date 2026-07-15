@@ -1,0 +1,131 @@
+{
+  "id": "db_tasks",
+  "name": "Tasks",
+  "created_time": "2026-05-17T09:10:00.000Z",
+  "updated_time": "2026-05-17T09:10:00.000Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "type": "text"
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_todo",
+          "name": "Todo",
+          "color": "gray"
+        },
+        {
+          "id": "opt_in_progress",
+          "name": "In Progress",
+          "color": "blue"
+        },
+        {
+          "id": "opt_done",
+          "name": "Done",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "priority",
+      "name": "Priority",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_high",
+          "name": "High",
+          "color": "red"
+        },
+        {
+          "id": "opt_medium",
+          "name": "Medium",
+          "color": "yellow"
+        },
+        {
+          "id": "opt_low",
+          "name": "Low",
+          "color": "gray"
+        }
+      ]
+    },
+    {
+      "id": "tags",
+      "name": "Tags",
+      "type": "multi_select",
+      "options": [
+        {
+          "id": "opt_product",
+          "name": "Product",
+          "color": "purple"
+        },
+        {
+          "id": "opt_ui",
+          "name": "UI",
+          "color": "blue"
+        },
+        {
+          "id": "opt_git",
+          "name": "Git",
+          "color": "orange"
+        },
+        {
+          "id": "opt_formula",
+          "name": "Formula",
+          "color": "pink"
+        }
+      ]
+    },
+    {
+      "id": "due_date",
+      "name": "Due date",
+      "type": "date"
+    },
+    {
+      "id": "effort",
+      "name": "Effort",
+      "type": "number"
+    },
+    {
+      "id": "done",
+      "name": "Done",
+      "type": "checkbox"
+    },
+    {
+      "id": "score",
+      "name": "Score",
+      "type": "formula",
+      "formula": "=IF(status=\"Done\", 0, IF(priority=\"High\", 10, 3))"
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

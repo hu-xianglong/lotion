@@ -1,0 +1,34 @@
+{
+  "pageSize": 50,
+  "id": "view_high",
+  "name": "High severity",
+  "visibleFieldIds": [
+    "title",
+    "kind",
+    "topic",
+    "occurred_at",
+    "resolved"
+  ],
+  "fieldOrder": [
+    "title",
+    "kind",
+    "topic",
+    "occurred_at",
+    "resolved"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "severity",
+      "operator": "is",
+      "value": "High"
+    }
+  ],
+  "databaseId": "db_rows_stress",
+  "type": "table"
+}

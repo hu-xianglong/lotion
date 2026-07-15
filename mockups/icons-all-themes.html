@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Icons · all themes</title>
+<style>
+  :root {
+    --paper: #fffdf8;
+    --sand: #faf6ee;
+    --vellum: #f4eee2;
+    --rule: #ece4d2;
+    --ink-1: #1f1d1a;
+    --ink-3: #7a7268;
+    --ink-4: #a39988;
+
+    --terracotta: #c25434;
+    --navy:       #2f557f;
+    --forest:     #3f7a4a;
+    --saffron:    #c69846;
+    --plum:       #7a3d6a;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--sand);
+    color: var(--ink-1);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    padding: 48px 48px 96px;
+  }
+  h1 { font-size: 24px; margin: 0 0 16px; }
+  .lede { color: var(--ink-3); margin: 0 0 24px; max-width: 720px; }
+  h2 {
+    font-size: 14px;
+    margin: 40px 0 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2 .swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+  }
+  h2 .hex {
+    color: var(--ink-3);
+    font-size: 12px;
+    font-family: "SF Mono", monospace;
+  }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px;
+    max-width: 1240px;
+  }
+  .icon-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 76px;
+  }
+  .icon-cell .glyph {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon-cell .glyph .dop {
+    border-radius: 6px;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+  }
+  .icon-cell .label {
+    font-size: 11px;
+    color: var(--ink-3);
+  }
+  /* Text glyphs (Aa # ∑ id) in dopamine wrap */
+  .dop-txt {
+    font-weight: 700;
+    line-height: 1;
+    color: white;
+  }
+</style>
+</head>
+<body>
+
+<h1>Icons · 全套 5 主题色对照</h1>
+<p class="lede">
+  multi_select 用三层堆叠 + 顶层带 ✓（按你给的参考图）。每个主题色一行，挑一个我就上代码。
+</p>
+
+<script>
+  // Renders the same complete icon set in 5 colors via duplicated DOM.
+  // We keep CSS minimal and inline the SVGs once via a template.
+</script>
+
+<!-- We'll repeat the same icon block for each color. Easier as static HTML. -->
+
+<!-- ── Common SVG snippets, repeated per theme below ───────────────── -->
+<!-- We just literally duplicate the snippet 5 times with different bg color. -->
+
+<!-- ============== TERRACOTTA ============== -->
+<h2><span class="swatch" style="background: var(--terracotta)"></span> Terracotta <span class="hex">#c25434</span></h2>
+<div class="row" id="row-terracotta"></div>
+
+<!-- ============== NAVY ============== -->
+<h2><span class="swatch" style="background: var(--navy)"></span> Navy <span class="hex">#2f557f</span></h2>
+<div class="row" id="row-navy"></div>
+
+<!-- ============== FOREST ============== -->
+<h2><span class="swatch" style="background: var(--forest)"></span> Forest <span class="hex">#3f7a4a</span></h2>
+<div class="row" id="row-forest"></div>
+
+<!-- ============== SAFFRON ============== -->
+<h2><span class="swatch" style="background: var(--saffron)"></span> Saffron <span class="hex">#c69846</span></h2>
+<div class="row" id="row-saffron"></div>
+
+<!-- ============== PLUM ============== -->
+<h2><span class="swatch" style="background: var(--plum)"></span> Plum <span class="hex">#7a3d6a</span></h2>
+<div class="row" id="row-plum"></div>
+
+<script>
+  // Build the same icon list under each themed row. Each icon is
+  // either a stroked SVG glyph or a text glyph (Aa / # / ∑ / id).
+  const ICONS = [
+    { name: "page", svg: `<path d="M3.5 2.5h6L13 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11a1 1 0 0 1 .5-1z"/><path d="M9.5 2.5V6H13"/><line x1="5.5" y1="9" x2="10.5" y2="9"/><line x1="5.5" y1="11" x2="9" y2="11"/>` },
+    { name: "database", svg: `<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><line x1="2.5" y1="6" x2="13.5" y2="6"/><line x1="2.5" y1="10" x2="13.5" y2="10"/><line x1="6" y1="6" x2="6" y2="13.5"/><line x1="10" y1="6" x2="10" y2="13.5"/>` },
+    { name: "row_page", svg: `<path d="M3.5 2.5h6L13 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11a1 1 0 0 1 .5-1z"/><path d="M9.5 2.5V6H13"/><circle cx="6" cy="10" r="0.75" fill="white" stroke="none"/><line x1="8" y1="10" x2="11" y2="10"/>` },
+    { name: "folder", svg: `<path d="M2 5a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/>` },
+    { name: "search", svg: `<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>` },
+    { name: "filter", svg: `<path d="M2.5 4h11l-4 5v4l-3 1.5V9z"/>` },
+    { name: "sort", svg: `<path d="M4 12V3M2 5l2-2 2 2"/><line x1="8" y1="4" x2="13" y2="4"/><line x1="8" y1="8" x2="12" y2="8"/><line x1="8" y1="12" x2="11" y2="12"/>` },
+    { name: "settings", svg: `<circle cx="8" cy="8" r="2"/><path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.5 3.5l-1.5 1.5M5 11l-1.5 1.5M12.5 12.5L11 11M5 5L3.5 3.5"/>` },
+    { name: "select", svg: `<rect x="2.5" y="4" width="11" height="8" rx="2"/><path d="M6 7.5l2 2 2-2"/>` },
+    // multi_select: three stacked rounded squares — front is white
+    // (with a check in the theme color), back two are white outlines
+    // peeking out to the bottom-right (matches the reference image).
+    { name: "multi_select", svg: `
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="white" stroke-width="1.5"/>
+      <rect x="3.5" y="3.5" width="8" height="8" rx="1.5" fill="none" stroke="white" stroke-width="1.5"/>
+      <rect x="1.5" y="1.5" width="8" height="8" rx="1.5" fill="white" stroke="none"/>
+      <path d="M3.5 5.5l1.5 1.5L7.5 3.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    `, replaceCheckColor: true },
+    { name: "date", svg: `<rect x="2" y="3.5" width="12" height="10.5" rx="1.5"/><line x1="2" y1="7" x2="14" y2="7"/><line x1="5" y1="2" x2="5" y2="4.5"/><line x1="11" y1="2" x2="11" y2="4.5"/><circle cx="8" cy="10.5" r="0.6" fill="white" stroke="none"/>` },
+    { name: "checkbox", svg: `<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5 8l2 2 4-4"/>` },
+    { name: "time", svg: `<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/>` },
+    { name: "tags", svg: `<path d="M2.5 8.5V3a.5.5 0 0 1 .5-.5h5.5L13.5 8 8.5 13z"/><circle cx="5.5" cy="5.5" r="0.9" fill="white" stroke="none"/>` },
+    { name: "link", svg: `<path d="M7 9.5a3 3 0 0 0 4.2 0l2.3-2.3a3 3 0 1 0-4.2-4.2l-1.4 1.4"/><path d="M9 6.5a3 3 0 0 0-4.2 0L2.5 8.8a3 3 0 1 0 4.2 4.2l1.4-1.4"/>` },
+    { name: "star", svg: `<polygon points="8,2.5 9.6,6.4 13.5,6.7 10.5,9.4 11.5,13.3 8,11.2 4.5,13.3 5.5,9.4 2.5,6.7 6.4,6.4" fill="white"/>` }
+  ];
+  const TEXT_GLYPHS = [
+    { name: "text", text: "Aa", size: 18 },
+    { name: "number", text: "#", size: 22 },
+    { name: "formula", text: "∑", size: 23 },
+    { name: "id", text: "id", size: 17 }
+  ];
+
+  const THEMES = [
+    { id: "terracotta", color: "#c25434" },
+    { id: "navy",       color: "#2f557f" },
+    { id: "forest",     color: "#3f7a4a" },
+    { id: "saffron",    color: "#c69846" },
+    { id: "plum",       color: "#7a3d6a" }
+  ];
+
+  for (const theme of THEMES) {
+    const row = document.getElementById(`row-${theme.id}`);
+    if (!row) continue;
+    for (const ico of ICONS) {
+      const cell = document.createElement("div");
+      cell.className = "icon-cell";
+      // multi_select needs theme color for the check mark stroke.
+      // We replace `currentColor` after templating.
+      let svgInner = ico.svg;
+      if (ico.replaceCheckColor) {
+        svgInner = svgInner.replace(/currentColor/g, theme.color);
+      }
+      cell.innerHTML = `
+        <span class="glyph"><span class="dop" style="background:${theme.color}">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${svgInner}</svg>
+        </span></span>
+        <span class="label">${ico.name}</span>
+      `;
+      row.appendChild(cell);
+    }
+    for (const tg of TEXT_GLYPHS) {
+      const cell = document.createElement("div");
+      cell.className = "icon-cell";
+      cell.innerHTML = `
+        <span class="glyph"><span class="dop" style="background:${theme.color}">
+          <span class="dop-txt" style="font-size:${tg.size}px">${tg.text}</span>
+        </span></span>
+        <span class="label">${tg.name}</span>
+      `;
+      row.appendChild(cell);
+    }
+  }
+</script>
+
+<p style="color: var(--ink-3); font-size: 13px; max-width: 720px; margin-top: 48px;">
+  挑一个，我就在 styles.css 里设 <code style="font-family:'SF Mono',monospace;background:var(--vellum);padding:1px 5px;border-radius:3px">--icon-accent</code> = 它，单色主题就成型。
+</p>
+
+</body>
+</html>

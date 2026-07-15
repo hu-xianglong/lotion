@@ -1,0 +1,36 @@
+{
+  "pageSize": 50,
+  "id": "view_todo",
+  "name": "Todo",
+  "visibleFieldIds": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "due_date",
+    "effort"
+  ],
+  "fieldOrder": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "due_date",
+    "effort"
+  ],
+  "sorts": [
+    {
+      "fieldId": "due_date",
+      "direction": "asc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "status",
+      "operator": "is",
+      "value": "Todo"
+    }
+  ],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

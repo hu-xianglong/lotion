@@ -1,0 +1,60 @@
+{
+  "pageSize": 50,
+  "id": "view_wide_wrap",
+  "name": "Wide (wrap notes)",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "status",
+    "priority",
+    "team",
+    "assignee",
+    "tags",
+    "due_date",
+    "last_reviewed_at",
+    "effort",
+    "progress",
+    "done",
+    "notes",
+    "owner_notes_zh",
+    "urgency"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "status",
+    "priority",
+    "team",
+    "assignee",
+    "tags",
+    "due_date",
+    "last_reviewed_at",
+    "effort",
+    "progress",
+    "done",
+    "notes",
+    "owner_notes_zh",
+    "urgency"
+  ],
+  "sorts": [
+    {
+      "fieldId": "urgency",
+      "direction": "desc"
+    }
+  ],
+  "filters": [],
+  "wrapFieldIds": [
+    "notes",
+    "title",
+    "chinese_title",
+    "owner_notes_zh"
+  ],
+  "columnWidths": {
+    "title": 260,
+    "chinese_title": 220,
+    "notes": 320,
+    "owner_notes_zh": 280
+  },
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

@@ -1,0 +1,255 @@
+{
+  "id": "db_rows_100k",
+  "name": "Rows Stress Lab · 100K",
+  "created_time": "2026-05-17T09:00:00.000Z",
+  "updated_time": "2026-05-17T09:00:00.000Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "type": "text"
+    },
+    {
+      "id": "chinese_title",
+      "name": "中文标题",
+      "type": "text"
+    },
+    {
+      "id": "kind",
+      "name": "Kind",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_email",
+          "name": "Email",
+          "color": "blue"
+        },
+        {
+          "id": "opt_slack",
+          "name": "Slack",
+          "color": "purple"
+        },
+        {
+          "id": "opt_bug",
+          "name": "Bug",
+          "color": "red"
+        },
+        {
+          "id": "opt_note",
+          "name": "Note",
+          "color": "gray"
+        },
+        {
+          "id": "opt_meeting",
+          "name": "Meeting",
+          "color": "orange"
+        },
+        {
+          "id": "opt_doc",
+          "name": "Doc",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "source_channel",
+      "name": "Source channel",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_customer_email",
+          "name": "Customer email",
+          "color": "blue"
+        },
+        {
+          "id": "opt_internal_slack",
+          "name": "Internal slack",
+          "color": "purple"
+        },
+        {
+          "id": "opt_pager_duty",
+          "name": "Pager duty",
+          "color": "red"
+        },
+        {
+          "id": "opt_support_ticket",
+          "name": "Support ticket",
+          "color": "yellow"
+        },
+        {
+          "id": "opt_status_page",
+          "name": "Status page",
+          "color": "orange"
+        },
+        {
+          "id": "opt_telemetry_alert",
+          "name": "Telemetry alert",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "severity",
+      "name": "Severity",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_info",
+          "name": "Info",
+          "color": "gray"
+        },
+        {
+          "id": "opt_low",
+          "name": "Low",
+          "color": "blue"
+        },
+        {
+          "id": "opt_medium",
+          "name": "Medium",
+          "color": "yellow"
+        },
+        {
+          "id": "opt_high",
+          "name": "High",
+          "color": "orange"
+        },
+        {
+          "id": "opt_critical",
+          "name": "Critical",
+          "color": "red"
+        }
+      ]
+    },
+    {
+      "id": "topic",
+      "name": "Topic",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_auth",
+          "name": "Auth",
+          "color": "purple"
+        },
+        {
+          "id": "opt_billing",
+          "name": "Billing",
+          "color": "yellow"
+        },
+        {
+          "id": "opt_search",
+          "name": "Search",
+          "color": "blue"
+        },
+        {
+          "id": "opt_ui",
+          "name": "UI",
+          "color": "pink"
+        },
+        {
+          "id": "opt_infra",
+          "name": "Infra",
+          "color": "gray"
+        },
+        {
+          "id": "opt_mobile",
+          "name": "Mobile",
+          "color": "green"
+        },
+        {
+          "id": "opt_analytics",
+          "name": "Analytics",
+          "color": "orange"
+        }
+      ]
+    },
+    {
+      "id": "tags",
+      "name": "Tags",
+      "type": "multi_select",
+      "options": [
+        {
+          "id": "opt_customer",
+          "name": "customer",
+          "color": "blue"
+        },
+        {
+          "id": "opt_internal",
+          "name": "internal",
+          "color": "gray"
+        },
+        {
+          "id": "opt_urgent",
+          "name": "urgent",
+          "color": "red"
+        },
+        {
+          "id": "opt_automated",
+          "name": "automated",
+          "color": "purple"
+        },
+        {
+          "id": "opt_manual",
+          "name": "manual",
+          "color": "orange"
+        }
+      ]
+    },
+    {
+      "id": "occurred_at",
+      "name": "Occurred at",
+      "type": "date"
+    },
+    {
+      "id": "count",
+      "name": "Count",
+      "type": "number"
+    },
+    {
+      "id": "resolved",
+      "name": "Resolved",
+      "type": "checkbox"
+    },
+    {
+      "id": "note",
+      "name": "Note",
+      "type": "text"
+    },
+    {
+      "id": "chinese_note",
+      "name": "中文备注",
+      "type": "text"
+    },
+    {
+      "id": "urgency_score",
+      "name": "Urgency score",
+      "type": "formula",
+      "formula": "=IF(resolved=TRUE, 0, IF(severity=\"Critical\", 100, IF(severity=\"High\", 60, IF(severity=\"Medium\", 25, IF(severity=\"Low\", 8, 1)))))"
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

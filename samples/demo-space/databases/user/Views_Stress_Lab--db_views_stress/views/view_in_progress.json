@@ -1,0 +1,36 @@
+{
+  "pageSize": 50,
+  "id": "view_in_progress",
+  "name": "In progress",
+  "visibleFieldIds": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "progress",
+    "due_date"
+  ],
+  "fieldOrder": [
+    "title",
+    "priority",
+    "team",
+    "assignee",
+    "progress",
+    "due_date"
+  ],
+  "sorts": [
+    {
+      "fieldId": "progress",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "status",
+      "operator": "is",
+      "value": "In Progress"
+    }
+  ],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

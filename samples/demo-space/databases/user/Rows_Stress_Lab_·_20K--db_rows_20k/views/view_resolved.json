@@ -1,0 +1,34 @@
+{
+  "pageSize": 50,
+  "id": "view_resolved",
+  "name": "Resolved",
+  "visibleFieldIds": [
+    "title",
+    "kind",
+    "severity",
+    "topic",
+    "occurred_at"
+  ],
+  "fieldOrder": [
+    "title",
+    "kind",
+    "severity",
+    "topic",
+    "occurred_at"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "resolved",
+      "operator": "checked",
+      "value": true
+    }
+  ],
+  "databaseId": "db_rows_20k",
+  "type": "table"
+}

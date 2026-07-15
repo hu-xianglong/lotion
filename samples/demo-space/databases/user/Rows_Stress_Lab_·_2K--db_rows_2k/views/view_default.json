@@ -1,0 +1,44 @@
+{
+  "pageSize": 50,
+  "id": "view_default",
+  "name": "All",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "kind",
+    "source_channel",
+    "severity",
+    "topic",
+    "tags",
+    "occurred_at",
+    "count",
+    "resolved",
+    "note",
+    "chinese_note",
+    "urgency_score"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "kind",
+    "source_channel",
+    "severity",
+    "topic",
+    "tags",
+    "occurred_at",
+    "count",
+    "resolved",
+    "note",
+    "chinese_note",
+    "urgency_score"
+  ],
+  "sorts": [
+    {
+      "fieldId": "occurred_at",
+      "direction": "desc"
+    }
+  ],
+  "filters": [],
+  "databaseId": "db_rows_2k",
+  "type": "table"
+}

@@ -1,0 +1,28 @@
+{
+  "pageSize": 50,
+  "id": "view_compact",
+  "name": "Compact",
+  "visibleFieldIds": [
+    "title",
+    "chinese_title",
+    "status",
+    "priority",
+    "assignee"
+  ],
+  "fieldOrder": [
+    "title",
+    "chinese_title",
+    "status",
+    "priority",
+    "assignee"
+  ],
+  "sorts": [
+    {
+      "fieldId": "title",
+      "direction": "asc"
+    }
+  ],
+  "filters": [],
+  "databaseId": "db_views_stress",
+  "type": "table"
+}

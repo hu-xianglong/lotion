@@ -1,0 +1,114 @@
+{
+  "id": "db_field_lab",
+  "name": "Field Type Lab",
+  "created_time": "2026-05-17T09:45:00.000Z",
+  "updated_time": "2026-05-17T09:45:00.000Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "type": "text"
+    },
+    {
+      "id": "count",
+      "name": "Count",
+      "type": "number"
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_todo",
+          "name": "Todo",
+          "color": "gray"
+        },
+        {
+          "id": "opt_in_progress",
+          "name": "In Progress",
+          "color": "blue"
+        },
+        {
+          "id": "opt_done",
+          "name": "Done",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "labels",
+      "name": "Labels",
+      "type": "multi_select",
+      "options": [
+        {
+          "id": "opt_alpha",
+          "name": "Alpha",
+          "color": "purple"
+        },
+        {
+          "id": "opt_invoice",
+          "name": "Invoice",
+          "color": "orange"
+        },
+        {
+          "id": "opt_formula",
+          "name": "Formula",
+          "color": "pink"
+        },
+        {
+          "id": "opt_review",
+          "name": "Review",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "target_date",
+      "name": "Target date",
+      "type": "date"
+    },
+    {
+      "id": "reference_url",
+      "name": "Reference URL",
+      "type": "url"
+    },
+    {
+      "id": "enabled",
+      "name": "Enabled",
+      "type": "checkbox"
+    },
+    {
+      "id": "computed_count",
+      "name": "Computed count",
+      "type": "formula",
+      "formula": "count * 2 + 1"
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

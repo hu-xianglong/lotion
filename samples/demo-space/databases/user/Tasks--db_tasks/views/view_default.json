@@ -1,0 +1,12 @@
+{
+  "id": "view_default",
+  "databaseId": "db_tasks",
+  "name": "Default",
+  "type": "table",
+  "visibleFieldIds": ["title", "status", "priority", "tags", "due_date", "effort", "done", "score"],
+  "fieldOrder": ["title", "status", "priority", "tags", "due_date", "effort", "done", "score"],
+  "sorts": [
+    { "fieldId": "due_date", "direction": "asc" }
+  ],
+  "filters": []
+}

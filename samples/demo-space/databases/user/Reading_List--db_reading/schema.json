@@ -1,0 +1,82 @@
+{
+  "id": "db_reading",
+  "name": "Reading List",
+  "created_time": "2026-05-17T09:20:00.000Z",
+  "updated_time": "2026-05-17T09:20:00.000Z",
+  "fields": [
+    {
+      "id": "id",
+      "name": "ID",
+      "type": "id",
+      "system": true
+    },
+    {
+      "id": "created_time",
+      "name": "Created time",
+      "type": "created_time",
+      "system": true
+    },
+    {
+      "id": "updated_time",
+      "name": "Updated time",
+      "type": "updated_time",
+      "system": true
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "type": "text"
+    },
+    {
+      "id": "author",
+      "name": "Author",
+      "type": "text"
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "type": "select",
+      "options": [
+        {
+          "id": "opt_queued",
+          "name": "Queued",
+          "color": "gray"
+        },
+        {
+          "id": "opt_reading",
+          "name": "Reading",
+          "color": "blue"
+        },
+        {
+          "id": "opt_done",
+          "name": "Done",
+          "color": "green"
+        }
+      ]
+    },
+    {
+      "id": "rating",
+      "name": "Rating",
+      "type": "number"
+    },
+    {
+      "id": "finished",
+      "name": "Finished",
+      "type": "checkbox"
+    },
+    {
+      "id": "next_action",
+      "name": "Next action",
+      "type": "formula",
+      "formula": "=IF(finished=TRUE, \"Archive notes\", \"Keep reading\")"
+    },
+    {
+      "id": "page_file",
+      "name": "Page file",
+      "type": "text",
+      "system": true,
+      "hidden": true
+    }
+  ],
+  "defaultViewId": "view_default"
+}

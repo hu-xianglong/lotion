@@ -1,0 +1,36 @@
+{
+  "pageSize": 50,
+  "id": "view_unresolved",
+  "name": "Unresolved",
+  "visibleFieldIds": [
+    "title",
+    "kind",
+    "severity",
+    "topic",
+    "occurred_at",
+    "count"
+  ],
+  "fieldOrder": [
+    "title",
+    "kind",
+    "severity",
+    "topic",
+    "occurred_at",
+    "count"
+  ],
+  "sorts": [
+    {
+      "fieldId": "urgency_score",
+      "direction": "desc"
+    }
+  ],
+  "filters": [
+    {
+      "fieldId": "resolved",
+      "operator": "is_not",
+      "value": "true"
+    }
+  ],
+  "databaseId": "db_rows_stress",
+  "type": "table"
+}

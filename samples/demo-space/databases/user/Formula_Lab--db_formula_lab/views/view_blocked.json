@@ -1,0 +1,12 @@
+{
+  "id": "view_blocked",
+  "databaseId": "db_formula_lab",
+  "name": "Blocked formula rows",
+  "type": "table",
+  "visibleFieldIds": ["title", "status", "case_result", "arithmetic_result", "boolean_result"],
+  "fieldOrder": ["title", "status", "case_result", "arithmetic_result", "boolean_result"],
+  "sorts": [],
+  "filters": [
+    { "fieldId": "status", "operator": "is", "value": "Blocked" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "view_owner_you",
+  "databaseId": "db_view_lab",
+  "name": "Owned by you",
+  "type": "table",
+  "visibleFieldIds": ["title", "owner", "status", "rank"],
+  "fieldOrder": ["owner", "title", "status", "rank"],
+  "sorts": [
+    { "fieldId": "rank", "direction": "asc" }
+  ],
+  "filters": [
+    { "fieldId": "owner", "operator": "is", "value": "You" }
+  ]
+}
