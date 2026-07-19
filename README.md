@@ -130,19 +130,20 @@ This weight tracker stores one measurement per day. Starting with the eighth
 entry, one formula calculates the average of the previous seven source rows:
 
 ```text
-=MOVING_AVERAGE("weight_kg", 7, 2)
+=AVERAGE_LAST_DAYS("weight_kg", "recorded_date", 7, 2)
 ```
 
 - `"weight_kg"` is the stable field ID to average.
-- `7` selects the seven source rows immediately before the current row.
+- `"recorded_date"` selects records by the current entry's date.
+- `7` selects the previous seven calendar days.
 - `2` rounds the result to two decimal places.
 - The first seven entries stay empty until a complete window is available.
 - `A1`, `SUM(E1:E100)`, `VLOOKUP`, `SUMIF`, and other Excel-style expressions
   remain available when positional formulas are the better fit.
 
-Sorting, filtering, and rearranging a view do not change source row numbers or
-formula coordinates. The table displays both coordinates, and formula settings
-map every column letter back to its stable field ID.
+Sorting, filtering, rearranging a view, or inserting a backdated record does not
+change the date window. Positional `A1` formulas still use the displayed source
+coordinates when that model is the better fit.
 
 ![Lotion weight tracker calculating the previous seven-entry average](website/assets/lotion-formulas.png)
 

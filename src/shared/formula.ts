@@ -37,6 +37,12 @@ type FormulaParserConstructor = new (options?: {
 
 const Parser = FormulaParser as unknown as FormulaParserConstructor;
 const SHEET_NAME = "Lotion";
+const formulaDateIndexCache = new WeakMap<DatabaseRecord[], Map<string, DatedFormulaRecord[]>>();
+
+interface DatedFormulaRecord {
+  item: DatabaseRecord;
+  day: number;
+}
 
 export function formulaColumnLabel(index: number): string {
   if (!Number.isInteger(index) || index < 0) return "";
@@ -70,6 +76,8 @@ export function evaluateFormula(
         VALUES: (name, fromRow, toRow) => readFormulaValues(name, fields, records, fromRow, toRow),
         MOVING_AVERAGE: (name, windowSize, decimals) =>
           movingAverageFormulaValue(name, fields, records, rowIndex, windowSize, decimals),
+        AVERAGE_LAST_DAYS: (name, dateField, days, decimals) =>
+          averageLastDaysFormulaValue(name, dateField, fields, records, record, days, decimals),
         LOOKUP: (needle, lookupField, resultField, fromRow, toRow) =>
           lookupFormulaValue(needle, lookupField, resultField, fields, records, fromRow, toRow)
       },
@@ -199,12 +207,84 @@ function movingAverageFormulaValue(
     .filter(Number.isFinite);
   if (values.length !== window) return "";
 
-  const average = values.reduce((sum, value) => sum + value, 0) / window;
-  if (decimals === undefined) return average;
+  return roundFormulaNumber(values.reduce((sum, value) => sum + value, 0) / window, decimals);
+}
+
+function averageLastDaysFormulaValue(
+  valueFieldName: unknown,
+  dateFieldName: unknown,
+  fields: FieldSchema[],
+  records: DatabaseRecord[],
+  record: DatabaseRecord,
+  days: unknown,
+  decimals?: unknown
+): unknown {
+  const valueField = resolveFormulaField(valueFieldName, fields);
+  const dateField = resolveFormulaField(dateFieldName, fields);
+  if (!valueField || !dateField) return "#NAME?";
+
+  const requestedDays = Number(unwrapFormulaArgument(days));
+  const currentDay = formulaCalendarDay(record[dateField.id]);
+  if (!Number.isFinite(requestedDays) || requestedDays < 1 || currentDay === undefined) return "#VALUE!";
+  const windowDays = Math.floor(requestedDays);
+  const startDay = currentDay - windowDays * 24 * 60 * 60 * 1000;
+  const datedRecords = formulaDateIndex(records, dateField.id);
+  if (datedRecords.length === 0 || datedRecords[0].day > startDay) return "";
+  const fromIndex = lowerBoundFormulaDay(datedRecords, startDay);
+  const toIndex = lowerBoundFormulaDay(datedRecords, currentDay);
+  const values = datedRecords
+    .slice(fromIndex, toIndex)
+    .map(({ item }) => item[valueField.id])
+    .filter((value) => value !== "" && value !== null && value !== undefined)
+    .map(Number)
+    .filter(Number.isFinite);
+  if (values.length === 0) return "";
+  return roundFormulaNumber(values.reduce((sum, value) => sum + value, 0) / values.length, decimals);
+}
+
+function formulaDateIndex(records: DatabaseRecord[], fieldId: string): DatedFormulaRecord[] {
+  let byField = formulaDateIndexCache.get(records);
+  if (!byField) {
+    byField = new Map();
+    formulaDateIndexCache.set(records, byField);
+  }
+  const cached = byField.get(fieldId);
+  if (cached) return cached;
+  const index = records
+    .map((item) => ({ item, day: formulaCalendarDay(item[fieldId]) }))
+    .filter((entry): entry is DatedFormulaRecord => entry.day !== undefined)
+    .sort((left, right) => left.day - right.day);
+  byField.set(fieldId, index);
+  return index;
+}
+
+function lowerBoundFormulaDay(records: DatedFormulaRecord[], target: number): number {
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (records[middle].day < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function roundFormulaNumber(value: number, decimals?: unknown): unknown {
+  if (decimals === undefined) return value;
   const requestedDecimals = Number(unwrapFormulaArgument(decimals));
   if (!Number.isFinite(requestedDecimals)) return "#VALUE!";
   const precision = Math.max(0, Math.min(12, Math.floor(requestedDecimals)));
-  return Number(average.toFixed(precision));
+  return Number(value.toFixed(precision));
+}
+
+function formulaCalendarDay(value: RecordValue | undefined): number | undefined {
+  if (value === "" || value === null || value === undefined) return undefined;
+  const text = String(value);
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) return Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
 }
 
 function resolveFormulaField(name: unknown, fields: FieldSchema[]): FieldSchema | undefined {

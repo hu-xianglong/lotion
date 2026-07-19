@@ -95,7 +95,7 @@ try {
   await formulaHeader.locator(".field-header-button").click();
   await page.waitForSelector(".field-dialog .formula-reference-list", { timeout: 15_000 });
   const formulaDialogText = await page.locator(".field-dialog").innerText();
-  if (!formulaDialogText.includes("MOVING_AVERAGE") || !formulaDialogText.includes("CSV storage order")) {
+  if (!formulaDialogText.includes("AVERAGE_LAST_DAYS") || !formulaDialogText.includes("CSV storage order")) {
     throw new Error("Formula settings did not expose stable cross-row references");
   }
   await settleForScreenshot(page);
@@ -357,7 +357,7 @@ async function createMarketingWorkspace(root, sourceRoot) {
       id: "previous_week_avg",
       name: "Previous 7 avg (kg)",
       type: "formula",
-      formula: '=MOVING_AVERAGE("weight_kg",7,2)'
+      formula: '=AVERAGE_LAST_DAYS("weight_kg","recorded_date",7,2)'
     },
     { id: "note", name: "Note", type: "text" },
     { id: "page_file", name: "Page file", type: "text", system: true, hidden: true }

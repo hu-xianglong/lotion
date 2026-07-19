@@ -126,11 +126,11 @@
             previous seven entries directly from the CSV, without a helper
             database, relation, or rollup.
           </p>
-          <pre><code>=MOVING_AVERAGE("weight_kg", 7, 2)</code></pre>
+          <pre><code>=AVERAGE_LAST_DAYS("weight_kg", "recorded_date", 7, 2)</code></pre>
           <ul>
-            <li><strong>Previous seven</strong><span>The window reads the seven source rows before today's entry.</span></li>
-            <li><strong>Easy to read</strong><span>The field ID, window size, and precision are visible in one short formula.</span></li>
-            <li><strong>View-safe</strong><span>Showing newest first does not change which records belong to the window.</span></li>
+            <li><strong>Calendar-aware</strong><span>The current entry's date selects records from the previous seven days.</span></li>
+            <li><strong>Easy to read</strong><span>Value field, date field, window, and precision stay visible in one formula.</span></li>
+            <li><strong>Order-safe</strong><span>Sorting, backfilling, or missing a day does not silently shift the window.</span></li>
           </ul>
         </div>
         <figure class="formula-story-visual">
@@ -140,7 +140,7 @@
             width="1600"
             height="1000"
           />
-          <figcaption>The view shows newest entries first while source row numbers keep the rolling window stable.</figcaption>
+          <figcaption>The view shows newest entries first while dates, not row positions, define the rolling window.</figcaption>
         </figure>
       </section>
 

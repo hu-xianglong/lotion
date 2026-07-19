@@ -14,7 +14,7 @@
       "id": "previous_week_avg",
       "name": "Previous 7 avg (kg)",
       "type": "formula",
-      "formula": "=MOVING_AVERAGE(\"weight_kg\",7,2)"
+      "formula": "=AVERAGE_LAST_DAYS(\"weight_kg\",\"recorded_date\",7,2)"
     },
     { "id": "note", "name": "Note", "type": "text" },
     { "id": "page_file", "name": "Page file", "type": "text", "system": true, "hidden": true }

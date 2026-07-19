@@ -97,18 +97,50 @@ assert.equal(
 );
 
 const weightFields = [
+  { id: "recorded_date", name: "Date", type: "date" },
   { id: "weight_kg", name: "Weight (kg)", type: "number" },
-  { id: "previous_week_avg", name: "Previous week average", type: "formula", formula: '=MOVING_AVERAGE("weight_kg",7,2)' }
+  { id: "previous_week_avg", name: "Previous week average", type: "formula", formula: '=AVERAGE_LAST_DAYS("weight_kg","recorded_date",7,2)' }
 ];
 const weightRows = [80, 79.8, 79.7, 79.9, 79.5, 79.4, 79.2, 79.1, 79, 78.9, 79.1, 78.8, 78.7, 78.6]
-  .map((weight_kg, index) => ({ id: `weight_${index + 1}`, weight_kg }));
+  .map((weight_kg, index) => ({
+    id: `weight_${index + 1}`,
+    recorded_date: `2026-07-${String(index + 6).padStart(2, "0")}`,
+    weight_kg
+  }));
 const computedWeightRows = applyFormulasToRecords(weightRows, weightFields);
 assert.equal(computedWeightRows[6].previous_week_avg, "");
 assert.equal(computedWeightRows[7].previous_week_avg, 79.64);
 assert.equal(computedWeightRows[13].previous_week_avg, 78.97);
 assert.equal(
+  evaluateFormula(weightFields[2], weightRows[13], weightFields, [...weightRows].reverse(), 0),
+  78.97,
+  "date windows must not depend on source or view order"
+);
+const weightRowsMissingJuly15 = weightRows.filter((row) => row.recorded_date !== "2026-07-15");
+assert.equal(
   evaluateFormula(
-    { ...weightFields[1], formula: '=MOVING_AVERAGE("missing",7,2)' },
+    weightFields[2],
+    weightRows[13],
+    weightFields,
+    weightRowsMissingJuly15,
+    weightRowsMissingJuly15.length - 1
+  ),
+  78.98,
+  "missing dates must not pull older rows into the calendar window"
+);
+assert.equal(
+  evaluateFormula(
+    { ...weightFields[2], formula: '=MOVING_AVERAGE("weight_kg",7,2)' },
+    weightRows[7],
+    weightFields,
+    weightRows,
+    7
+  ),
+  79.64
+);
+assert.equal(
+  evaluateFormula(
+    { ...weightFields[2], formula: '=AVERAGE_LAST_DAYS("missing","recorded_date",7,2)' },
     weightRows[7],
     weightFields,
     weightRows,
