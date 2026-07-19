@@ -29,6 +29,7 @@ interface FormulaParserInstance {
 }
 
 type FormulaParserConstructor = new (options?: {
+  functions?: Record<string, (...args: unknown[]) => unknown>;
   onVariable?: (name: string, sheetName?: string) => CellReference | RangeReference;
   onCell?: (ref: CellReference) => unknown;
   onRange?: (ref: RangeReference) => unknown[][];
@@ -36,6 +37,18 @@ type FormulaParserConstructor = new (options?: {
 
 const Parser = FormulaParser as unknown as FormulaParserConstructor;
 const SHEET_NAME = "Lotion";
+
+export function formulaColumnLabel(index: number): string {
+  if (!Number.isInteger(index) || index < 0) return "";
+  let value = index + 1;
+  let label = "";
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
 
 export function evaluateFormula(
   field: FieldSchema,
@@ -52,6 +65,12 @@ export function evaluateFormula(
   try {
     const fieldLookup = buildFieldLookup(fields);
     const parser = new Parser({
+      functions: {
+        FIELD: (name) => readFormulaField(name, record, fields),
+        VALUES: (name, fromRow, toRow) => readFormulaValues(name, fields, records, fromRow, toRow),
+        LOOKUP: (needle, lookupField, resultField, fromRow, toRow) =>
+          lookupFormulaValue(needle, lookupField, resultField, fields, records, fromRow, toRow)
+      },
       onVariable: (name) => {
         const col = fieldLookup.get(normalizeFormulaName(name));
         if (!col) throw new Error(`Unknown formula variable: ${name}`);
@@ -114,6 +133,65 @@ function readFormulaCell(ref: CellReference, fields: FieldSchema[], records: Dat
   const field = fields[ref.col - 1];
   if (!row || !field) return "";
   return row[field.id] ?? "";
+}
+
+function readFormulaField(name: unknown, record: DatabaseRecord, fields: FieldSchema[]): unknown {
+  const field = resolveFormulaField(name, fields);
+  return field ? record[field.id] ?? "" : "#NAME?";
+}
+
+function readFormulaValues(
+  name: unknown,
+  fields: FieldSchema[],
+  records: DatabaseRecord[],
+  fromRow?: unknown,
+  toRow?: unknown
+): unknown[] {
+  const field = resolveFormulaField(name, fields);
+  if (!field) return ["#NAME?"];
+  const [start, end] = normalizeFormulaRowBounds(records.length, fromRow, toRow);
+  return records.slice(start - 1, end).map((item) => item[field.id] ?? "");
+}
+
+function lookupFormulaValue(
+  needle: unknown,
+  lookupFieldName: unknown,
+  resultFieldName: unknown,
+  fields: FieldSchema[],
+  records: DatabaseRecord[],
+  fromRow?: unknown,
+  toRow?: unknown
+): unknown {
+  const lookupField = resolveFormulaField(lookupFieldName, fields);
+  const resultField = resolveFormulaField(resultFieldName, fields);
+  if (!lookupField || !resultField) return "#NAME?";
+  const [start, end] = normalizeFormulaRowBounds(records.length, fromRow, toRow);
+  const target = String(unwrapFormulaArgument(needle) ?? "");
+  for (let row = start; row <= end; row += 1) {
+    const record = records[row - 1];
+    if (String(record?.[lookupField.id] ?? "") === target) return record?.[resultField.id] ?? "";
+  }
+  return "#N/A";
+}
+
+function resolveFormulaField(name: unknown, fields: FieldSchema[]): FieldSchema | undefined {
+  const target = normalizeFormulaName(String(unwrapFormulaArgument(name) ?? ""));
+  if (!target) return undefined;
+  return fields.find((field) => [field.id, field.name, slugFormulaName(field.name)]
+    .some((candidate) => normalizeFormulaName(candidate) === target));
+}
+
+function normalizeFormulaRowBounds(recordCount: number, fromRow?: unknown, toRow?: unknown): [number, number] {
+  const requestedStart = Number(unwrapFormulaArgument(fromRow));
+  const requestedEnd = Number(unwrapFormulaArgument(toRow));
+  const start = Number.isFinite(requestedStart) ? Math.max(1, Math.floor(requestedStart)) : 1;
+  const end = Number.isFinite(requestedEnd) ? Math.min(recordCount, Math.floor(requestedEnd)) : recordCount;
+  return [Math.min(start, recordCount + 1), Math.max(0, end)];
+}
+
+function unwrapFormulaArgument(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !("value" in value)) return value;
+  return (value as { value?: unknown }).value;
 }
 
 function readFormulaRange(ref: RangeReference, fields: FieldSchema[], records: DatabaseRecord[]): unknown[][] {

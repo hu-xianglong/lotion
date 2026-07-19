@@ -55,6 +55,8 @@ giving up Obsidian-like ownership of their data.
 - Editable rows, columns, and row pages.
 - Text, number, select, multi-select, date, checkbox, URL, formula, relation,
   rollup, and entity-reference fields.
+- Spreadsheet formulas with `A1` references, ranges, `VLOOKUP`, `SUMIF`,
+  `SUMPRODUCT`, and stable `FIELD`, `VALUES`, and `LOOKUP` references.
 - Table, board, calendar, list, and gallery views.
 - Sorting, filtering, visible-field configuration, column ordering, summaries,
   templates, and embedded live views.
@@ -116,6 +118,35 @@ Database views are references over the same CSV-backed records. Changing a
 record or view is reflected everywhere that view appears.
 
 ![Lotion database table](website/assets/lotion-database.png)
+
+### Use spreadsheet formulas across database rows
+
+Notion-style formulas are centered on the current record and require relations
+or rollups to aggregate other records. Lotion can also treat the underlying CSV
+as a spreadsheet: formulas can address cells, ranges, and arbitrary source rows
+directly.
+
+This quote builder keeps a product catalog in source rows 1–3 and order lines
+below it. One formula looks up each order's SKU and calculates its total without
+creating another database or relation:
+
+```text
+=IF(record_type="Order",LOOKUP(FIELD("sku"),"sku","unit_price",1,3)*quantity,"")
+```
+
+- `FIELD("sku")` reads a field from the current source row.
+- `VALUES("line_total", 4, 100)` returns a cross-row field range.
+- `LOOKUP(...)` searches one field and returns another field from the matched row.
+- `A1`, `SUM(E1:E100)`, `VLOOKUP`, `SUMIF`, and other Excel-style expressions
+  remain available when positional formulas are the better fit.
+
+Sorting, filtering, and rearranging a view do not change source row numbers or
+formula coordinates. The table displays both coordinates, and formula settings
+map every column letter back to its stable field ID.
+
+![Lotion quote builder using cross-row spreadsheet formulas](website/assets/lotion-formulas.png)
+
+![Lotion formula editor with source coordinates and stable field references](website/assets/lotion-formula-editor.png)
 
 ## Getting Started
 

@@ -22,6 +22,7 @@ import { DatabaseTableGrid } from "./DatabaseTableGrid";
 import { perfLog } from "../../lib/perf-log";
 import { pluginHost } from "../../plugin-host";
 import { isReactProvider } from "../../../shared/plugin-react";
+import { formulaColumnLabel } from "../../../shared/formula";
 
 const DEFAULT_COLUMN_WIDTH = 180;
 const MIN_COLUMN_WIDTH = 80;
@@ -208,6 +209,14 @@ export const DatabaseTable = memo(function DatabaseTable({
     });
     return result;
   }, [activeView.id, bundle.schema.id, embedded, embeddedRowLimit, records]);
+  const sourceRowNumberById = useMemo(
+    () => new Map(bundle.records.map((record, index) => [String(record.id), index + 1])),
+    [bundle.records]
+  );
+  const getFormulaRowNumber = useCallback(
+    (record: DatabaseRecord) => sourceRowNumberById.get(String(record.id)) ?? 0,
+    [sourceRowNumberById]
+  );
   const hiddenEmbeddedRows = embedded && activeView.type === "table" && tableRecords.length < records.length;
   const embeddedLoadMoreCount = hiddenEmbeddedRows
     ? Math.min(EMBEDDED_LOAD_MORE_ROWS, records.length - tableRecords.length)
@@ -612,8 +621,11 @@ export const DatabaseTable = memo(function DatabaseTable({
     return (
       <thead>
         <tr>
-          <th className="row-num" aria-label="row number" />
+          <th className="row-num" aria-label={t("formula.rowNumber")} title={t("formula.rowNumber")}>
+            <span className="formula-row-reference">#</span>
+          </th>
           {fields.map((field) => {
+            const formulaColumn = formulaColumnLabel(bundle.schema.fields.findIndex((candidate) => candidate.id === field.id));
             const dropTargetClass = dropTargetFieldId === field.id && dragFieldId && dragFieldId !== field.id ? " drop-target" : "";
             const draggingClass = dragFieldId === field.id ? " dragging" : "";
             return (
@@ -652,6 +664,13 @@ export const DatabaseTable = memo(function DatabaseTable({
                   onClick={() => setEditingField(field)}
                   title={translateFieldType(t, field.type)}
                 >
+                  <span
+                    className="formula-column-reference"
+                    aria-label={`${t("formula.column")} ${formulaColumn}`}
+                    title={`${t("formula.column")} ${formulaColumn}`}
+                  >
+                    {formulaColumn}
+                  </span>
                   <FieldTypeIcon type={field.type} isTitle={field.id === "title"} />
                   <span className="field-header-name">{field.name}</span>
                 </button>
@@ -965,6 +984,8 @@ export const DatabaseTable = memo(function DatabaseTable({
                 onOpenEntityRef={openEntityRef}
               />
             )}
+            getRowNumber={getFormulaRowNumber}
+            rowNumberLabel={t("formula.rowNumber")}
             renderRowActions={
               embedded
                 ? undefined
@@ -1068,6 +1089,7 @@ export const DatabaseTable = memo(function DatabaseTable({
         <FieldSettingsDialog
           field={editingField}
           fields={bundle.schema.fields}
+          records={bundle.records}
           databases={databases}
           loadDatabase={cache.loadBundle}
           wrap={wrapFieldSet.has(editingField.id)}

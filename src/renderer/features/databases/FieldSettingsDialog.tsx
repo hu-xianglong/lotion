@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { DatabaseBundle, DatabaseSummary, DateDisplayFormat, FieldSchema, FieldType, RelationFieldConfig, RollupAggregation, RollupFieldConfig, SelectOption, TimeDisplayFormat } from "../../../shared/types";
+import type { DatabaseBundle, DatabaseRecord, DatabaseSummary, DateDisplayFormat, FieldSchema, FieldType, RelationFieldConfig, RollupAggregation, RollupFieldConfig, SelectOption, TimeDisplayFormat } from "../../../shared/types";
 import { defaultDateFormatForField, defaultTimeFormatForField, isDateLikeFieldType } from "../../../shared/date-values";
+import { evaluateFormula, formulaColumnLabel } from "../../../shared/formula";
 import { useI18n } from "../../lib/i18n";
 import { OPTION_COLORS } from "./option-colors";
 import { OptionPill } from "./OptionPill";
@@ -9,6 +10,7 @@ import { pluginHost } from "../../plugin-host";
 interface FieldSettingsDialogProps {
   field: FieldSchema;
   fields?: FieldSchema[];
+  records?: DatabaseRecord[];
   databases?: DatabaseSummary[];
   loadDatabase?: (id: string) => Promise<DatabaseBundle>;
   wrap?: boolean;
@@ -18,12 +20,13 @@ interface FieldSettingsDialogProps {
   onSave: (input: { name: string; type: FieldType; options?: SelectOption[]; formula?: string; relation?: RelationFieldConfig; rollup?: RollupFieldConfig; dateFormat?: DateDisplayFormat; timeFormat?: TimeDisplayFormat }) => Promise<void>;
 }
 
-export function FieldSettingsDialog({ field, fields = [], databases = [], loadDatabase, wrap = false, onToggleWrap, onHide, onClose, onSave }: FieldSettingsDialogProps) {
+export function FieldSettingsDialog({ field, fields = [], records = [], databases = [], loadDatabase, wrap = false, onToggleWrap, onHide, onClose, onSave }: FieldSettingsDialogProps) {
   const { t } = useI18n();
   const [name, setName] = useState(field.name);
   const [type, setType] = useState<FieldType>(field.type);
   const [options, setOptions] = useState<SelectOption[]>(field.options || defaultOptions());
   const [formula, setFormula] = useState(field.formula || "");
+  const [formulaPreview, setFormulaPreview] = useState<{ row: number; value: string }>();
   const [relationTargetDatabaseId, setRelationTargetDatabaseId] = useState(field.relation?.targetDatabaseId || "");
   const [relationMultiple, setRelationMultiple] = useState(field.relation?.multiple !== false);
   const [rollupRelationFieldId, setRollupRelationFieldId] = useState(field.rollup?.relationFieldId || "");
@@ -45,6 +48,7 @@ export function FieldSettingsDialog({ field, fields = [], databases = [], loadDa
     setType(field.type);
     setOptions(field.options || defaultOptions());
     setFormula(field.formula || "");
+    setFormulaPreview(undefined);
     setRelationTargetDatabaseId(field.relation?.targetDatabaseId || "");
     setRelationMultiple(field.relation?.multiple !== false);
     setRollupRelationFieldId(field.rollup?.relationFieldId || "");
@@ -134,6 +138,19 @@ export function FieldSettingsDialog({ field, fields = [], databases = [], loadDa
     }
   }
 
+  function previewFormula() {
+    if (!formula.trim() || records.length === 0) return;
+    const previewRows = records.slice(0, Math.min(records.length, 25));
+    for (let rowIndex = 0; rowIndex < previewRows.length; rowIndex += 1) {
+      const value = evaluateFormula({ ...field, type: "formula", formula }, previewRows[rowIndex], fields, records, rowIndex);
+      if (value !== "" && value !== null && value !== undefined) {
+        setFormulaPreview({ row: rowIndex + 1, value: String(value) });
+        return;
+      }
+    }
+    setFormulaPreview({ row: 1, value: "" });
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="field-dialog" role="dialog" aria-modal="true" aria-label="Field settings" onMouseDown={(event) => event.stopPropagation()}>
@@ -215,10 +232,49 @@ export function FieldSettingsDialog({ field, fields = [], databases = [], loadDa
         )}
 
         {type === "formula" && (
-          <label className="form-row formula-row">
-            <span>{t("field.formula")}</span>
-            <textarea value={formula} disabled={field.system} onChange={(event) => setFormula(event.target.value)} />
-          </label>
+          <div className="form-row formula-row">
+            <label htmlFor={`formula-${field.id}`}>{t("field.formula")}</label>
+            <textarea
+              id={`formula-${field.id}`}
+              value={formula}
+              disabled={field.system}
+              spellCheck={false}
+              onChange={(event) => {
+                setFormula(event.target.value);
+                setFormulaPreview(undefined);
+              }}
+            />
+            <p className="helper-text">{t("field.formulaHelper")}</p>
+            <p className="helper-text">{t("field.formulaStableHelper")}</p>
+            <div className="formula-reference-section">
+              <strong>{t("field.formulaColumns")}</strong>
+              <div className="formula-reference-list">
+                {fields.map((candidate, index) => (
+                  <div className="formula-reference-item" key={candidate.id}>
+                    <code>{formulaColumnLabel(index)}</code>
+                    <span>{candidate.name}</span>
+                    <small>{candidate.id}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="formula-example-section">
+              <strong>{t("field.formulaExamples")}</strong>
+              <code>=SUM(E1:E100)</code>
+              <code>=LOOKUP(FIELD("sku"), "sku", "unit_price", 1, 3) * quantity</code>
+              <code>=SUM(VALUES("line_total", 4, 100))</code>
+            </div>
+            <div className="formula-preview-row">
+              <button type="button" className="secondary-action" disabled={!formula.trim() || records.length === 0} onClick={previewFormula}>
+                {t("field.formulaPreview")}
+              </button>
+              {formulaPreview && (
+                <output>
+                  {t("field.formulaPreviewRow")} {formulaPreview.row}: <code>{formulaPreview.value || t("cell.empty")}</code>
+                </output>
+              )}
+            </div>
+          </div>
         )}
 
         {type === "entity_ref" && (

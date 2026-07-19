@@ -477,6 +477,94 @@ img {
   background: var(--canvas);
 }
 
+.formula-story {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.78fr) minmax(0, 1.22fr);
+  gap: 72px;
+  align-items: center;
+  padding: 112px max(32px, calc((100% - var(--max)) / 2));
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.formula-story-copy h2 {
+  max-width: 620px;
+  margin: 10px 0 0;
+  font-size: 46px;
+  font-weight: 750;
+  line-height: 1.08;
+}
+
+.formula-story-copy {
+  min-width: 0;
+}
+
+.formula-story-copy > p:not(.eyebrow) {
+  max-width: 610px;
+  margin: 22px 0 0;
+  color: var(--ink-soft);
+  font-size: 17px;
+}
+
+.formula-story-copy pre {
+  max-width: 100%;
+  margin: 28px 0 0;
+  overflow-x: auto;
+  border-left: 3px solid var(--green);
+  background: var(--dark);
+  padding: 18px 20px;
+  color: #eef1eb;
+  font: 12px/1.7 ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.formula-story-copy ul {
+  margin: 26px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+  list-style: none;
+}
+
+.formula-story-copy li {
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 16px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.formula-story-copy li strong {
+  font-size: 13px;
+}
+
+.formula-story-copy li span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.formula-story-visual {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--canvas);
+  box-shadow: 0 22px 54px rgba(31, 33, 29, 0.11);
+}
+
+.formula-story-visual img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+}
+
+.formula-story-visual figcaption {
+  padding: 14px 16px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .section-heading {
   width: min(var(--max), 100%);
   margin: 0 auto;
@@ -805,6 +893,7 @@ img {
   }
 
   .ownership h2,
+  .formula-story-copy h2,
   .section-heading h2,
   .import-band h2,
   .start h2 {
@@ -814,6 +903,10 @@ img {
   .section-heading,
   .import-band {
     gap: 52px;
+  }
+
+  .formula-story {
+    gap: 44px;
   }
 
   .capability-list article {
@@ -926,14 +1019,18 @@ img {
   }
 
   .ownership,
-  .start {
+  .start,
+  .formula-story {
     width: calc(100% - 32px);
+    margin-right: auto;
+    margin-left: auto;
     grid-template-columns: 1fr;
     gap: 44px;
     padding: 82px 0;
   }
 
   .ownership h2,
+  .formula-story-copy h2,
   .section-heading h2,
   .import-band h2,
   .start h2 {
@@ -946,6 +1043,11 @@ img {
 
   .file-window {
     min-width: 0;
+  }
+
+  .formula-story-copy li {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .file-tree {

@@ -8742,6 +8742,127 @@ td .cell-textarea {
   color: var(--ink-2);
 }
 
+.formula-column-reference,
+.formula-row-reference {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--vellum);
+  color: var(--ink-4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.formula-row-reference {
+  min-width: 18px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.formula-row {
+  align-items: stretch;
+}
+
+.formula-row > label,
+.formula-reference-section > strong,
+.formula-example-section > strong {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.formula-row textarea {
+  min-height: 96px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.5;
+}
+
+.formula-reference-section,
+.formula-example-section {
+  display: grid;
+  gap: 8px;
+}
+
+.formula-reference-list {
+  display: grid;
+  max-height: 176px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  background: var(--paper);
+}
+
+.formula-reference-item {
+  display: grid;
+  grid-template-columns: 32px minmax(100px, 1fr) minmax(120px, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.formula-reference-item:last-child {
+  border-bottom: 0;
+}
+
+.formula-reference-item code {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.formula-reference-item span,
+.formula-reference-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-row .formula-reference-item span {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.formula-reference-item small {
+  color: var(--ink-4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.formula-example-section code {
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  background: var(--vellum);
+  padding: 7px 9px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.formula-preview-row {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+}
+
+.formula-preview-row output {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field-type-glyph,
 .field-type-glyph-svg {
   flex-shrink: 0;
@@ -9449,6 +9570,8 @@ td input:focus {
 .field-dialog,
 .view-dialog {
   width: min(560px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
   border: 1px solid var(--rule-strong);
   border-radius: var(--r-3);
   background: var(--paper);

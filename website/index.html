@@ -5,27 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Lotion is a local-first knowledge workspace with Notion-like editing, Markdown pages, CSV databases, and Git-friendly storage."
+      content="Lotion is a local-first workspace with Notion-like editing, spreadsheet formulas, Markdown pages, CSV databases, and Git-friendly storage."
     />
     <meta name="theme-color" content="#181916" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Lotion — A workspace that belongs to you" />
     <meta
       property="og:description"
-      content="Notion-like editing over Markdown, CSV, regular files, and Git-friendly history."
+      content="Notion-like editing plus spreadsheet formulas over Markdown, CSV, regular files, and Git-friendly history."
     />
     <meta property="og:url" content="https://hu-xianglong.github.io/lotion/" />
-    <meta property="og:image" content="https://hu-xianglong.github.io/lotion/assets/lotion-home.png" />
+    <meta property="og:image" content="https://hu-xianglong.github.io/lotion/assets/lotion-formulas.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Lotion — A workspace that belongs to you" />
     <meta
       name="twitter:description"
-      content="Notion-like editing over Markdown, CSV, regular files, and Git-friendly history."
+      content="Notion-like editing plus spreadsheet formulas over Markdown, CSV, regular files, and Git-friendly history."
     />
-    <meta name="twitter:image" content="https://hu-xianglong.github.io/lotion/assets/lotion-home.png" />
+    <meta name="twitter:image" content="https://hu-xianglong.github.io/lotion/assets/lotion-formulas.png" />
     <title>Lotion — A workspace that belongs to you</title>
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260719-3" />
+    <link rel="stylesheet" href="styles.css?v=20260719-formulas" />
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -41,6 +41,7 @@
       </button>
       <nav class="site-nav" aria-label="Primary navigation">
         <a href="#product">Product</a>
+        <a href="#formulas">Formulas</a>
         <a href="#files">Your files</a>
         <a href="#start">Get started</a>
         <a class="nav-github" href="https://github.com/hu-xianglong/lotion">GitHub <span aria-hidden="true">↗</span></a>
@@ -54,8 +55,8 @@
           <h1 id="hero-title">Lotion</h1>
           <p class="hero-line">A workspace that belongs to you.</p>
           <p class="hero-summary">
-            The calm, connected editing experience of a modern workspace,
-            backed by Markdown, CSV, regular files, and Git.
+            The calm editing experience of a modern workspace, with spreadsheet
+            formulas over Markdown, CSV, regular files, and Git.
           </p>
           <div class="hero-actions">
             <a class="button button-light" href="https://github.com/hu-xianglong/lotion">View source <span aria-hidden="true">↗</span></a>
@@ -116,6 +117,37 @@
         </div>
       </section>
 
+      <section class="formula-story" id="formulas" aria-labelledby="formula-title">
+        <div class="formula-story-copy">
+          <p class="eyebrow">Beyond row-scoped formulas</p>
+          <h2 id="formula-title">A Notion-like database that can think like a spreadsheet.</h2>
+          <p>
+            Use direct cell ranges or stable field IDs to calculate across CSV
+            rows. Build a quote, financial model, inventory lookup, or scorecard
+            without creating helper databases and relations.
+          </p>
+          <pre><code>=IF(record_type="Order",
+  LOOKUP(FIELD("sku"), "sku", "unit_price", 1, 3)
+  * quantity,
+  ""
+)</code></pre>
+          <ul>
+            <li><strong>Spreadsheet-native</strong><span>A1 ranges, VLOOKUP, SUMIF, SUMPRODUCT, and other familiar functions.</span></li>
+            <li><strong>Schema-stable</strong><span>FIELD, VALUES, and LOOKUP use field IDs when coordinates are too fragile.</span></li>
+            <li><strong>View-safe</strong><span>Sorting, filtering, and dragging columns never silently retarget a formula.</span></li>
+          </ul>
+        </div>
+        <figure class="formula-story-visual">
+          <img
+            src="assets/lotion-formulas.png"
+            alt="Lotion quote builder using cross-row spreadsheet formulas over CSV records"
+            width="1600"
+            height="1000"
+          />
+          <figcaption>Orders are sorted first, while their displayed source row numbers continue to reference catalog rows 1–3.</figcaption>
+        </figure>
+      </section>
+
       <section class="product" id="product" aria-labelledby="product-title">
         <div class="section-heading">
           <div>
@@ -166,6 +198,18 @@
             >
               Databases
             </button>
+            <button
+              class="viewer-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-image="assets/lotion-formula-editor.png"
+              data-alt="Lotion formula editor with CSV coordinates and stable field references"
+              data-title="Spreadsheet formulas"
+              data-copy="Calculate across arbitrary CSV rows with A1 ranges or stable FIELD, VALUES, and LOOKUP references."
+            >
+              Formulas
+            </button>
           </div>
           <figure class="viewer-frame">
             <img
@@ -192,7 +236,7 @@
         </div>
         <div class="capability-list">
           <article><span>01</span><h3>Write</h3><p>Slash commands, inline formatting, toggles, callouts, code, equations, tables, images, embeds, and source access.</p></article>
-          <article><span>02</span><h3>Structure</h3><p>Editable fields, formulas, relations, rollups, filters, sorts, templates, summaries, and multiple database views.</p></article>
+          <article><span>02</span><h3>Structure</h3><p>Editable fields, spreadsheet formulas, relations, rollups, filters, sorts, templates, summaries, and multiple database views.</p></article>
           <article><span>03</span><h3>Connect</h3><p>Workspace search, backlinks, page history, nested pages, tabs, favorites, plugins, typed APIs, and Git backup.</p></article>
         </div>
       </section>

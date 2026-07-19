@@ -20,6 +20,8 @@ interface DatabaseTableGridProps {
   renderColGroup: () => ReactNode;
   renderHead: () => ReactNode;
   renderCell: (record: DatabaseRecord, field: FieldSchema) => ReactNode;
+  getRowNumber: (record: DatabaseRecord) => number;
+  rowNumberLabel?: string;
   renderRowActions?: (record: DatabaseRecord) => ReactNode;
   addRowLabel: string;
 }
@@ -43,6 +45,8 @@ export function DatabaseTableGrid({
   renderColGroup,
   renderHead,
   renderCell,
+  getRowNumber,
+  rowNumberLabel = "Formula row",
   renderRowActions,
   addRowLabel
 }: DatabaseTableGridProps) {
@@ -68,6 +72,7 @@ export function DatabaseTableGrid({
             )}
             {visibleRecords.map((record, i) => {
               const rowId = String(record.id);
+              const rowNumber = getRowNumber(record);
               return (
                 <tr
                   key={rowId}
@@ -77,7 +82,13 @@ export function DatabaseTableGrid({
                     else rowNodesRef.current.delete(rowId);
                   }}
                 >
-                  <td className="row-num">{startIndex + i + 1}</td>
+                  <td
+                    className="row-num"
+                    data-formula-row={rowNumber}
+                    title={`${rowNumberLabel} ${rowNumber}`}
+                  >
+                    {rowNumber}
+                  </td>
                   {fields.map((field) => (
                     <td key={field.id}>
                       {renderCell(record, field)}

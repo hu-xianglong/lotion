@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { applyFormulasToRecords, evaluateFormula } from "../dist-electron/shared/formula.js";
+import { applyFormulasToRecords, evaluateFormula, formulaColumnLabel } from "../dist-electron/shared/formula.js";
+
+assert.equal(formulaColumnLabel(0), "A");
+assert.equal(formulaColumnLabel(25), "Z");
+assert.equal(formulaColumnLabel(26), "AA");
+assert.equal(formulaColumnLabel(701), "ZZ");
+assert.equal(formulaColumnLabel(702), "AAA");
+assert.equal(formulaColumnLabel(-1), "");
 
 const fields = [
   { id: "title", name: "Title", type: "text" },
@@ -38,6 +45,59 @@ assert.equal(computed[1].range_total, 27);
 
 assert.equal(
   evaluateFormula(
+    { id: "lookup", name: "Lookup", type: "formula", formula: "=VLOOKUP(\"Blocked\",D1:E3,2,FALSE)" },
+    rows[0],
+    fields,
+    rows,
+    0
+  ),
+  true
+);
+
+const lookupFields = [
+  { id: "sku", name: "SKU", type: "text" },
+  { id: "unit_price", name: "Unit price", type: "number" },
+  { id: "quantity", name: "Quantity", type: "number" },
+  { id: "line_total", name: "Line total", type: "formula" }
+];
+const lookupRows = [
+  { sku: "DESK-01", unit_price: 699, quantity: 0 },
+  { sku: "CHAIR-02", unit_price: 249, quantity: 0 },
+  { sku: "CHAIR-02", unit_price: "", quantity: 6 }
+];
+assert.equal(
+  evaluateFormula(
+    { ...lookupFields[3], formula: '=LOOKUP(FIELD("sku"),"sku","unit_price",1,2)*quantity' },
+    lookupRows[2],
+    lookupFields,
+    lookupRows,
+    2
+  ),
+  1494
+);
+assert.equal(
+  evaluateFormula(
+    { ...lookupFields[3], formula: '=SUM(VALUES("unit_price",1,2))' },
+    lookupRows[0],
+    lookupFields,
+    lookupRows,
+    0
+  ),
+  948
+);
+assert.equal(
+  evaluateFormula(
+    { ...lookupFields[3], formula: '=FIELD("sku")' },
+    lookupRows[0],
+    lookupFields,
+    lookupRows,
+    0
+  ),
+  "DESK-01"
+);
+
+assert.equal(
+  evaluateFormula(
     { id: "legacy", name: "Legacy", type: "formula", formula: "CASE WHEN status = 'Blocked' THEN 'Needs help' ELSE 'OK' END" },
     rows[2],
     fields,
@@ -58,6 +118,7 @@ assert.equal(
 );
 
 await assertDemoFormulaCsv("db_formula_lab", { minRows: 8, minFormulaFields: 6 });
+await assertDemoFormulaCsv("db_quote_builder", { minRows: 6, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_tasks", { minRows: 4, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_reading", { minRows: 3, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_views_stress", { minRows: 30, minFormulaFields: 1 });
