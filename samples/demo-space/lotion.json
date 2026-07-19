@@ -22,7 +22,7 @@
     "db_view_lab",
     "db_csv_edges",
     "db_formula_lab",
-    "db_quote_builder",
+    "db_weight_tracker",
     "db_views_stress",
     "db_rows_stress",
     "db_rows_2k",

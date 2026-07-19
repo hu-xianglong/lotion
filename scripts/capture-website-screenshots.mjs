@@ -72,24 +72,30 @@ try {
   await settleForScreenshot(page);
   await page.screenshot({ path: join(outputDir, "lotion-database.png") });
 
-  await openNavigationItem(page, "Quote Builder", ".database-table");
-  await page.waitForFunction(() => document.querySelectorAll(".formula-column-reference").length === 6, null, { timeout: 15_000 });
+  await openNavigationItem(page, "Weight Tracker", ".database-table");
+  await page.waitForFunction(() => document.querySelectorAll(".formula-column-reference").length === 5, null, { timeout: 15_000 });
   const formulaRows = await page.locator("tbody tr[data-row-id] td.row-num").evaluateAll((cells) =>
     cells.map((cell) => Number(cell.getAttribute("data-formula-row")))
   );
-  const expectedFormulaRows = [6, 4, 5, 3, 1, 2];
-  if (JSON.stringify(formulaRows) !== JSON.stringify(expectedFormulaRows)) {
+  const expectedFormulaRows = [14, 13, 12, 11, 10, 9, 8];
+  if (JSON.stringify(formulaRows.slice(0, expectedFormulaRows.length)) !== JSON.stringify(expectedFormulaRows)) {
     throw new Error(`Formula row coordinates changed after sorting: ${JSON.stringify(formulaRows)}`);
+  }
+  const latestWeightRow = page.locator('tr[data-row-id="weight_14"]');
+  const latestWeight = await latestWeightRow.locator("td").nth(3).locator("input").inputValue();
+  const latestAverage = await latestWeightRow.locator("td").nth(4).innerText();
+  if (latestWeight !== "78.6" || !latestAverage.includes("78.97")) {
+    throw new Error(`Latest weight did not retain its previous-seven average: ${latestWeight} -> ${latestAverage}`);
   }
   await settleForScreenshot(page);
   await page.screenshot({ path: join(outputDir, "lotion-formulas.png") });
 
-  const formulaHeader = page.locator(".column-header").filter({ hasText: "Line total" });
-  if (await formulaHeader.count() !== 1) throw new Error("Expected one Line total formula column");
+  const formulaHeader = page.locator(".column-header").filter({ hasText: "Previous 7 avg" });
+  if (await formulaHeader.count() !== 1) throw new Error("Expected one previous-week moving-average column");
   await formulaHeader.locator(".field-header-button").click();
   await page.waitForSelector(".field-dialog .formula-reference-list", { timeout: 15_000 });
   const formulaDialogText = await page.locator(".field-dialog").innerText();
-  if (!formulaDialogText.includes("LOOKUP") || !formulaDialogText.includes("CSV storage order")) {
+  if (!formulaDialogText.includes("MOVING_AVERAGE") || !formulaDialogText.includes("CSV storage order")) {
     throw new Error("Formula settings did not expose stable cross-row references");
   }
   await settleForScreenshot(page);
@@ -116,7 +122,7 @@ async function createMarketingWorkspace(root, sourceRoot) {
   const pagesRoot = join(systemRoot, "pages--db_pages");
   const workspacesRoot = join(systemRoot, "workspaces--db_workspaces");
   const databaseRoot = join(root, "databases", "user", "Launch_Tracker--db_launch");
-  const formulaDatabaseRoot = join(root, "databases", "user", "Quote_Builder--db_quote_builder");
+  const formulaDatabaseRoot = join(root, "databases", "user", "Weight_Tracker--db_weight_tracker");
   await mkdir(join(pagesRoot, "pages"), { recursive: true });
   await mkdir(join(pagesRoot, "views"), { recursive: true });
   await mkdir(join(workspacesRoot, "views"), { recursive: true });
@@ -318,72 +324,64 @@ async function createMarketingWorkspace(root, sourceRoot) {
     config: { groupBy: "status" }
   });
 
-  const quoteRows = [
-    ["catalog_1", "Standing desk", "Catalog", "DESK-01", 699, "", ""],
-    ["catalog_2", "Task chair", "Catalog", "CHAIR-02", 249, "", ""],
-    ["catalog_3", "Monitor arm", "Catalog", "ARM-03", 129, "", ""],
-    ["order_1", "Studio setup", "Order", "DESK-01", "", 2, 1398],
-    ["order_2", "Team chairs", "Order", "CHAIR-02", "", 6, 1494],
-    ["order_3", "Dual monitor arms", "Order", "ARM-03", "", 4, 516]
-  ].map(([id, title, recordType, sku, unitPrice, quantity, lineTotal], index) => ({
-    id,
-    created_time: `2026-07-19T12:0${index + 1}:00.000Z`,
-    updated_time: `2026-07-19T12:0${index + 1}:00.000Z`,
-    title,
-    record_type: recordType,
-    sku,
-    unit_price: unitPrice,
-    quantity,
-    line_total: lineTotal,
-    page_file: ""
-  }));
+  const weights = [80, 79.8, 79.7, 79.9, 79.5, 79.4, 79.2, 79.1, 79, 78.9, 79.1, 78.8, 78.7, 78.6];
+  const weightRows = weights.map((weight, index) => {
+    const day = index + 6;
+    const previousWeekAverage = index < 7
+      ? ""
+      : Number((weights.slice(index - 7, index).reduce((sum, value) => sum + value, 0) / 7).toFixed(2));
+    return {
+      id: `weight_${String(index + 1).padStart(2, "0")}`,
+      created_time: `2026-07-${String(day).padStart(2, "0")}T07:15:00.000Z`,
+      updated_time: `2026-07-${String(day).padStart(2, "0")}T07:15:00.000Z`,
+      title: index === weights.length - 1 ? "Today" : `Jul ${day}`,
+      recorded_date: `2026-07-${String(day).padStart(2, "0")}`,
+      weight_kg: weight,
+      previous_week_avg: previousWeekAverage,
+      note: index === weights.length - 1 ? "Before breakfast" : index === 10 ? "Sore after workout" : "",
+      page_file: ""
+    };
+  });
   await writeFile(join(formulaDatabaseRoot, "data.csv"), toCsv(
-    ["id", "created_time", "updated_time", "title", "record_type", "sku", "unit_price", "quantity", "line_total", "page_file"],
-    quoteRows
+    ["id", "created_time", "updated_time", "title", "recorded_date", "weight_kg", "previous_week_avg", "note", "page_file"],
+    weightRows
   ), "utf8");
-  const quoteFields = [
+  const weightFields = [
     { id: "id", name: "ID", type: "id", system: true },
     { id: "created_time", name: "Created time", type: "created_time", system: true },
     { id: "updated_time", name: "Updated time", type: "updated_time", system: true },
-    { id: "title", name: "Quote line", type: "text" },
-    { id: "record_type", name: "Type", type: "select", options: [
-      { id: "opt_catalog", name: "Catalog", color: "gray" },
-      { id: "opt_order", name: "Order", color: "blue" }
-    ] },
-    { id: "sku", name: "SKU", type: "text" },
-    { id: "unit_price", name: "Unit price", type: "number" },
-    { id: "quantity", name: "Quantity", type: "number" },
+    { id: "title", name: "Entry", type: "text" },
+    { id: "recorded_date", name: "Date", type: "date" },
+    { id: "weight_kg", name: "Weight (kg)", type: "number" },
     {
-      id: "line_total",
-      name: "Line total",
+      id: "previous_week_avg",
+      name: "Previous 7 avg (kg)",
       type: "formula",
-      formula: '=IF(record_type="Order",LOOKUP(FIELD("sku"),"sku","unit_price",1,3)*quantity,"")'
+      formula: '=MOVING_AVERAGE("weight_kg",7,2)'
     },
+    { id: "note", name: "Note", type: "text" },
     { id: "page_file", name: "Page file", type: "text", system: true, hidden: true }
   ];
   await writeJson(join(formulaDatabaseRoot, "schema.json"), {
-    id: "db_quote_builder",
-    name: "Quote Builder",
-    created_time: "2026-07-19T12:00:00.000Z",
-    updated_time: "2026-07-19T12:00:00.000Z",
-    fields: quoteFields,
-    defaultViewId: "view_quote"
+    id: "db_weight_tracker",
+    name: "Weight Tracker",
+    created_time: "2026-07-06T07:00:00.000Z",
+    updated_time: "2026-07-19T07:15:00.000Z",
+    fields: weightFields,
+    defaultViewId: "view_recent"
   });
-  const quoteVisibleFields = ["title", "record_type", "sku", "unit_price", "quantity", "line_total"];
-  await writeJson(join(formulaDatabaseRoot, "views", "view_quote.json"), {
-    id: "view_quote",
-    databaseId: "db_quote_builder",
-    name: "Quote",
+  const weightVisibleFields = ["title", "recorded_date", "weight_kg", "previous_week_avg", "note"];
+  await writeJson(join(formulaDatabaseRoot, "views", "view_recent.json"), {
+    id: "view_recent",
+    databaseId: "db_weight_tracker",
+    name: "Recent",
     type: "table",
-    visibleFieldIds: quoteVisibleFields,
-    fieldOrder: quoteVisibleFields,
-    columnWidths: { title: 220, record_type: 120, sku: 130, unit_price: 130, quantity: 120, line_total: 150 },
-    sorts: [
-      { fieldId: "record_type", direction: "desc" },
-      { fieldId: "title", direction: "asc" }
-    ],
+    visibleFieldIds: weightVisibleFields,
+    fieldOrder: weightVisibleFields,
+    columnWidths: { title: 150, recorded_date: 150, weight_kg: 140, previous_week_avg: 190, note: 230 },
+    sorts: [{ fieldId: "recorded_date", direction: "desc" }],
     filters: [],
-    columnSummaries: { line_total: "sum" }
+    columnSummaries: { weight_kg: "average", previous_week_avg: "average" }
   });
 
   await writeJson(join(root, "lotion.json"), {
@@ -391,12 +389,12 @@ async function createMarketingWorkspace(root, sourceRoot) {
     spaceId: "sp_marketing",
     name: "Lotion Studio",
     pages: pages.map((page) => page.id),
-    databases: ["db_launch", "db_quote_builder"],
+    databases: ["db_launch", "db_weight_tracker"],
     systemDatabases: ["workspaces", "pages"],
     activePageId: "pg_launch",
     recents: [
       { type: "page", id: "pg_launch", at: "2026-07-19T17:00:00.000Z", count: 8 },
-      { type: "database", id: "db_quote_builder", at: "2026-07-19T16:45:00.000Z", count: 6 },
+      { type: "database", id: "db_weight_tracker", at: "2026-07-19T16:45:00.000Z", count: 14 },
       { type: "database", id: "db_launch", at: "2026-07-19T16:30:00.000Z", count: 5 },
       { type: "page", id: "pg_brief", at: "2026-07-19T16:00:00.000Z", count: 3 }
     ]

@@ -119,32 +119,28 @@
 
       <section class="formula-story" id="formulas" aria-labelledby="formula-title">
         <div class="formula-story-copy">
-          <p class="eyebrow">Beyond row-scoped formulas</p>
-          <h2 id="formula-title">A Notion-like database that can think like a spreadsheet.</h2>
+          <p class="eyebrow">Rolling calculations across rows</p>
+          <h2 id="formula-title">Track today. Compare with the week before.</h2>
           <p>
-            Use direct cell ranges or stable field IDs to calculate across CSV
-            rows. Build a quote, financial model, inventory lookup, or scorecard
-            without creating helper databases and relations.
+            Record one weight each day. Lotion calculates the average of the
+            previous seven entries directly from the CSV, without a helper
+            database, relation, or rollup.
           </p>
-          <pre><code>=IF(record_type="Order",
-  LOOKUP(FIELD("sku"), "sku", "unit_price", 1, 3)
-  * quantity,
-  ""
-)</code></pre>
+          <pre><code>=MOVING_AVERAGE("weight_kg", 7, 2)</code></pre>
           <ul>
-            <li><strong>Spreadsheet-native</strong><span>A1 ranges, VLOOKUP, SUMIF, SUMPRODUCT, and other familiar functions.</span></li>
-            <li><strong>Schema-stable</strong><span>FIELD, VALUES, and LOOKUP use field IDs when coordinates are too fragile.</span></li>
-            <li><strong>View-safe</strong><span>Sorting, filtering, and dragging columns never silently retarget a formula.</span></li>
+            <li><strong>Previous seven</strong><span>The window reads the seven source rows before today's entry.</span></li>
+            <li><strong>Easy to read</strong><span>The field ID, window size, and precision are visible in one short formula.</span></li>
+            <li><strong>View-safe</strong><span>Showing newest first does not change which records belong to the window.</span></li>
           </ul>
         </div>
         <figure class="formula-story-visual">
           <img
             src="assets/lotion-formulas.png"
-            alt="Lotion quote builder using cross-row spreadsheet formulas over CSV records"
+            alt="Lotion weight tracker calculating the average of the previous seven CSV records"
             width="1600"
             height="1000"
           />
-          <figcaption>Orders are sorted first, while their displayed source row numbers continue to reference catalog rows 1–3.</figcaption>
+          <figcaption>The view shows newest entries first while source row numbers keep the rolling window stable.</figcaption>
         </figure>
       </section>
 
@@ -204,9 +200,9 @@
               role="tab"
               aria-selected="false"
               data-image="assets/lotion-formula-editor.png"
-              data-alt="Lotion formula editor with CSV coordinates and stable field references"
-              data-title="Spreadsheet formulas"
-              data-copy="Calculate across arbitrary CSV rows with A1 ranges or stable FIELD, VALUES, and LOOKUP references."
+              data-alt="Lotion moving-average formula editor with CSV coordinates and stable field references"
+              data-title="Moving averages"
+              data-copy="Calculate the previous seven entries with one readable formula, even when the view is sorted newest first."
             >
               Formulas
             </button>

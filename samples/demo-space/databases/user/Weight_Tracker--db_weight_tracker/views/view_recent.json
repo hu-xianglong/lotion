@@ -1,0 +1,12 @@
+{
+  "id": "view_recent",
+  "databaseId": "db_weight_tracker",
+  "name": "Recent",
+  "type": "table",
+  "visibleFieldIds": ["title", "recorded_date", "weight_kg", "previous_week_avg", "note"],
+  "fieldOrder": ["title", "recorded_date", "weight_kg", "previous_week_avg", "note"],
+  "columnWidths": { "title": 150, "recorded_date": 150, "weight_kg": 140, "previous_week_avg": 190, "note": 230 },
+  "sorts": [{ "fieldId": "recorded_date", "direction": "desc" }],
+  "filters": [],
+  "columnSummaries": { "weight_kg": "average", "previous_week_avg": "average" }
+}

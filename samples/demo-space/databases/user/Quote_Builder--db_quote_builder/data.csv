@@ -1,7 +1,0 @@
-id,created_time,updated_time,title,record_type,sku,unit_price,quantity,line_total,page_file
-quote_catalog_1,2026-07-19T12:01:00.000Z,2026-07-19T12:01:00.000Z,Standing desk,Catalog,DESK-01,699,,,
-quote_catalog_2,2026-07-19T12:02:00.000Z,2026-07-19T12:02:00.000Z,Task chair,Catalog,CHAIR-02,249,,,
-quote_catalog_3,2026-07-19T12:03:00.000Z,2026-07-19T12:03:00.000Z,Monitor arm,Catalog,ARM-03,129,,,
-quote_order_1,2026-07-19T12:04:00.000Z,2026-07-19T12:04:00.000Z,Studio setup,Order,DESK-01,,2,1398,
-quote_order_2,2026-07-19T12:05:00.000Z,2026-07-19T12:05:00.000Z,Team chairs,Order,CHAIR-02,,6,1494,
-quote_order_3,2026-07-19T12:06:00.000Z,2026-07-19T12:06:00.000Z,Dual monitor arms,Order,ARM-03,,4,516,

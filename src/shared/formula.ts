@@ -68,6 +68,8 @@ export function evaluateFormula(
       functions: {
         FIELD: (name) => readFormulaField(name, record, fields),
         VALUES: (name, fromRow, toRow) => readFormulaValues(name, fields, records, fromRow, toRow),
+        MOVING_AVERAGE: (name, windowSize, decimals) =>
+          movingAverageFormulaValue(name, fields, records, rowIndex, windowSize, decimals),
         LOOKUP: (needle, lookupField, resultField, fromRow, toRow) =>
           lookupFormulaValue(needle, lookupField, resultField, fields, records, fromRow, toRow)
       },
@@ -172,6 +174,37 @@ function lookupFormulaValue(
     if (String(record?.[lookupField.id] ?? "") === target) return record?.[resultField.id] ?? "";
   }
   return "#N/A";
+}
+
+function movingAverageFormulaValue(
+  fieldName: unknown,
+  fields: FieldSchema[],
+  records: DatabaseRecord[],
+  rowIndex: number,
+  windowSize: unknown,
+  decimals?: unknown
+): unknown {
+  const field = resolveFormulaField(fieldName, fields);
+  if (!field) return "#NAME?";
+  const requestedWindow = Number(unwrapFormulaArgument(windowSize));
+  if (!Number.isFinite(requestedWindow) || requestedWindow < 1) return "#VALUE!";
+  const window = Math.floor(requestedWindow);
+  if (rowIndex < window) return "";
+
+  const values = records
+    .slice(rowIndex - window, rowIndex)
+    .map((item) => item[field.id])
+    .filter((value) => value !== "" && value !== null && value !== undefined)
+    .map(Number)
+    .filter(Number.isFinite);
+  if (values.length !== window) return "";
+
+  const average = values.reduce((sum, value) => sum + value, 0) / window;
+  if (decimals === undefined) return average;
+  const requestedDecimals = Number(unwrapFormulaArgument(decimals));
+  if (!Number.isFinite(requestedDecimals)) return "#VALUE!";
+  const precision = Math.max(0, Math.min(12, Math.floor(requestedDecimals)));
+  return Number(average.toFixed(precision));
 }
 
 function resolveFormulaField(name: unknown, fields: FieldSchema[]): FieldSchema | undefined {

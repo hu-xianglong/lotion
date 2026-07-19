@@ -1,0 +1,23 @@
+{
+  "id": "db_weight_tracker",
+  "name": "Weight Tracker · Moving average",
+  "created_time": "2026-07-06T07:00:00.000Z",
+  "updated_time": "2026-07-19T07:12:00.000Z",
+  "fields": [
+    { "id": "id", "name": "ID", "type": "id", "system": true },
+    { "id": "created_time", "name": "Created time", "type": "created_time", "system": true },
+    { "id": "updated_time", "name": "Updated time", "type": "updated_time", "system": true },
+    { "id": "title", "name": "Entry", "type": "text" },
+    { "id": "recorded_date", "name": "Date", "type": "date" },
+    { "id": "weight_kg", "name": "Weight (kg)", "type": "number" },
+    {
+      "id": "previous_week_avg",
+      "name": "Previous 7 avg (kg)",
+      "type": "formula",
+      "formula": "=MOVING_AVERAGE(\"weight_kg\",7,2)"
+    },
+    { "id": "note", "name": "Note", "type": "text" },
+    { "id": "page_file", "name": "Page file", "type": "text", "system": true, "hidden": true }
+  ],
+  "defaultViewId": "view_recent"
+}

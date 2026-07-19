@@ -96,6 +96,27 @@ assert.equal(
   "DESK-01"
 );
 
+const weightFields = [
+  { id: "weight_kg", name: "Weight (kg)", type: "number" },
+  { id: "previous_week_avg", name: "Previous week average", type: "formula", formula: '=MOVING_AVERAGE("weight_kg",7,2)' }
+];
+const weightRows = [80, 79.8, 79.7, 79.9, 79.5, 79.4, 79.2, 79.1, 79, 78.9, 79.1, 78.8, 78.7, 78.6]
+  .map((weight_kg, index) => ({ id: `weight_${index + 1}`, weight_kg }));
+const computedWeightRows = applyFormulasToRecords(weightRows, weightFields);
+assert.equal(computedWeightRows[6].previous_week_avg, "");
+assert.equal(computedWeightRows[7].previous_week_avg, 79.64);
+assert.equal(computedWeightRows[13].previous_week_avg, 78.97);
+assert.equal(
+  evaluateFormula(
+    { ...weightFields[1], formula: '=MOVING_AVERAGE("missing",7,2)' },
+    weightRows[7],
+    weightFields,
+    weightRows,
+    7
+  ),
+  "#NAME?"
+);
+
 assert.equal(
   evaluateFormula(
     { id: "legacy", name: "Legacy", type: "formula", formula: "CASE WHEN status = 'Blocked' THEN 'Needs help' ELSE 'OK' END" },
@@ -118,7 +139,7 @@ assert.equal(
 );
 
 await assertDemoFormulaCsv("db_formula_lab", { minRows: 8, minFormulaFields: 6 });
-await assertDemoFormulaCsv("db_quote_builder", { minRows: 6, minFormulaFields: 1 });
+await assertDemoFormulaCsv("db_weight_tracker", { minRows: 14, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_tasks", { minRows: 4, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_reading", { minRows: 3, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_views_stress", { minRows: 30, minFormulaFields: 1 });

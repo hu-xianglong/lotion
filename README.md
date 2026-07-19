@@ -126,17 +126,17 @@ or rollups to aggregate other records. Lotion can also treat the underlying CSV
 as a spreadsheet: formulas can address cells, ranges, and arbitrary source rows
 directly.
 
-This quote builder keeps a product catalog in source rows 1–3 and order lines
-below it. One formula looks up each order's SKU and calculates its total without
-creating another database or relation:
+This weight tracker stores one measurement per day. Starting with the eighth
+entry, one formula calculates the average of the previous seven source rows:
 
 ```text
-=IF(record_type="Order",LOOKUP(FIELD("sku"),"sku","unit_price",1,3)*quantity,"")
+=MOVING_AVERAGE("weight_kg", 7, 2)
 ```
 
-- `FIELD("sku")` reads a field from the current source row.
-- `VALUES("line_total", 4, 100)` returns a cross-row field range.
-- `LOOKUP(...)` searches one field and returns another field from the matched row.
+- `"weight_kg"` is the stable field ID to average.
+- `7` selects the seven source rows immediately before the current row.
+- `2` rounds the result to two decimal places.
+- The first seven entries stay empty until a complete window is available.
 - `A1`, `SUM(E1:E100)`, `VLOOKUP`, `SUMIF`, and other Excel-style expressions
   remain available when positional formulas are the better fit.
 
@@ -144,7 +144,7 @@ Sorting, filtering, and rearranging a view do not change source row numbers or
 formula coordinates. The table displays both coordinates, and formula settings
 map every column letter back to its stable field ID.
 
-![Lotion quote builder using cross-row spreadsheet formulas](website/assets/lotion-formulas.png)
+![Lotion weight tracker calculating the previous seven-entry average](website/assets/lotion-formulas.png)
 
 ![Lotion formula editor with source coordinates and stable field references](website/assets/lotion-formula-editor.png)
 

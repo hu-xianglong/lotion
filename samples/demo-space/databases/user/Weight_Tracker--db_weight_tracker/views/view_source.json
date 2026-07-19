@@ -1,0 +1,10 @@
+{
+  "id": "view_source",
+  "databaseId": "db_weight_tracker",
+  "name": "CSV source order",
+  "type": "table",
+  "visibleFieldIds": ["title", "recorded_date", "weight_kg", "previous_week_avg", "note"],
+  "fieldOrder": ["title", "recorded_date", "weight_kg", "previous_week_avg", "note"],
+  "sorts": [],
+  "filters": []
+}

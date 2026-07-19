@@ -261,7 +261,7 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
             <div className="formula-example-section">
               <strong>{t("field.formulaExamples")}</strong>
               <code>=SUM(E1:E100)</code>
-              <code>=LOOKUP(FIELD("sku"), "sku", "unit_price", 1, 3) * quantity</code>
+              <code>=MOVING_AVERAGE("weight_kg", 7, 2)</code>
               <code>=SUM(VALUES("line_total", 4, 100))</code>
             </div>
             <div className="formula-preview-row">
