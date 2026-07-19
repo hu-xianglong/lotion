@@ -107,14 +107,8 @@ img {
 .brand-mark {
   width: 29px;
   height: 29px;
-  display: inline-grid;
-  place-items: center;
+  display: block;
   flex: 0 0 auto;
-  border-radius: 5px;
-  color: var(--paper);
-  background: var(--dark);
-  font-size: 16px;
-  font-weight: 800;
 }
 
 .site-nav {
@@ -543,6 +537,7 @@ img {
 
 .viewer-frame img {
   width: 100%;
+  height: auto;
   aspect-ratio: 16 / 10;
   object-fit: cover;
   object-position: top;
@@ -905,8 +900,10 @@ img {
   }
 
   .hero-image {
-    height: 38%;
-    object-position: 20% top;
+    height: 42%;
+    object-fit: contain;
+    object-position: center;
+    background: var(--dark);
   }
 
   .hero-caption {
@@ -994,8 +991,9 @@ img {
   }
 
   .viewer-frame img {
-    aspect-ratio: 4 / 3;
-    object-position: 18% top;
+    aspect-ratio: 16 / 10;
+    object-fit: contain;
+    object-position: center top;
   }
 
   .viewer-frame figcaption {

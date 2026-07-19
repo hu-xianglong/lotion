@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion</title>
+  <desc id="desc">A folded page with an L-shaped negative space.</desc>
+  <path fill="#1d1e1b" fill-rule="evenodd" d="M112 88 H328 L416 176 V404 Q416 428 392 428 H112 Q88 428 88 404 V112 Q88 88 112 88 Z M160 158 H220 V326 H338 V382 H160 Z"/>
+  <path fill="#1d1e1b" d="M346 106 V160 H400 Z"/>
+</svg>

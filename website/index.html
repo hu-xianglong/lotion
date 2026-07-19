@@ -24,7 +24,8 @@
     />
     <meta name="twitter:image" content="https://hu-xianglong.github.io/lotion/assets/lotion-home.png" />
     <title>Lotion — A workspace that belongs to you</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20260719-3" />
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -32,7 +33,7 @@
 
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Lotion home">
-        <span class="brand-mark" aria-hidden="true">L</span>
+        <img class="brand-mark" src="assets/lotion-logo.svg" alt="" width="29" height="29" />
         <span>Lotion</span>
       </a>
       <button class="menu-button" type="button" aria-label="Open navigation" aria-expanded="false">
@@ -61,13 +62,16 @@
             <a class="button button-quiet" href="#start">Run locally</a>
           </div>
         </div>
-        <img
-          class="hero-image"
-          src="assets/lotion-home.png"
-          alt="Lotion desktop app showing a local knowledge workspace"
-          width="1600"
-          height="1000"
-        />
+        <picture>
+          <source media="(max-width: 760px)" srcset="assets/lotion-home.png" />
+          <img
+            class="hero-image"
+            src="assets/lotion-hero.png"
+            alt="Lotion desktop app showing a local knowledge workspace"
+            width="1600"
+            height="460"
+          />
+        </picture>
         <p class="hero-caption">Markdown pages · CSV databases · Local attachments</p>
       </section>
 
@@ -238,7 +242,7 @@ npm run dev</code></pre>
 
     <footer class="site-footer">
       <div class="footer-brand">
-        <span class="brand-mark" aria-hidden="true">L</span>
+        <img class="brand-mark" src="assets/lotion-logo.svg" alt="" width="29" height="29" />
         <div><strong>Lotion</strong><span>Your workspace, in your files.</span></div>
       </div>
       <nav aria-label="Footer navigation">
