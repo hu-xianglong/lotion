@@ -167,6 +167,20 @@ assert.equal(
   "structured references inside string literals must remain literal"
 );
 
+const formulaPerformanceRows = Array.from({ length: 5_000 }, (_value, index) => ({
+  id: `performance_${index + 1}`,
+  recorded_date: new Date(Date.UTC(2010, 0, 1) + index * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+  weight_kg: 70 + (index % 50) / 10
+}));
+const formulaPerformanceStart = performance.now();
+const computedPerformanceRows = applyFormulasToRecords(formulaPerformanceRows, weightFields);
+const formulaPerformanceMs = performance.now() - formulaPerformanceStart;
+assert.equal(computedPerformanceRows.at(-1).previous_week_avg, 74.5);
+assert.ok(
+  formulaPerformanceMs < 3_000,
+  `5,000 rolling formulas should reuse a parser and date index; received ${formulaPerformanceMs.toFixed(1)}ms`
+);
+
 assert.equal(
   evaluateFormula(
     { id: "legacy", name: "Legacy", type: "formula", formula: "CASE WHEN status = 'Blocked' THEN 'Needs help' ELSE 'OK' END" },

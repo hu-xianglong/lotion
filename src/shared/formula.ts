@@ -72,50 +72,69 @@ export function evaluateFormula(
   records: DatabaseRecord[] = [record],
   rowIndex = 0
 ): RecordValue {
+  return createFormulaEvaluator(field, fields, records)(record, rowIndex);
+}
+
+function createFormulaEvaluator(
+  field: FieldSchema,
+  fields: FieldSchema[],
+  records: DatabaseRecord[]
+): (record: DatabaseRecord, rowIndex: number) => RecordValue {
   const formula = normalizeFormulaExpression(field.formula);
   // No expression means this is likely an imported formula column with
   // precomputed values. Keep those values instead of blanking the CSV.
-  if (!formula) return record[field.id] ?? "";
+  if (!formula) return (record) => record[field.id] ?? "";
 
-  try {
-    const fieldLookup = buildFieldLookup(fields);
-    const parser = new Parser({
-      functions: {
-        FIELD: (name) => readFormulaField(name, record, fields),
-        VALUES: (name, fromRow, toRow) => readFormulaValues(name, fields, records, fromRow, toRow),
-        LOTION_CURRENT: (name) => readStructuredFormulaCurrent(name, record, fields),
-        LOTION_COLUMN: (name) => readStructuredFormulaColumn(name, fields, records),
-        AVERAGEIFS: (...args) => averageIfsFormulaValue(...args),
-        MOVING_AVERAGE: (name, windowSize, decimals) =>
-          movingAverageFormulaValue(name, fields, records, rowIndex, windowSize, decimals),
-        AVERAGE_LAST_DAYS: (name, dateField, days, decimals) =>
-          averageLastDaysFormulaValue(name, dateField, fields, records, record, days, decimals),
-        LOOKUP: (needle, lookupField, resultField, fromRow, toRow) =>
-          lookupFormulaValue(needle, lookupField, resultField, fields, records, fromRow, toRow)
-      },
-      onVariable: (name) => {
-        const col = fieldLookup.get(normalizeFormulaName(name));
-        if (!col) throw new Error(`Unknown formula variable: ${name}`);
-        return { row: rowIndex + 1, col, sheet: SHEET_NAME };
-      },
-      onCell: (ref) => readFormulaCell(ref, fields, records),
-      onRange: (ref) => readFormulaRange(ref, fields, records)
-    });
-    const col = Math.max(1, fields.findIndex((item) => item.id === field.id) + 1);
-    const result = parser.parse(formula, { row: rowIndex + 1, col, sheet: SHEET_NAME }, true);
-    return normalizeFormulaResult(result);
-  } catch (error) {
-    return normalizeFormulaError(error);
-  }
+  const fieldLookup = buildFieldLookup(fields);
+  let activeRecord: DatabaseRecord = records[0] ?? {};
+  let activeRowIndex = 0;
+  const parser = new Parser({
+    functions: {
+      FIELD: (name) => readFormulaField(name, activeRecord, fields),
+      VALUES: (name, fromRow, toRow) => readFormulaValues(name, fields, records, fromRow, toRow),
+      LOTION_CURRENT: (name) => readStructuredFormulaCurrent(name, activeRecord, fields),
+      LOTION_COLUMN: (name) => readStructuredFormulaColumn(name, fields, records),
+      AVERAGEIFS: (...args) => averageIfsFormulaValue(...args),
+      MOVING_AVERAGE: (name, windowSize, decimals) =>
+        movingAverageFormulaValue(name, fields, records, activeRowIndex, windowSize, decimals),
+      AVERAGE_LAST_DAYS: (name, dateField, days, decimals) =>
+        averageLastDaysFormulaValue(name, dateField, fields, records, activeRecord, days, decimals),
+      LOOKUP: (needle, lookupField, resultField, fromRow, toRow) =>
+        lookupFormulaValue(needle, lookupField, resultField, fields, records, fromRow, toRow)
+    },
+    onVariable: (name) => {
+      const col = fieldLookup.get(normalizeFormulaName(name));
+      if (!col) throw new Error(`Unknown formula variable: ${name}`);
+      return { row: activeRowIndex + 1, col, sheet: SHEET_NAME };
+    },
+    onCell: (ref) => readFormulaCell(ref, fields, records),
+    onRange: (ref) => readFormulaRange(ref, fields, records)
+  });
+  const col = Math.max(1, fields.findIndex((item) => item.id === field.id) + 1);
+
+  return (record, rowIndex) => {
+    activeRecord = record;
+    activeRowIndex = rowIndex;
+    try {
+      const result = parser.parse(formula, { row: rowIndex + 1, col, sheet: SHEET_NAME }, true);
+      return normalizeFormulaResult(result);
+    } catch (error) {
+      return normalizeFormulaError(error);
+    }
+  };
 }
 
 export function applyFormulasToRecords(records: DatabaseRecord[], fields: FieldSchema[]): DatabaseRecord[] {
   const formulaFields = fields.filter((field) => field.type === "formula");
   if (formulaFields.length === 0) return records;
   const computed = records.map((record) => ({ ...record }));
+  const evaluators = formulaFields.map((field) => ({
+    field,
+    evaluate: createFormulaEvaluator(field, fields, computed)
+  }));
   computed.forEach((record, rowIndex) => {
-    for (const field of formulaFields) {
-      record[field.id] = evaluateFormula(field, record, fields, computed, rowIndex);
+    for (const evaluator of evaluators) {
+      record[evaluator.field.id] = evaluator.evaluate(record, rowIndex);
     }
   });
   return computed;
