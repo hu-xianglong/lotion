@@ -123,20 +123,20 @@
           <h2 id="formula-title">Track today. Compare with the week before.</h2>
           <p>
             Record one weight each day. Lotion calculates the average of the
-            previous seven entries directly from the CSV, without a helper
+            previous seven calendar days directly from the CSV, without a helper
             database, relation, or rollup.
           </p>
-          <pre><code>=AVERAGE_LAST_DAYS("weight_kg", "recorded_date", 7, 2)</code></pre>
+          <pre><code>=IFERROR(ROUND(AVERAGEIFS([weight_kg], [recorded_date], ">="&amp;[@recorded_date]-7, [recorded_date], "&lt;"&amp;[@recorded_date]), 2), "")</code></pre>
           <ul>
-            <li><strong>Calendar-aware</strong><span>The current entry's date selects records from the previous seven days.</span></li>
-            <li><strong>Easy to read</strong><span>Value field, date field, window, and precision stay visible in one formula.</span></li>
+            <li><strong>Excel-style</strong><span>AVERAGEIFS, criteria, and structured column references work together.</span></li>
+            <li><strong>Calendar-aware</strong><span>The current row date selects records from the previous seven days.</span></li>
             <li><strong>Order-safe</strong><span>Sorting, backfilling, or missing a day does not silently shift the window.</span></li>
           </ul>
         </div>
         <figure class="formula-story-visual">
           <img
             src="assets/lotion-formulas.png"
-            alt="Lotion weight tracker calculating the average of the previous seven CSV records"
+            alt="Lotion weight tracker calculating the average of the previous seven calendar days"
             width="1600"
             height="1000"
           />

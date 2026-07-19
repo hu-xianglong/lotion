@@ -99,7 +99,12 @@ assert.equal(
 const weightFields = [
   { id: "recorded_date", name: "Date", type: "date" },
   { id: "weight_kg", name: "Weight (kg)", type: "number" },
-  { id: "previous_week_avg", name: "Previous week average", type: "formula", formula: '=AVERAGE_LAST_DAYS("weight_kg","recorded_date",7,2)' }
+  {
+    id: "previous_week_avg",
+    name: "Previous week average",
+    type: "formula",
+    formula: '=IFERROR(ROUND(AVERAGEIFS([weight_kg],[recorded_date],">="&[@recorded_date]-7,[recorded_date],"<"&[@recorded_date]),2),"")'
+  }
 ];
 const weightRows = [80, 79.8, 79.7, 79.9, 79.5, 79.4, 79.2, 79.1, 79, 78.9, 79.1, 78.8, 78.7, 78.6]
   .map((weight_kg, index) => ({
@@ -108,7 +113,9 @@ const weightRows = [80, 79.8, 79.7, 79.9, 79.5, 79.4, 79.2, 79.1, 79, 78.9, 79.1
     weight_kg
   }));
 const computedWeightRows = applyFormulasToRecords(weightRows, weightFields);
-assert.equal(computedWeightRows[6].previous_week_avg, "");
+assert.equal(computedWeightRows[0].previous_week_avg, "");
+assert.equal(computedWeightRows[1].previous_week_avg, 80);
+assert.equal(computedWeightRows[6].previous_week_avg, 79.72);
 assert.equal(computedWeightRows[7].previous_week_avg, 79.64);
 assert.equal(computedWeightRows[13].previous_week_avg, 78.97);
 assert.equal(
@@ -140,13 +147,24 @@ assert.equal(
 );
 assert.equal(
   evaluateFormula(
-    { ...weightFields[2], formula: '=AVERAGE_LAST_DAYS("missing","recorded_date",7,2)' },
+    { ...weightFields[2], formula: '=IFERROR(AVERAGEIFS([missing],[recorded_date],">="&[@recorded_date]-7),"")' },
     weightRows[7],
     weightFields,
     weightRows,
     7
   ),
-  "#NAME?"
+  ""
+);
+assert.equal(
+  evaluateFormula(
+    { ...weightFields[2], formula: '="literal [weight_kg]"' },
+    weightRows[7],
+    weightFields,
+    weightRows,
+    7
+  ),
+  "literal [weight_kg]",
+  "structured references inside string literals must remain literal"
 );
 
 assert.equal(

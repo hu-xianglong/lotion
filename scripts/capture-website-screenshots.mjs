@@ -95,7 +95,7 @@ try {
   await formulaHeader.locator(".field-header-button").click();
   await page.waitForSelector(".field-dialog .formula-reference-list", { timeout: 15_000 });
   const formulaDialogText = await page.locator(".field-dialog").innerText();
-  if (!formulaDialogText.includes("AVERAGE_LAST_DAYS") || !formulaDialogText.includes("CSV storage order")) {
+  if (!formulaDialogText.includes("AVERAGEIFS") || !formulaDialogText.includes("[@recorded_date]") || !formulaDialogText.includes("CSV storage order")) {
     throw new Error("Formula settings did not expose stable cross-row references");
   }
   await settleForScreenshot(page);
@@ -327,9 +327,10 @@ async function createMarketingWorkspace(root, sourceRoot) {
   const weights = [80, 79.8, 79.7, 79.9, 79.5, 79.4, 79.2, 79.1, 79, 78.9, 79.1, 78.8, 78.7, 78.6];
   const weightRows = weights.map((weight, index) => {
     const day = index + 6;
-    const previousWeekAverage = index < 7
+    const previousValues = weights.slice(Math.max(0, index - 7), index);
+    const previousWeekAverage = previousValues.length === 0
       ? ""
-      : Number((weights.slice(index - 7, index).reduce((sum, value) => sum + value, 0) / 7).toFixed(2));
+      : Number((previousValues.reduce((sum, value) => sum + value, 0) / previousValues.length).toFixed(2));
     return {
       id: `weight_${String(index + 1).padStart(2, "0")}`,
       created_time: `2026-07-${String(day).padStart(2, "0")}T07:15:00.000Z`,
@@ -357,7 +358,7 @@ async function createMarketingWorkspace(root, sourceRoot) {
       id: "previous_week_avg",
       name: "Previous 7 avg (kg)",
       type: "formula",
-      formula: '=AVERAGE_LAST_DAYS("weight_kg","recorded_date",7,2)'
+      formula: '=IFERROR(ROUND(AVERAGEIFS([weight_kg],[recorded_date],">="&[@recorded_date]-7,[recorded_date],"<"&[@recorded_date]),2),"")'
     },
     { id: "note", name: "Note", type: "text" },
     { id: "page_file", name: "Page file", type: "text", system: true, hidden: true }

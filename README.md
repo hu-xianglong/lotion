@@ -126,18 +126,19 @@ or rollups to aggregate other records. Lotion can also treat the underlying CSV
 as a spreadsheet: formulas can address cells, ranges, and arbitrary source rows
 directly.
 
-This weight tracker stores one measurement per day. Starting with the eighth
-entry, one formula calculates the average of the previous seven source rows:
+This weight tracker stores one measurement per day. An Excel-style formula
+calculates the average of the available measurements in the previous seven
+calendar days:
 
 ```text
-=AVERAGE_LAST_DAYS("weight_kg", "recorded_date", 7, 2)
+=IFERROR(ROUND(AVERAGEIFS([weight_kg], [recorded_date], ">="&[@recorded_date]-7, [recorded_date], "<"&[@recorded_date]), 2), "")
 ```
 
-- `"weight_kg"` is the stable field ID to average.
-- `"recorded_date"` selects records by the current entry's date.
-- `7` selects the previous seven calendar days.
-- `2` rounds the result to two decimal places.
-- The first seven entries stay empty until a complete window is available.
+- `[weight_kg]` is the complete CSV column to average.
+- `[recorded_date]` is the complete date column.
+- `[@recorded_date]` is the date in the current row.
+- The two criteria select the previous seven calendar days and exclude today.
+- `ROUND(..., 2)` keeps two decimal places; `IFERROR(..., "")` leaves the first entry empty.
 - `A1`, `SUM(E1:E100)`, `VLOOKUP`, `SUMIF`, and other Excel-style expressions
   remain available when positional formulas are the better fit.
 

@@ -261,7 +261,7 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
             <div className="formula-example-section">
               <strong>{t("field.formulaExamples")}</strong>
               <code>=SUM(E1:E100)</code>
-              <code>=AVERAGE_LAST_DAYS("weight_kg", "recorded_date", 7, 2)</code>
+              <code>=AVERAGEIFS([weight_kg], [recorded_date], "&gt;="&amp;[@recorded_date]-7, [recorded_date], "&lt;"&amp;[@recorded_date])</code>
               <code>=SUM(VALUES("line_total", 4, 100))</code>
             </div>
             <div className="formula-preview-row">

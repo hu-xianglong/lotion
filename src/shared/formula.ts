@@ -37,11 +37,20 @@ type FormulaParserConstructor = new (options?: {
 
 const Parser = FormulaParser as unknown as FormulaParserConstructor;
 const SHEET_NAME = "Lotion";
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const EXCEL_UNIX_EPOCH_SERIAL = 25569;
 const formulaDateIndexCache = new WeakMap<DatabaseRecord[], Map<string, DatedFormulaRecord[]>>();
+const structuredFormulaColumnCache = new WeakMap<DatabaseRecord[], Map<string, unknown[]>>();
+const structuredFormulaColumnMetadata = new WeakMap<unknown[], StructuredFormulaColumnMetadata>();
 
 interface DatedFormulaRecord {
   item: DatabaseRecord;
   day: number;
+}
+
+interface StructuredFormulaColumnMetadata {
+  field: FieldSchema;
+  records: DatabaseRecord[];
 }
 
 export function formulaColumnLabel(index: number): string {
@@ -74,6 +83,9 @@ export function evaluateFormula(
       functions: {
         FIELD: (name) => readFormulaField(name, record, fields),
         VALUES: (name, fromRow, toRow) => readFormulaValues(name, fields, records, fromRow, toRow),
+        LOTION_CURRENT: (name) => readStructuredFormulaCurrent(name, record, fields),
+        LOTION_COLUMN: (name) => readStructuredFormulaColumn(name, fields, records),
+        AVERAGEIFS: (...args) => averageIfsFormulaValue(...args),
         MOVING_AVERAGE: (name, windowSize, decimals) =>
           movingAverageFormulaValue(name, fields, records, rowIndex, windowSize, decimals),
         AVERAGE_LAST_DAYS: (name, dateField, days, decimals) =>
@@ -112,7 +124,42 @@ export function applyFormulasToRecords(records: DatabaseRecord[], fields: FieldS
 function normalizeFormulaExpression(formula: string | undefined): string {
   const trimmed = formula?.trim() ?? "";
   const expression = trimmed.startsWith("=") ? trimmed.slice(1).trim() : trimmed;
-  return convertLegacyCaseFormula(expression) ?? expression;
+  return expandStructuredFormulaReferences(convertLegacyCaseFormula(expression) ?? expression);
+}
+
+function expandStructuredFormulaReferences(formula: string): string {
+  let result = "";
+  let inString = false;
+  for (let index = 0; index < formula.length;) {
+    const char = formula[index];
+    if (char === '"') {
+      result += char;
+      if (inString && formula[index + 1] === '"') {
+        result += '"';
+        index += 2;
+        continue;
+      }
+      inString = !inString;
+      index += 1;
+      continue;
+    }
+    if (!inString && char === "[") {
+      const end = formula.indexOf("]", index + 1);
+      if (end !== -1) {
+        const reference = formula.slice(index + 1, end).trim();
+        const currentRow = reference.startsWith("@");
+        const fieldName = (currentRow ? reference.slice(1) : reference).trim();
+        if (fieldName) {
+          result += `${currentRow ? "LOTION_CURRENT" : "LOTION_COLUMN"}(${JSON.stringify(fieldName)})`;
+          index = end + 1;
+          continue;
+        }
+      }
+    }
+    result += char;
+    index += 1;
+  }
+  return result;
 }
 
 function buildFieldLookup(fields: FieldSchema[]): Map<string, number> {
@@ -148,6 +195,156 @@ function readFormulaCell(ref: CellReference, fields: FieldSchema[], records: Dat
 function readFormulaField(name: unknown, record: DatabaseRecord, fields: FieldSchema[]): unknown {
   const field = resolveFormulaField(name, fields);
   return field ? record[field.id] ?? "" : "#NAME?";
+}
+
+function readStructuredFormulaCurrent(name: unknown, record: DatabaseRecord, fields: FieldSchema[]): unknown {
+  const field = resolveFormulaField(name, fields);
+  return field ? structuredFormulaValue(record[field.id], field) : Number.NaN;
+}
+
+function readStructuredFormulaColumn(
+  name: unknown,
+  fields: FieldSchema[],
+  records: DatabaseRecord[]
+): unknown[] {
+  const field = resolveFormulaField(name, fields);
+  if (!field) return [Number.NaN];
+  let byField = structuredFormulaColumnCache.get(records);
+  if (!byField) {
+    byField = new Map();
+    structuredFormulaColumnCache.set(records, byField);
+  }
+  const cacheKey = `${field.id}:${field.type}`;
+  const cached = byField.get(cacheKey);
+  if (cached) return cached;
+  const column = records.map((item) => structuredFormulaValue(item[field.id], field));
+  structuredFormulaColumnMetadata.set(column, { field, records });
+  if (field.type !== "formula" && field.type !== "rollup") byField.set(cacheKey, column);
+  return column;
+}
+
+function structuredFormulaValue(value: RecordValue | undefined, field: FieldSchema): unknown {
+  if (field.type !== "date" && field.type !== "created_time" && field.type !== "updated_time") return value ?? "";
+  const day = formulaCalendarDay(value);
+  return day === undefined ? "" : day / MILLISECONDS_PER_DAY + EXCEL_UNIX_EPOCH_SERIAL;
+}
+
+function averageIfsFormulaValue(...args: unknown[]): unknown {
+  if (args.length < 3 || (args.length - 1) % 2 !== 0) return Number.NaN;
+  const optimized = optimizedDateRangeAverage(args);
+  if (optimized !== undefined) return optimized;
+  const averageValues = flattenFormulaArgument(args[0]);
+  const criteria: Array<{ values: unknown[]; criterion: unknown }> = [];
+  for (let index = 1; index < args.length; index += 2) {
+    const values = flattenFormulaArgument(args[index]);
+    if (values.length !== averageValues.length) return Number.NaN;
+    criteria.push({ values, criterion: unwrapFormulaArgument(args[index + 1]) });
+  }
+
+  const matches: number[] = [];
+  for (let index = 0; index < averageValues.length; index += 1) {
+    if (!criteria.every((item) => matchesFormulaCriterion(item.values[index], item.criterion))) continue;
+    const value = averageValues[index];
+    if (value === "" || value === null || value === undefined || typeof value === "boolean") continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) matches.push(numeric);
+  }
+  if (matches.length === 0) return Number.NaN;
+  return matches.reduce((sum, value) => sum + value, 0) / matches.length;
+}
+
+function optimizedDateRangeAverage(args: unknown[]): number | undefined {
+  if (args.length !== 5) return undefined;
+  const averageColumn = unwrapFormulaArgument(args[0]);
+  const firstCriteriaColumn = unwrapFormulaArgument(args[1]);
+  const secondCriteriaColumn = unwrapFormulaArgument(args[3]);
+  if (!Array.isArray(averageColumn) || !Array.isArray(firstCriteriaColumn) || firstCriteriaColumn !== secondCriteriaColumn) {
+    return undefined;
+  }
+  const averageMetadata = structuredFormulaColumnMetadata.get(averageColumn);
+  const dateMetadata = structuredFormulaColumnMetadata.get(firstCriteriaColumn);
+  if (!averageMetadata || !dateMetadata || averageMetadata.records !== dateMetadata.records) return undefined;
+  if (dateMetadata.field.type !== "date" && dateMetadata.field.type !== "created_time" && dateMetadata.field.type !== "updated_time") {
+    return undefined;
+  }
+
+  const criteria = [parseNumericFormulaCriterion(args[2]), parseNumericFormulaCriterion(args[4])];
+  if (criteria.some((item) => !item)) return undefined;
+  const lower = criteria.find((item) => item?.operator === ">" || item?.operator === ">=");
+  const upper = criteria.find((item) => item?.operator === "<" || item?.operator === "<=");
+  if (!lower || !upper) return undefined;
+  const lowerDay = (lower.expected - EXCEL_UNIX_EPOCH_SERIAL) * MILLISECONDS_PER_DAY;
+  const upperDay = (upper.expected - EXCEL_UNIX_EPOCH_SERIAL) * MILLISECONDS_PER_DAY;
+  const datedRecords = formulaDateIndex(dateMetadata.records, dateMetadata.field.id);
+  const fromIndex = lower.operator === ">="
+    ? lowerBoundFormulaDay(datedRecords, lowerDay)
+    : upperBoundFormulaDay(datedRecords, lowerDay);
+  const toIndex = upper.operator === "<"
+    ? lowerBoundFormulaDay(datedRecords, upperDay)
+    : upperBoundFormulaDay(datedRecords, upperDay);
+  const values = datedRecords
+    .slice(fromIndex, toIndex)
+    .map(({ item }) => item[averageMetadata.field.id])
+    .filter((value) => value !== "" && value !== null && value !== undefined && typeof value !== "boolean")
+    .map(Number)
+    .filter(Number.isFinite);
+  if (values.length === 0) return Number.NaN;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function parseNumericFormulaCriterion(value: unknown): { operator: string; expected: number } | undefined {
+  const raw = unwrapFormulaArgument(value);
+  if (typeof raw !== "string") return undefined;
+  const match = raw.match(/^(<=|>=|<|>)(.*)$/);
+  if (!match) return undefined;
+  const expected = Number(match[2]);
+  return Number.isFinite(expected) ? { operator: match[1], expected } : undefined;
+}
+
+function flattenFormulaArgument(value: unknown): unknown[] {
+  const unwrapped = unwrapFormulaArgument(value);
+  if (!Array.isArray(unwrapped)) return [unwrapped];
+  return unwrapped.flat(Number.POSITIVE_INFINITY);
+}
+
+function matchesFormulaCriterion(value: unknown, criterion: unknown): boolean {
+  const rawCriterion = unwrapFormulaArgument(criterion);
+  const parsed = typeof rawCriterion === "string"
+    ? rawCriterion.match(/^(<=|>=|<>|=|<|>)(.*)$/)
+    : null;
+  const operator = parsed?.[1] ?? "=";
+  const expected = parsed ? parsed[2] : rawCriterion;
+  const expectedNumber = expected !== "" && expected !== null && expected !== undefined
+    ? Number(expected)
+    : Number.NaN;
+  if (Number.isFinite(expectedNumber)) {
+    const actualNumber = value === "" || value === null || value === undefined ? Number.NaN : Number(value);
+    if (!Number.isFinite(actualNumber)) return operator === "<>";
+    return compareFormulaCriterion(actualNumber, expectedNumber, operator);
+  }
+
+  const actualText = String(value ?? "").toLowerCase();
+  const expectedText = String(expected ?? "").toLowerCase();
+  if ((operator === "=" || operator === "<>") && /[*?]/.test(expectedText)) {
+    const pattern = expectedText
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+    const matches = new RegExp(`^${pattern}$`, "i").test(actualText);
+    return operator === "=" ? matches : !matches;
+  }
+  return compareFormulaCriterion(actualText, expectedText, operator);
+}
+
+function compareFormulaCriterion(left: number | string, right: number | string, operator: string): boolean {
+  switch (operator) {
+    case "<": return left < right;
+    case "<=": return left <= right;
+    case ">": return left > right;
+    case ">=": return left >= right;
+    case "<>": return left !== right;
+    default: return left === right;
+  }
 }
 
 function readFormulaValues(
@@ -264,6 +461,17 @@ function lowerBoundFormulaDay(records: DatedFormulaRecord[], target: number): nu
   while (low < high) {
     const middle = Math.floor((low + high) / 2);
     if (records[middle].day < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function upperBoundFormulaDay(records: DatedFormulaRecord[], target: number): number {
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (records[middle].day <= target) low = middle + 1;
     else high = middle;
   }
   return low;

@@ -40,6 +40,7 @@ try {
     renderLLMChatVisualContract,
     renderKanbanProviderVisual,
     renderEditableFieldSettingsDialog,
+    renderFormulaFieldSettingsDialog,
     renderDatabaseProperties,
     renderDatabaseTableGridEmbedded,
     renderDatabaseTableGridHiddenRows,
@@ -148,6 +149,7 @@ try {
   testMixedMarkdownProperty(renderMixedMarkdownProperty());
   testWorkspaceLinkRoutingContract(workspaceLinkRoutingContract());
   testEditableFieldSettingsDialog(renderEditableFieldSettingsDialog());
+  testFormulaFieldSettingsDialog(renderFormulaFieldSettingsDialog());
   testSystemFieldSettingsDialog(renderSystemFieldSettingsDialog());
   testSelectFieldSettingsDialog(renderSelectFieldSettingsDialog());
   testUrlCell(renderUrlCell());
@@ -430,6 +432,16 @@ function testEditableFieldSettingsDialog(html) {
   assert.match(html, />Cancel<\/button>/, "cancel action should render");
   assert.match(html, />Save field<\/button>/, "save action should render");
   assert.doesNotMatch(html, /System field values are managed by Lotion/, "editable fields should not show system helper");
+}
+
+function testFormulaFieldSettingsDialog(html) {
+  assert.match(html, /Formula columns/, "formula settings should explain storage column references");
+  assert.match(html, /Column letters and row numbers follow CSV storage order/, "formula settings should explain stable source coordinates");
+  assert.match(html, /<code>A<\/code><span>ID<\/span><small>id<\/small>/, "formula settings should map the first schema field to column A");
+  assert.match(html, /<code>D<\/code><span>SKU<\/span><small>sku<\/small>/, "formula settings should include visible field coordinates after system fields");
+  assert.match(html, /AVERAGEIFS\(\[weight_kg\], \[recorded_date\]/, "formula settings should show an Excel-style date-based average example");
+  assert.match(html, /SUM\(VALUES\(&quot;line_total&quot;, 4, 100\)\)/, "formula settings should show a stable cross-row aggregation example");
+  assert.match(html, />Preview formula<\/button>/, "formula settings should expose an explicit preview action");
 }
 
 function testSystemFieldSettingsDialog(html) {
@@ -2526,6 +2538,27 @@ function rendererComponentEntry() {
           wrap: true,
           onToggleWrap: () => {},
           onHide: () => {},
+          onClose: () => {},
+          onSave: async () => {}
+        })
+      );
+    }
+
+    export function renderFormulaFieldSettingsDialog() {
+      const fields = [
+        { id: "id", name: "ID", type: "id", system: true },
+        { id: "created_time", name: "Created time", type: "created_time", system: true },
+        { id: "updated_time", name: "Updated time", type: "updated_time", system: true },
+        { id: "sku", name: "SKU", type: "text" },
+        { id: "quantity", name: "Quantity", type: "number" },
+        { id: "unit_price", name: "Unit price", type: "number" },
+        { id: "line_total", name: "Line total", type: "formula", formula: "=LOOKUP(FIELD(\"sku\"),\"sku\",\"unit_price\",1,3)*quantity" }
+      ];
+      return renderWithDefaultFieldTypes(
+        React.createElement(FieldSettingsDialog, {
+          field: fields.at(-1),
+          fields,
+          records: [{ id: "row_1", sku: "DESK", quantity: 2, unit_price: 149 }],
           onClose: () => {},
           onSave: async () => {}
         })
