@@ -1433,7 +1433,7 @@ function testDatabaseTableGridEmbedded(html) {
   assert.match(html, /height:32px/, "top spacer height should render");
   assert.match(html, /height:48px/, "bottom spacer height should render");
   assert.match(html, /data-row-id="row_alpha"/, "visible rows should expose row ids");
-  assert.match(html, /class="row-num"[^>]*>6<\/td>/, "row numbers should include start index");
+  assert.match(html, /data-formula-row="9"[^>]*>9<\/td>/, "row numbers should use stable CSV source positions instead of view indexes");
   assert.match(html, /Cell:Alpha task\/Name/, "renderCell output should render for title field");
   assert.match(html, /Cell:Doing\/Status/, "renderCell output should render for status field");
   assert.match(html, /class="row-actions"/, "row action cell should render when provided");
@@ -5170,6 +5170,7 @@ function rendererComponentEntry() {
           )
         ),
         renderCell: (record, field) => React.createElement("span", null, "Cell:" + String(record[field.id] ?? "") + "/" + field.name),
+        getRowNumber: (record) => record.id === "row_alpha" ? 9 : 2,
         renderRowActions: (record) => React.createElement("button", { type: "button" }, "Action:" + String(record.id)),
         addRowLabel: "+ New"
       });
