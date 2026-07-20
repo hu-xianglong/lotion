@@ -508,6 +508,7 @@ export function Sidebar(props: SidebarProps) {
         <FavoritesSection
           state={props.state}
           onOpenPage={actions.selectPage}
+          onOpenDatabase={actions.selectDatabase}
           onOpenRowPage={(databaseId, rowId) => actions.openRowPage(databaseId, rowId)}
         />
         <RecentsSection
@@ -1368,17 +1369,18 @@ function RecentsSection({
 
 /**
  * Favorites section — pinned at the top of the sidebar when the
- * workspace has any starred items. Pages resolve their title via
- * state.pages; row-pages resolve their title via the pagesTree (which
- * already knows page_file → title for every row that has a body).
+ * workspace has any starred items. Pages and databases resolve their
+ * metadata from app state; row-pages resolve through the database cache.
  */
 function FavoritesSection({
   state,
   onOpenPage,
+  onOpenDatabase,
   onOpenRowPage
 }: {
   state: SidebarProps["state"];
   onOpenPage: (id: string) => void;
+  onOpenDatabase: (id: string) => void;
   onOpenRowPage: (databaseId: string, rowId: string) => void;
 }) {
   const { t } = useI18n();
@@ -1412,6 +1414,22 @@ function FavoritesSection({
               title={title}
             >
               <span className="nav-item-icon"><EntityIcon kind="page" icon={page?.icon} /></span>
+              <span className="nav-item-label">{title}</span>
+            </button>
+          );
+        }
+        if (f.type === "database") {
+          const database = state.databases.find((item) => item.id === f.id);
+          const title = database?.name ?? f.id;
+          const isActive = active?.type === "database" && active.id === f.id;
+          return (
+            <button
+              key={`d-${f.id}`}
+              className={isActive ? "nav-item active" : "nav-item"}
+              onClick={() => onOpenDatabase(f.id)}
+              title={title}
+            >
+              <span className="nav-item-icon"><EntityIcon kind="database" icon={database?.icon} /></span>
               <span className="nav-item-label">{title}</span>
             </button>
           );

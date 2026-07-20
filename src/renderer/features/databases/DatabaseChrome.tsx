@@ -3,6 +3,7 @@ import { ArrowUpRight, ImagePlus, RefreshCw, SmilePlus } from "lucide-react";
 import type { DatabaseBundle, FieldSchema, TableView } from "../../../shared/types";
 import type { DatabaseViewProvider } from "../../../shared/plugin-api";
 import { EntityIcon } from "../../components/EntityIcon";
+import { FavoriteToggle } from "../../components/FavoriteToggle";
 import { FieldTypeIcon, ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { SettingsIcon } from "../../components/Icons";
 import { useI18n } from "../../lib/i18n";
@@ -61,7 +62,9 @@ export function StandaloneDatabaseHeader({
   onPickCover,
   onClearCover,
   onCommitCoverOffset,
-  onOpenInNewWindow
+  onOpenInNewWindow,
+  favorited,
+  onToggleFavorite
 }: {
   bundle: DatabaseBundle;
   onPickIcon?: () => void;
@@ -69,6 +72,8 @@ export function StandaloneDatabaseHeader({
   onClearCover?: () => void;
   onCommitCoverOffset?: (offset: number) => void;
   onOpenInNewWindow?: () => void;
+  favorited?: boolean;
+  onToggleFavorite?: () => void;
 }) {
   const { t, locale } = useI18n();
   return (
@@ -83,6 +88,11 @@ export function StandaloneDatabaseHeader({
         />
       )}
       <div className="page-header">
+        {onToggleFavorite && (
+          <div className="page-action-bar" aria-label={t("page.actions")}>
+            <FavoriteToggle favorited={favorited} onToggle={onToggleFavorite} />
+          </div>
+        )}
         <div className="page-icon-row">
           {bundle.schema.icon ? (
             <button

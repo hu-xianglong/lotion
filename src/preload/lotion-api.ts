@@ -208,11 +208,12 @@ export interface LotionApi {
     clearShellOpenRequests(): Promise<string[]>;
   };
   notion: {
-    pickFolder(): Promise<string | null>;
+    pickFolder(kind?: "markdown_csv" | "html"): Promise<string | null>;
     pickTarget(): Promise<string | null>;
-    scan(folderPath: string): Promise<NotionScanSummary>;
+    scan(sourcePaths: string | string[]): Promise<NotionScanSummary>;
     runImport(payload: {
-      sourcePath: string;
+      sourcePath?: string;
+      sourcePaths?: string[];
       targetPath: string;
       force?: boolean;
       options?: NotionImportOptions;
@@ -284,7 +285,69 @@ export interface NotionScanSummary {
 export interface NotionImportSummary {
   workspaceRoot: string;
   reportPageId: string;
+  report: NotionImportReportSummary;
   scan: NotionScanSummary;
+}
+
+export interface NotionImportNameConflictEntry {
+  id: string;
+  notionId?: string;
+  name: string;
+  kind: "page" | "database";
+  source: string;
+  target: string;
+}
+
+export interface NotionImportNameConflictGroup {
+  name: string;
+  kinds: Array<"page" | "database">;
+  entries: NotionImportNameConflictEntry[];
+}
+
+export interface NotionImportReportSummary {
+  status: "complete" | "complete_with_warnings";
+  generatedAt: string;
+  durationMs: number;
+  counts: {
+    sources: number;
+    pages: number;
+    databases: number;
+    rows: number;
+    attachments: number;
+    warnings: number;
+    reviewItems: number;
+  };
+  nameConflicts: {
+    pageGroups: number;
+    databaseGroups: number;
+    crossTypeGroups: number;
+    groups: NotionImportNameConflictGroup[];
+  };
+  icons: {
+    pagesWithIcon: number;
+    pagesWithoutIcon: number;
+    databasesWithIcon: number;
+    databasesWithoutIcon: number;
+    rowsWithIcon: number;
+    rowsWithoutIcon: number;
+  };
+  performance: {
+    prepareTargetMs: number;
+    resolveSourcesMs: number;
+    indexSourcesMs: number;
+    selectDatabasesMs: number;
+    planAndParseMs: number;
+    writeWorkspaceMs: number;
+    totalMs: number;
+  };
+  warnings: string[];
+  artifacts: {
+    directory: string;
+    markdown: string;
+    json: string;
+    warningsCsv: string;
+    manifest: string;
+  };
 }
 
 export interface HitRange {

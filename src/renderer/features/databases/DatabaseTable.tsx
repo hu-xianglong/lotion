@@ -58,6 +58,8 @@ interface DatabaseTableProps {
   onCommitCoverOffset?: (offset: number) => void;
   onUpdateTags?: (tags: string[]) => void;
   onOpenInNewWindow?: () => void;
+  favorited?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 export const DatabaseTable = memo(function DatabaseTable({
@@ -76,7 +78,9 @@ export const DatabaseTable = memo(function DatabaseTable({
   onClearCover,
   onCommitCoverOffset,
   onUpdateTags,
-  onOpenInNewWindow
+  onOpenInNewWindow,
+  favorited,
+  onToggleFavorite
 }: DatabaseTableProps) {
   const renderStartedAt = performance.now();
   const { t, locale } = useI18n();
@@ -861,6 +865,8 @@ export const DatabaseTable = memo(function DatabaseTable({
           onClearCover={onClearCover}
           onCommitCoverOffset={onCommitCoverOffset}
           onOpenInNewWindow={onOpenInNewWindow}
+          favorited={favorited}
+          onToggleFavorite={onToggleFavorite}
         />
       )}
       {!embedded && onUpdateTags && (

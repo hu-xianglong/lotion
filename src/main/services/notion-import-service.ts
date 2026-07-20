@@ -51,7 +51,78 @@ export interface NotionImportResult {
   workspaceRoot: string;
   /** Page id of the generated import report in the new workspace. */
   reportPageId: string;
+  /** Structured counterpart to the generated Markdown report page. */
+  report: NotionImportReportSummary;
   scan: NotionScanResult;
+}
+
+export interface NotionImportNameConflictEntry {
+  id: string;
+  notionId?: string;
+  name: string;
+  kind: "page" | "database";
+  source: string;
+  target: string;
+}
+
+export interface NotionImportNameConflictGroup {
+  name: string;
+  kinds: Array<"page" | "database">;
+  entries: NotionImportNameConflictEntry[];
+}
+
+export interface NotionImportReportSummary {
+  status: "complete" | "complete_with_warnings";
+  generatedAt: string;
+  durationMs: number;
+  counts: {
+    sources: number;
+    pages: number;
+    databases: number;
+    rows: number;
+    attachments: number;
+    warnings: number;
+    reviewItems: number;
+  };
+  nameConflicts: {
+    pageGroups: number;
+    databaseGroups: number;
+    crossTypeGroups: number;
+    groups: NotionImportNameConflictGroup[];
+  };
+  icons: {
+    pagesWithIcon: number;
+    pagesWithoutIcon: number;
+    databasesWithIcon: number;
+    databasesWithoutIcon: number;
+    rowsWithIcon: number;
+    rowsWithoutIcon: number;
+  };
+  performance: {
+    prepareTargetMs: number;
+    resolveSourcesMs: number;
+    indexSourcesMs: number;
+    selectDatabasesMs: number;
+    planAndParseMs: number;
+    writeWorkspaceMs: number;
+    totalMs: number;
+  };
+  warnings: string[];
+  artifacts: {
+    directory: string;
+    markdown: string;
+    json: string;
+    warningsCsv: string;
+    manifest: string;
+  };
+}
+
+interface NotionImportEarlyTimings {
+  startedAt: number;
+  prepareTargetMs: number;
+  resolveSourcesMs: number;
+  indexSourcesMs: number;
+  selectDatabasesMs: number;
 }
 
 /**
@@ -139,6 +210,7 @@ const ORIGINAL_NOTION_CSV_FIELD_NAME = "Original Notion CSV";
 const IMPORT_REVIEW_DATABASE_ID = "db_import_review";
 const IMPORT_REVIEW_DATABASE_NAME = "Import review";
 const IMPORT_REPORT_SUMMARY_LIMIT = 40;
+const DISPOSABLE_IMPORT_TARGET_ENTRIES = new Set([".DS_Store", ".lotion-cache"]);
 
 // ── public service ────────────────────────────────────────────────────
 
@@ -150,13 +222,22 @@ export class NotionImportService {
    * if cancelled. The renderer can't open dialogs in modern Electron,
    * so this lives in main.
    */
-  async pickFolder(): Promise<string | null> {
+  async pickFolder(kind?: "markdown_csv" | "html"): Promise<string | null> {
     const dialog = await getElectronDialog();
+    const title = kind === "markdown_csv"
+      ? "Choose your Notion Markdown & CSV export"
+      : kind === "html"
+        ? "Choose your Notion HTML export"
+        : "Choose your Notion export folder";
+    const message = kind === "markdown_csv"
+      ? "Pick the folder extracted from Notion's Markdown & CSV export."
+      : kind === "html"
+        ? "Pick the folder extracted from Notion's HTML export."
+        : "Pick the folder containing your Notion `Export-…` subfolders, or a single Export folder.";
     const result = await dialog.showOpenDialog({
-      title: "Choose your Notion export folder",
+      title,
       properties: ["openDirectory"],
-      message:
-        "Pick the folder containing your Notion `Export-…` subfolders, or a single Export folder."
+      message
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
@@ -180,8 +261,8 @@ export class NotionImportService {
   }
 
   /** Inspect the folder and report what an import would produce. */
-  async scan(folderPath: string): Promise<NotionScanResult> {
-    const sources = await resolveSourceParts(folderPath);
+  async scan(sourcePaths: string | string[]): Promise<NotionScanResult> {
+    const sources = await resolveSourceParts(sourcePaths);
     const inventory = await buildInventory(sources);
     const choice = await chooseDatabasesByTitle(inventory.databasesByHash);
     return {
@@ -202,7 +283,7 @@ export class NotionImportService {
    * and picks it up.
    */
   async runImport(
-    folderPath: string,
+    sourcePaths: string | string[],
     targetPath: string,
     force = false,
     optionsOrProgress?: NotionImportOptions | NotionImportProgressCallback,
@@ -215,8 +296,10 @@ export class NotionImportService {
       typeof optionsOrProgress === "function" ? optionsOrProgress : maybeOnProgress;
     const startedAt = Date.now();
     const emitProgress = createProgressReporter(onProgress, startedAt);
+    const normalizedSourcePaths = normalizeSourcePathInput(sourcePaths);
+    if (normalizedSourcePaths.length === 0) throw new Error("At least one Notion export folder is required");
     console.log(
-      `[lotion main] notion import start source=${folderPath} target=${targetPath} ` +
+      `[lotion main] notion import start sources=${JSON.stringify(normalizedSourcePaths)} target=${targetPath} ` +
       `force=${force} options=${JSON.stringify(options)}`
     );
     if (!targetPath) throw new Error("targetPath is required");
@@ -229,32 +312,42 @@ export class NotionImportService {
       } catch {
         // ENOENT — empty / not yet created, fine.
       }
-      if (existing.length > 0) {
+      const materialEntries = existing.filter((entry) => !DISPOSABLE_IMPORT_TARGET_ENTRIES.has(entry));
+      if (materialEntries.length > 0) {
         throw new Error(`Target folder is not empty: ${targetPath}`);
+      }
+      if (existing.length > 0) {
+        console.log(
+          `[lotion main] notion import target contains disposable entries only: ${existing.join(", ")}`
+        );
       }
     } else {
       await fileService.remove(targetPath, { recursive: true, force: true });
     }
-    console.log(`[lotion main] notion import prepare target elapsed=${formatDuration(Date.now() - tTarget)} total=${formatDuration(Date.now() - startedAt)}`);
+    const prepareTargetMs = Date.now() - tTarget;
+    console.log(`[lotion main] notion import prepare target elapsed=${formatDuration(prepareTargetMs)} total=${formatDuration(Date.now() - startedAt)}`);
 
     emitProgress({ phase: "scanning", message: "Indexing source files" });
     const tResolve = Date.now();
-    const sources = await resolveSourceParts(folderPath);
-    console.log(`[lotion main] notion import sources count=${sources.length} elapsed=${formatDuration(Date.now() - tResolve)}`);
+    const sources = await resolveSourceParts(normalizedSourcePaths);
+    const resolveSourcesMs = Date.now() - tResolve;
+    console.log(`[lotion main] notion import sources count=${sources.length} elapsed=${formatDuration(resolveSourcesMs)}`);
     const tInventory = Date.now();
     const inventory = await buildInventory(sources, emitProgress);
+    const indexSourcesMs = Date.now() - tInventory;
     console.log(
       `[lotion main] notion import indexed rawDbs=${inventory.databasesByHash.size} ` +
       `rowPages=${inventory.rowsByKey.size} freePages=${inventory.pagesByHash.size} ` +
       `attachments=${inventory.attachments.size} attachmentSources=${attachmentSourceCount(inventory)} ` +
-      `elapsed=${formatDuration(Date.now() - tInventory)} total=${formatDuration(Date.now() - startedAt)}`
+      `elapsed=${formatDuration(indexSourcesMs)} total=${formatDuration(Date.now() - startedAt)}`
     );
     const tChoice = Date.now();
     const choice = await chooseDatabasesByTitle(inventory.databasesByHash);
+    const selectDatabasesMs = Date.now() - tChoice;
     const stats = makeImportStats(sources, inventory, choice);
     console.log(
       `[lotion main] notion import selected keptDbs=${stats.databasesKept}/${stats.databasesRaw} ` +
-      `totalRows=${stats.totalRows} elapsed=${formatDuration(Date.now() - tChoice)} total=${formatDuration(Date.now() - startedAt)}`
+      `totalRows=${stats.totalRows} elapsed=${formatDuration(selectDatabasesMs)} total=${formatDuration(Date.now() - startedAt)}`
     );
     console.log(
       `[lotion main] notion import top databases ` +
@@ -269,7 +362,13 @@ export class NotionImportService {
     });
 
     const tEmit = Date.now();
-    const emitted = await emitWorkspace(targetPath, sources, inventory, choice, emitProgress, options);
+    const emitted = await emitWorkspace(targetPath, sources, inventory, choice, emitProgress, options, {
+      startedAt,
+      prepareTargetMs,
+      resolveSourcesMs,
+      indexSourcesMs,
+      selectDatabasesMs
+    });
     console.log(`[lotion main] notion import emitted workspace elapsed=${formatDuration(Date.now() - tEmit)} total=${formatDuration(Date.now() - startedAt)}`);
 
     // Read back the manifest name so app-config can display it.
@@ -288,6 +387,7 @@ export class NotionImportService {
     return {
       workspaceRoot: targetPath,
       reportPageId: emitted.reportPageId,
+      report: emitted.report,
       scan: {
         sources,
         databasesRaw: inventory.databasesByHash.size,
@@ -511,6 +611,42 @@ function markdownCsvWrapperTarget(raw: string): string | null {
     return null;
   }
   return notionFileHash(decoded) ? decoded : null;
+}
+
+function htmlCsvWrapperTarget(raw: string): string | null {
+  const root = parseHtml(raw, { lowerCaseTagName: true });
+  const body = root.querySelector("div.page-body");
+  if (!body) return null;
+
+  let csvTarget: string | null = null;
+  for (const node of body.childNodes) {
+    const element = node as NhpElement;
+    const tag = element.tagName?.toLowerCase();
+    if (!tag) {
+      if ((node as { rawText?: string }).rawText?.trim()) return null;
+      continue;
+    }
+    if (tag === "br") continue;
+    if (tag === "a") {
+      if (csvTarget) return null;
+      const href = element.getAttribute("href")?.trim() ?? "";
+      if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+      let decoded = href;
+      try {
+        decoded = decodeURIComponent(href);
+      } catch {
+        return null;
+      }
+      if (!/\.csv$/i.test(decoded) || !notionFileHash(decoded)) return null;
+      csvTarget = decoded;
+      continue;
+    }
+    if (tag === "div" && /^Metadata:\s*Filters\s*&\s*Sorts\b/i.test(element.text.trim())) {
+      continue;
+    }
+    return null;
+  }
+  return csvTarget;
 }
 
 interface OriginalSourceFile {
@@ -978,14 +1114,25 @@ function makeImportStats(
  * If the user picked the parent of `Export-…` folders, gather all of
  * them. If they picked a single export, treat it as one source.
  */
-async function resolveSourceParts(rootPath: string): Promise<string[]> {
-  const entries = await fileService.readDir(rootPath, { withFileTypes: true });
-  const parts = entries
-    .filter((e) => e.isDirectory() && e.name.startsWith("Export-"))
-    .map((e) => join(rootPath, e.name))
-    .sort();
-  if (parts.length > 0) return parts;
-  return [rootPath];
+async function resolveSourceParts(sourcePaths: string | string[]): Promise<string[]> {
+  const roots = normalizeSourcePathInput(sourcePaths);
+  if (roots.length === 0) throw new Error("At least one Notion export folder is required");
+
+  const sources: string[] = [];
+  for (const rootPath of roots) {
+    const entries = await fileService.readDir(rootPath, { withFileTypes: true });
+    const parts = entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("Export-"))
+      .map((entry) => resolve(rootPath, entry.name))
+      .sort();
+    sources.push(...(parts.length > 0 ? parts : [resolve(rootPath)]));
+  }
+  return [...new Set(sources)];
+}
+
+function normalizeSourcePathInput(sourcePaths: string | string[]): string[] {
+  const candidates = Array.isArray(sourcePaths) ? sourcePaths : [sourcePaths];
+  return [...new Set(candidates.map((source) => String(source ?? "").trim()).filter(Boolean).map((source) => resolve(source)))];
 }
 
 // ── inventory pass ────────────────────────────────────────────────────
@@ -1429,15 +1576,41 @@ function inventorySourcePathByHash(inventory: Inventory, hash: string | undefine
 interface ImportReportDatabaseSummary {
   id: string;
   name: string;
+  originalName: string;
   path: string[];
   source: string;
+  notionId?: string;
+  sourceRows: number;
   rows: number;
+  rowsWithIcon: number;
   rowPages: number;
   fields: number;
   userFields: number;
   visibleFields: number;
   skippedEmptyRowPages: number;
   includeInManifest: boolean;
+  icon?: string;
+}
+
+interface ImportReportImportedPage {
+  id: string;
+  title: string;
+  hash?: string;
+  path: string[];
+  source: string;
+  target: string;
+  icon?: string;
+}
+
+interface ImportReportImportedRow {
+  databaseId: string;
+  database: string;
+  rowId: string;
+  title: string;
+  notionId?: string;
+  source: string;
+  target: string;
+  icon?: string;
 }
 
 interface ImportReportPageDetail {
@@ -1489,6 +1662,8 @@ interface BuildImportReportInput {
   choice: DatabaseChoice;
   pagePlans: number;
   pageRecords: number;
+  importedPages: ImportReportImportedPage[];
+  importedRows: ImportReportImportedRow[];
   databases: ImportReportDatabaseSummary[];
   manifestDatabases: number;
   parsedRowsDone: number;
@@ -1508,6 +1683,131 @@ interface BuildImportReportInput {
   emptyStandalonePages: ImportReportPageDetail[];
   emptyRowPages: ImportReportRowDetail[];
   duplicateRows: ImportReportDuplicateRowSummary[];
+  report: NotionImportReportSummary;
+}
+
+function buildNameConflictSummary(
+  pages: ImportReportImportedPage[],
+  databases: ImportReportDatabaseSummary[]
+): NotionImportReportSummary["nameConflicts"] {
+  const byName = new Map<string, { name: string; entries: NotionImportNameConflictEntry[] }>();
+  const add = (name: string, entry: NotionImportNameConflictEntry) => {
+    const displayName = name.replace(/\s+/g, " ").trim() || "Untitled";
+    const key = displayName.toLocaleLowerCase();
+    const group = byName.get(key) ?? { name: displayName, entries: [] };
+    group.entries.push(entry);
+    byName.set(key, group);
+  };
+  for (const page of pages) {
+    add(page.title, {
+      id: page.id,
+      notionId: page.hash,
+      name: page.title,
+      kind: "page",
+      source: page.source,
+      target: page.target
+    });
+  }
+  for (const database of databases) {
+    add(database.originalName, {
+      id: database.id,
+      notionId: database.notionId,
+      name: database.name,
+      kind: "database",
+      source: database.source,
+      target: databaseWorkspacePathWithName(database.id, false, database.name)
+    });
+  }
+  const groups = Array.from(byName.values())
+    .map((group): NotionImportNameConflictGroup | null => {
+      const pageCount = group.entries.filter((entry) => entry.kind === "page").length;
+      const databaseCount = group.entries.filter((entry) => entry.kind === "database").length;
+      if (pageCount < 2 && databaseCount < 2 && !(pageCount > 0 && databaseCount > 0)) return null;
+      return {
+        name: group.name,
+        kinds: [...new Set(group.entries.map((entry) => entry.kind))],
+        entries: group.entries.sort((a, b) => a.kind.localeCompare(b.kind) || a.target.localeCompare(b.target))
+      };
+    })
+    .filter((group): group is NotionImportNameConflictGroup => Boolean(group))
+    .sort((a, b) => b.entries.length - a.entries.length || a.name.localeCompare(b.name));
+  return {
+    pageGroups: groups.filter((group) => group.entries.filter((entry) => entry.kind === "page").length >= 2).length,
+    databaseGroups: groups.filter((group) => group.entries.filter((entry) => entry.kind === "database").length >= 2).length,
+    crossTypeGroups: groups.filter((group) => group.kinds.length > 1).length,
+    groups
+  };
+}
+
+function buildImportReportSummary(input: {
+  now: string;
+  target: string;
+  sources: string[];
+  inventory: Inventory;
+  stats: NotionImportStats;
+  importedPages: ImportReportImportedPage[];
+  databases: ImportReportDatabaseSummary[];
+  parsedRowsDone: number;
+  parsedRowsTotal: number;
+  review: ImportReviewArtifacts;
+  timings: NotionImportReportSummary["performance"];
+}): NotionImportReportSummary {
+  const rows = input.databases.reduce((sum, database) => sum + database.rows, 0);
+  const sourceRows = input.databases.reduce((sum, database) => sum + database.sourceRows, 0);
+  const skippedRows = input.databases.reduce((sum, database) => sum + database.skippedEmptyRowPages, 0);
+  const rowsWithIcon = input.databases.reduce((sum, database) => sum + database.rowsWithIcon, 0);
+  const warnings: string[] = [];
+  if (input.stats.totalRows !== sourceRows) {
+    warnings.push(
+      `Fast scan estimated ${input.stats.totalRows} database rows; the CSV parser found ${sourceRows}. Parsed CSV rows are the import source of truth.`
+    );
+  }
+  if (input.parsedRowsDone !== input.parsedRowsTotal) {
+    warnings.push(`Only parsed ${input.parsedRowsDone} of ${input.parsedRowsTotal} row HTML metadata files.`);
+  }
+  if (sourceRows !== rows + skippedRows) {
+    warnings.push(
+      `Database row reconciliation differs: ${sourceRows} parsed source rows, ${rows} emitted rows, and ${skippedRows} intentionally skipped blank rows.`
+    );
+  }
+  if (input.review.totalIssues > 0) {
+    warnings.push(`${input.review.totalIssues} intentionally skipped or redirected item(s) are available in Import review.`);
+  }
+  const nameConflicts = buildNameConflictSummary(input.importedPages, input.databases);
+  const artifactDir = `reports/import-${input.now.replace(/[:.]/g, "-")}`;
+  const report: NotionImportReportSummary = {
+    status: warnings.length > 0 ? "complete_with_warnings" : "complete",
+    generatedAt: input.now,
+    durationMs: input.timings.totalMs,
+    counts: {
+      sources: input.sources.length,
+      pages: input.importedPages.length,
+      databases: input.databases.length,
+      rows,
+      attachments: input.inventory.attachments.size,
+      warnings: warnings.length,
+      reviewItems: input.review.totalIssues
+    },
+    nameConflicts,
+    icons: {
+      pagesWithIcon: input.importedPages.filter((page) => Boolean(page.icon)).length,
+      pagesWithoutIcon: input.importedPages.filter((page) => !page.icon).length,
+      databasesWithIcon: input.databases.filter((database) => Boolean(database.icon)).length,
+      databasesWithoutIcon: input.databases.filter((database) => !database.icon).length,
+      rowsWithIcon,
+      rowsWithoutIcon: Math.max(0, rows - rowsWithIcon)
+    },
+    performance: input.timings,
+    warnings,
+    artifacts: {
+      directory: join(input.target, artifactDir),
+      markdown: join(input.target, artifactDir, "report.md"),
+      json: join(input.target, artifactDir, "report.json"),
+      warningsCsv: join(input.target, artifactDir, "warnings.csv"),
+      manifest: join(input.target, artifactDir, "manifest.json")
+    }
+  };
+  return report;
 }
 
 function buildImportReportMarkdown(input: BuildImportReportInput): string {
@@ -1518,18 +1818,7 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
   const outputFields = input.databases.reduce((sum, db) => sum + db.fields, 0);
   const outputUserFields = input.databases.reduce((sum, db) => sum + db.userFields, 0);
   const duplicateRowCount = input.duplicateRows.reduce((sum, group) => sum + group.count, 0);
-  const warnings: string[] = [];
-  if (stats.totalRows !== outputRows) {
-    warnings.push(
-      `Fast scan row estimate (${reportNumber(stats.totalRows)}) differs from parsed CSV rows (${reportNumber(outputRows)}). ` +
-      "This is expected when CSV cells contain embedded newlines; parsed CSV rows are the emitted source of truth."
-    );
-  }
-  if (input.parsedRowsDone !== input.parsedRowsTotal) {
-    warnings.push(
-      `Only parsed ${reportNumber(input.parsedRowsDone)} of ${reportNumber(input.parsedRowsTotal)} row HTML metadata files.`
-    );
-  }
+  const warnings = [...input.report.warnings];
   const sourceLines = input.sources.length > 0
     ? input.sources.map((source) => `- ${markdownInlineCode(source)}`).join("\n")
     : "- None";
@@ -1545,6 +1834,38 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     `Workspace: ${markdownInlineCode(basename(input.target) || "Notion Import")}`,
     `Target: ${markdownInlineCode(input.target)}`,
     `Report page: ${markdownInlineCode(input.reportPageId)} (${markdownInlineCode(input.reportBodyPath)})`,
+    "",
+    "## Same-name Pages And Databases",
+    "",
+    "Names are labels, not identity. Lotion only merges matching stable Notion IDs; every object that merely shares a name is retained.",
+    "",
+    formatMarkdownTable(
+      ["Conflict type", "Groups"],
+      [
+        ["Same-name pages", reportNumber(input.report.nameConflicts.pageGroups)],
+        ["Same-name databases", reportNumber(input.report.nameConflicts.databaseGroups)],
+        ["Page and database share a name", reportNumber(input.report.nameConflicts.crossTypeGroups)]
+      ]
+    ),
+    "",
+    formatNameConflictTable(input.report.nameConflicts.groups),
+    "",
+    "## Icon Coverage",
+    "",
+    formatMarkdownTable(
+      ["Object", "With icon", "Without icon"],
+      [
+        ["Pages", reportNumber(input.report.icons.pagesWithIcon), reportNumber(input.report.icons.pagesWithoutIcon)],
+        ["Databases", reportNumber(input.report.icons.databasesWithIcon), reportNumber(input.report.icons.databasesWithoutIcon)],
+        ["Database rows", reportNumber(input.report.icons.rowsWithIcon), reportNumber(input.report.icons.rowsWithoutIcon)]
+      ]
+    ),
+    "",
+    "_Without icon means no icon was emitted. It can be intentional; the importer does not treat it as data loss by itself._",
+    "",
+    "### Objects Without An Emitted Icon",
+    "",
+    formatObjectsWithoutIconTable(input.importedPages, input.databases, input.importedRows),
     "",
     "## Summary",
     "",
@@ -1630,6 +1951,36 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     "",
     ...formatHumanReviewSummary(input),
     "",
+    "## Data Integrity",
+    "",
+    formatMarkdownTable(
+      ["Check", "Result"],
+      [
+        ["Source export modified", "No — source folders are read-only inputs"],
+        ["Identity rule", "Stable Notion ID; names never overwrite another object"],
+        ["Parsed database rows", reportNumber(input.databases.reduce((sum, database) => sum + database.sourceRows, 0))],
+        ["Rows emitted", reportNumber(outputRows)],
+        ["Blank rows intentionally skipped", reportNumber(skippedEmptyRowPages)],
+        ["Core workspace manifest", "Written"],
+        ["Detailed source-to-target manifest", "Written"]
+      ]
+    ),
+    "",
+    "## Performance",
+    "",
+    formatMarkdownTable(
+      ["Stage", "Time"],
+      [
+        ["Prepare target", formatDuration(input.report.performance.prepareTargetMs)],
+        ["Resolve export folders", formatDuration(input.report.performance.resolveSourcesMs)],
+        ["Index sources", formatDuration(input.report.performance.indexSourcesMs)],
+        ["Select databases", formatDuration(input.report.performance.selectDatabasesMs)],
+        ["Plan and parse", formatDuration(input.report.performance.planAndParseMs)],
+        ["Write workspace", formatDuration(input.report.performance.writeWorkspaceMs)],
+        ["Total", formatDuration(input.report.performance.totalMs)]
+      ]
+    ),
+    "",
     "## Sources",
     "",
     sourceLines,
@@ -1639,6 +1990,13 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     warnings.length > 0
       ? warnings.map((warning) => `- ${warning}`).join("\n")
       : "_No import warnings were generated._",
+    "",
+    "## Report Files",
+    "",
+    `- Markdown: ${markdownInlineCode(input.report.artifacts.markdown)}`,
+    `- JSON: ${markdownInlineCode(input.report.artifacts.json)}`,
+    `- Warnings CSV: ${markdownInlineCode(input.report.artifacts.warningsCsv)}`,
+    `- Source-to-target manifest: ${markdownInlineCode(input.report.artifacts.manifest)}`,
     "",
     "## Largest Databases",
     "",
@@ -1665,6 +2023,52 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     "- Empty databases reconstructed from Notion links are emitted so existing links still open inside Lotion.",
     ""
   ].join("\n");
+}
+
+function formatNameConflictTable(groups: NotionImportNameConflictGroup[]): string {
+  if (groups.length === 0) return "_No same-name pages or databases were found._";
+  const rows: string[][] = [];
+  for (const group of groups.slice(0, IMPORT_REPORT_SUMMARY_LIMIT)) {
+    for (const entry of group.entries) {
+      rows.push([
+        group.name,
+        entry.kind === "page" ? "Page" : "Database",
+        entry.notionId ?? "—",
+        entry.target,
+        basename(entry.source)
+      ]);
+    }
+  }
+  const table = formatMarkdownTable(["Name", "Type", "Notion ID", "Imported target", "Source"], rows);
+  if (groups.length <= IMPORT_REPORT_SUMMARY_LIMIT) return table;
+  return `${table}\n\n_Showing ${IMPORT_REPORT_SUMMARY_LIMIT} of ${reportNumber(groups.length)} conflict groups. The JSON report contains every group._`;
+}
+
+function formatObjectsWithoutIconTable(
+  pages: ImportReportImportedPage[],
+  databases: ImportReportDatabaseSummary[],
+  rows: ImportReportImportedRow[]
+): string {
+  const objects = [
+    ...pages.filter((page) => !page.icon).map((page) => ({ type: "Page", name: page.title, target: page.target })),
+    ...databases.filter((database) => !database.icon).map((database) => ({
+      type: "Database",
+      name: database.name,
+      target: databaseWorkspacePathWithName(database.id, false, database.name)
+    })),
+    ...rows.filter((row) => !row.icon).map((row) => ({
+      type: "Database row",
+      name: `${row.database} / ${row.title}`,
+      target: row.target
+    }))
+  ];
+  if (objects.length === 0) return "_Every imported page, database, and database row has an emitted icon._";
+  const table = formatMarkdownTable(
+    ["Type", "Object", "Imported target"],
+    objects.slice(0, IMPORT_REPORT_SUMMARY_LIMIT).map((object) => [object.type, object.name, object.target])
+  );
+  if (objects.length <= IMPORT_REPORT_SUMMARY_LIMIT) return table;
+  return `${table}\n\n_Showing ${IMPORT_REPORT_SUMMARY_LIMIT} of ${reportNumber(objects.length)} objects. The source-to-target manifest contains the complete list._`;
 }
 
 interface ImportReportGroupedSummary {
@@ -2094,8 +2498,16 @@ async function emitWorkspace(
   inventory: Inventory,
   choice: ChoiceFull,
   onProgress?: NotionImportProgressCallback,
-  options?: NotionImportOptions
-): Promise<{ reportPageId: string }> {
+  options?: NotionImportOptions,
+  earlyTimings: NotionImportEarlyTimings = {
+    startedAt: Date.now(),
+    prepareTargetMs: 0,
+    resolveSourcesMs: 0,
+    indexSourcesMs: 0,
+    selectDatabasesMs: 0
+  }
+): Promise<{ reportPageId: string; report: NotionImportReportSummary }> {
+  const emitStartedAt = Date.now();
   const importOptions = normalizeImportOptions(options);
   await fileService.remove(target, { recursive: true, force: true });
   await fileService.ensureDir(target);
@@ -2141,6 +2553,8 @@ async function emitWorkspace(
   interface DbPlan {
     id: string;
     name: string;
+    /** Name before Lotion adds a short Notion-id suffix to avoid a path collision. */
+    originalName?: string;
     path?: string[];
     csvPath?: string;
     originalCsvAttachment?: string;
@@ -2155,6 +2569,8 @@ async function emitWorkspace(
     cover?: string;
     coverOffset?: number;
     fields: Array<{ id: string; name: string; type: string; system?: boolean; hidden?: boolean; options?: SelectOption[] }>;
+    /** Parsed CSV/inline rows before the optional blank-row filter. */
+    sourceRows: number;
     records: Array<Record<string, string>>;
     view: {
       id: string;
@@ -2195,6 +2611,15 @@ async function emitWorkspace(
   }
   const markdownWrapperTargetDbHash = (raw: string, sourcePath: string): string | undefined => {
     const csvTarget = markdownCsvWrapperTarget(raw);
+    if (!csvTarget) return undefined;
+    const resolved = normalizeAbs(resolve(dirname(sourcePath), csvTarget));
+    const dbHash = dbHashByCsvSourceAbs.get(resolved);
+    if (dbHash) return dbHash;
+    const hash = notionFileHash(csvTarget);
+    return hash && keptDbHashes.has(hash) ? hash : undefined;
+  };
+  const htmlWrapperTargetDbHash = (raw: string, sourcePath: string): string | undefined => {
+    const csvTarget = htmlCsvWrapperTarget(raw);
     if (!csvTarget) return undefined;
     const resolved = normalizeAbs(resolve(dirname(sourcePath), csvTarget));
     const dbHash = dbHashByCsvSourceAbs.get(resolved);
@@ -2436,6 +2861,13 @@ async function emitWorkspace(
       const parsedCover = resolveParsedCover(parsed, dirname(entry.sourcePath));
       cover = parsedCover.cover;
       coverOffset = parsedCover.coverOffset;
+      const directDatabaseHash = databaseIdByHash.has(hash) ? hash : undefined;
+      const csvWrapperTargetHash = htmlWrapperTargetDbHash(headerRead.sampleHtml, entry.sourcePath);
+      const metadataTargetHash = directDatabaseHash ?? csvWrapperTargetHash;
+      if (metadataTargetHash) {
+        if (icon) dbIconByHash.set(metadataTargetHash, icon);
+        if (cover) dbCoverByHash.set(metadataTargetHash, { cover, coverOffset });
+      }
       // Notion's HTML export emits a standalone page for every inline
       // database — these pages are identical to the database itself
       // and showed up in the sidebar as "phantom" pages. Skip the page
@@ -2443,10 +2875,11 @@ async function emitWorkspace(
       // a database with the same title in the sidebar. We carry the
       // page's icon forward to the database so the DB sidebar entry
       // doesn't end up iconless.
-      const targetHashForLink = databaseIdByHash.has(hash)
-        ? hash
-        : dbHashByRawTitle.get(entry.title) ?? dbHashByTitle.get(entry.title);
-      if (parsed.isCollectionWrapperOnly && targetHashForLink) {
+      const targetHashForLink = directDatabaseHash
+        ?? csvWrapperTargetHash
+        ?? dbHashByRawTitle.get(entry.title)
+        ?? dbHashByTitle.get(entry.title);
+      if ((parsed.isCollectionWrapperOnly || csvWrapperTargetHash) && targetHashForLink) {
         if (icon) {
           dbIconByHash.set(targetHashForLink, icon);
         }
@@ -3062,6 +3495,7 @@ async function emitWorkspace(
     dbPlans.push({
       id: dbId,
       name: db.title,
+      originalName: displayDatabaseName(db.rawTitle),
       path: db.path,
       csvPath: db.csvPath,
       originalCsvAttachment,
@@ -3070,6 +3504,7 @@ async function emitWorkspace(
       cover: dbCover?.cover,
       coverOffset: dbCover?.coverOffset,
       fields,
+      sourceRows: records.length,
       records,
       view,
       rowPlans
@@ -3140,10 +3575,12 @@ async function emitWorkspace(
     return {
       id: dbId,
       name: db.title,
+      originalName: db.title,
       path: db.path,
       sourceHash: hash,
       icon: db.icon,
       fields,
+      sourceRows: 0,
       records: [],
       view: {
         id: DEFAULT_VIEW_ID,
@@ -3237,10 +3674,12 @@ async function emitWorkspace(
     return {
       id: dbId,
       name: db.title,
+      originalName: db.title,
       path: db.path,
       sourceHash: hash,
       icon: db.icon,
       fields,
+      sourceRows: records.length,
       records,
       view: {
         id: DEFAULT_VIEW_ID,
@@ -3525,7 +3964,7 @@ async function emitWorkspace(
     originalSourceArchive.files.length +
     pagePlans.length +
     dbPlans.reduce((sum, plan) => sum + plan.rowPlans.length + 3, 0) +
-    14; // three system DBs + import review DB (schema/data/view each) + import report + manifest
+    19; // system DBs, review DB, report page, workspace manifest, and four detailed report artifacts
   let writeCurrent = 0;
   const tWrite = Date.now();
   const markWrite = (message: string, amount = 1) => {
@@ -3559,6 +3998,7 @@ async function emitWorkspace(
   const pageIds: string[] = [];
   const pageRecords: Array<Record<string, unknown>> = [];
   const entityRecords: EntityRecord[] = [];
+  const importedPages: ImportReportImportedPage[] = [];
   const emptyStandalonePageDetails: ImportReportPageDetail[] = [...preSkippedEmptyStandalonePageDetails];
   const standalonePageResults: Array<{
     plan: PagePlan;
@@ -3633,6 +4073,15 @@ async function emitWorkspace(
       bodyPath: pageBodyPath(plan.id, plan.title),
       sourceNotionHash: plan.hash
     });
+    importedPages.push({
+      id: plan.id,
+      title: plan.title.trim() || "Untitled",
+      hash: plan.hash,
+      path: pagePathSegments,
+      source: plan.sourcePath,
+      target: pageBodyPath(plan.id, plan.title),
+      icon: plan.icon
+    });
   }
   const skippedEmptyPages = emptyStandalonePageDetails.length;
   if (skippedEmptyPages > 0) {
@@ -3670,7 +4119,9 @@ async function emitWorkspace(
       const bodyMd = rowPlan.sourcePath
         ? await loadBody(rowPlan.sourcePath, rowPlan.parsed, rowPlan.hasBody, rowPlan.sourceSize)
         : "";
-      const cleaned = bodyMd ? cleanNotionBody(bodyMd, rowPlan.title) : "";
+      const cleaned = bodyMd
+        ? cleanNotionBody(bodyMd, rowPlan.title, dbPlan.fields.map((field) => field.name))
+        : "";
       const record = recordById.get(rowPlan.rowId);
       const isBlankRow =
         cleaned.trim().length === 0 &&
@@ -3770,21 +4221,39 @@ async function emitWorkspace(
   }
 
   const reportPageId = shortId("pg");
-  const reportTitle = `Import report ${now.slice(0, 19).replace("T", " ")}`;
+  const reportTitle = `Import report ${now.slice(0, 16).replace("T", " ")}`;
   const reportBodyPath = pageBodyPath(reportPageId, reportTitle);
   const databaseSummaries: ImportReportDatabaseSummary[] = dbPlans.map((dbPlan) => ({
     id: dbPlan.id,
     name: dbPlan.name,
+    originalName: dbPlan.originalName ?? dbPlan.name,
     path: normalizePathSegments(dbPlan.path, dbPlan.name),
     source: dbPlan.csvPath ?? (dbPlan.sourceHash ? `synthetic:${dbPlan.sourceHash}` : "inline/synthetic"),
+    notionId: dbPlan.sourceHash,
+    sourceRows: dbPlan.sourceRows,
     rows: dbPlan.records.length,
+    rowsWithIcon: dbPlan.rowPlans.filter((row) => Boolean(row.icon)).length,
     rowPages: dbPlan.rowPlans.length,
     fields: dbPlan.fields.length,
     userFields: dbPlan.fields.filter((field) => !field.system).length,
     visibleFields: dbPlan.view.visibleFieldIds.length,
     skippedEmptyRowPages: skippedEmptyRowPagesByDbId.get(dbPlan.id) ?? 0,
-    includeInManifest: dbPlan.includeInManifest !== false
+    includeInManifest: dbPlan.includeInManifest !== false,
+    icon: dbPlan.icon
   }));
+  const importedRows: ImportReportImportedRow[] = dbPlans.flatMap((dbPlan) => {
+    const rowPagesPath = rowPagesWorkspacePath(dbPlan.id, false, dbPlan.name);
+    return dbPlan.rowPlans.map((row) => ({
+      databaseId: dbPlan.id,
+      database: dbPlan.name,
+      rowId: row.rowId,
+      title: row.title,
+      notionId: row.hash,
+      source: row.sourcePath ?? "",
+      target: `${rowPagesPath}/${row.fileName}`,
+      icon: row.icon
+    }));
+  });
   const duplicateRows = buildDuplicateRowSummaries(dbPlans);
   const importReviewIssues = buildImportReviewIssues({
     now,
@@ -3799,7 +4268,7 @@ async function emitWorkspace(
   });
   databaseIds.unshift(IMPORT_REVIEW_DATABASE_ID);
   markWrite("Writing import review database", 3);
-  const reportMarkdown = buildImportReportMarkdown({
+  const reportInputBase: Omit<BuildImportReportInput, "report"> = {
     now,
     target,
     sources,
@@ -3808,6 +4277,8 @@ async function emitWorkspace(
     choice,
     pagePlans: pagePlans.length,
     pageRecords: pageRecords.length + 1,
+    importedPages,
+    importedRows,
     databases: databaseSummaries,
     manifestDatabases: databaseIds.length,
     parsedRowsDone,
@@ -3827,8 +4298,8 @@ async function emitWorkspace(
     emptyStandalonePages: emptyStandalonePageDetails,
     emptyRowPages: emptyRowPageDetails,
     duplicateRows
-  });
-  await writeText(join(target, reportBodyPath), formatPage(reportMarkdown));
+  };
+  await writeText(join(target, reportBodyPath), "# Notion import report\n\nFinalizing detailed import report…\n");
   pageIds.unshift(reportPageId);
   pageRecords.unshift({
     id: reportPageId,
@@ -3876,8 +4347,71 @@ async function emitWorkspace(
   markWrite("Writing system databases", 9);
   await writeJson(join(target, "lotion.json"), manifest);
   markWrite("Writing workspace manifest");
-  console.log(`[lotion main] notion import wrote workspace files totalItems=${writeTotal} elapsed=${formatDuration(Date.now() - tWrite)}`);
-  return { reportPageId };
+  const reportBuildStartedAt = Date.now();
+  const performance: NotionImportReportSummary["performance"] = {
+    prepareTargetMs: earlyTimings.prepareTargetMs,
+    resolveSourcesMs: earlyTimings.resolveSourcesMs,
+    indexSourcesMs: earlyTimings.indexSourcesMs,
+    selectDatabasesMs: earlyTimings.selectDatabasesMs,
+    planAndParseMs: Math.max(0, tWrite - emitStartedAt),
+    writeWorkspaceMs: Math.max(0, reportBuildStartedAt - tWrite),
+    totalMs: Math.max(0, reportBuildStartedAt - earlyTimings.startedAt)
+  };
+  const report = buildImportReportSummary({
+    now,
+    target,
+    sources,
+    inventory,
+    stats: makeImportStats(sources, inventory, choice),
+    importedPages,
+    databases: databaseSummaries,
+    parsedRowsDone,
+    parsedRowsTotal,
+    review: importReview,
+    timings: performance
+  });
+  const reportInput: BuildImportReportInput = { ...reportInputBase, report };
+  const reportMarkdown = formatPage(buildImportReportMarkdown(reportInput));
+  const reportManifest = {
+    version: 1,
+    generatedAt: now,
+    workspaceRoot: target,
+    sources,
+    identityRule: "stable_notion_id",
+    nameCollisionRule: "retain_all",
+    pages: importedPages,
+    databases: databaseSummaries,
+    rows: importedRows,
+    skipped: {
+      dedupedPages: dedupedPageDetails,
+      blankPages: emptyStandalonePageDetails,
+      blankRows: emptyRowPageDetails
+    },
+    nameConflicts: report.nameConflicts.groups
+  };
+  await fileService.ensureDir(report.artifacts.directory);
+  await Promise.all([
+    fileService.writeTextAtomic(join(target, reportBodyPath), reportMarkdown),
+    fileService.writeTextAtomic(report.artifacts.markdown, reportMarkdown),
+    fileService.writeTextAtomic(
+      report.artifacts.json,
+      JSON.stringify({ report, options: importOptions, sources, databases: databaseSummaries }, null, 2) + "\n"
+    ),
+    fileService.writeTextAtomic(
+      report.artifacts.warningsCsv,
+      rowsToCsv(
+        ["number", "warning"],
+        report.warnings.map((warning, index) => ({ number: index + 1, warning }))
+      )
+    ),
+    fileService.writeTextAtomic(report.artifacts.manifest, JSON.stringify(reportManifest, null, 2) + "\n")
+  ]);
+  markWrite("Writing detailed import report", 5);
+  console.log(
+    `[lotion main] notion import wrote workspace files totalItems=${writeTotal} ` +
+    `elapsed=${formatDuration(Date.now() - tWrite)} report=${report.artifacts.directory}`
+  );
+  return { reportPageId, report };
   } finally {
     await bodyPool.close();
   }
@@ -4005,8 +4539,8 @@ async function writeSystemDatabases(
  *      database views and table-of-contents blocks into Lotion fenced
  *      blocks.
  */
-function cleanNotionBody(raw: string, title: string): string {
-  const lines = raw.split("\n");
+function cleanNotionBody(raw: string, title: string, databasePropertyNames: string[] = []): string {
+  const lines = stripLeadingMarkdownExportIcon(raw).split("\n");
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i += 1;
 
@@ -4030,19 +4564,34 @@ function cleanNotionBody(raw: string, title: string): string {
   // small fixed set, intermixed with blank lines, until the first
   // line that isn't one of these.
   const META = /^(Owner|Last edited time|Last edited by|Created by|Created time|Tags|Status|Type|Category|Priority|Date(?: \d+)?)\s*:\s/;
-  while (i < lines.length) {
-    if (lines[i].trim() === "") {
-      lines.splice(i, 1);
-      continue;
+  const databaseProperties = new Set(databasePropertyNames.map((name) => name.trim()).filter(Boolean));
+  if (databaseProperties.size > 0) {
+    let metadataEnd = i;
+    let hasRecognizedProperty = false;
+    while (metadataEnd < lines.length && lines[metadataEnd].trim() !== "") {
+      const propertyName = /^([^:\n]+?)\s*:\s*/.exec(lines[metadataEnd])?.[1]?.trim() ?? "";
+      if (!propertyName) break;
+      hasRecognizedProperty ||= META.test(lines[metadataEnd]) || databaseProperties.has(propertyName);
+      metadataEnd += 1;
     }
-    if (META.test(lines[i])) {
-      lines.splice(i, 1);
-      continue;
+    if (hasRecognizedProperty && (metadataEnd === lines.length || lines[metadataEnd].trim() === "")) {
+      lines.splice(i, metadataEnd - i);
     }
-    break;
+  } else {
+    while (i < lines.length) {
+      if (lines[i].trim() === "") {
+        lines.splice(i, 1);
+        continue;
+      }
+      if (META.test(lines[i])) {
+        lines.splice(i, 1);
+        continue;
+      }
+      break;
+    }
   }
 
-  let body = stripLeadingMarkdownExportIcon(lines.join("\n").replace(/^\n+/, ""));
+  let body = lines.join("\n").replace(/^\n+/, "");
 
   // Inline-DB embed sentinel — the converter emits these as
   // `<p>{{LOTIONVIEW:db_<id>}}</p>` whenever a `collection-content`

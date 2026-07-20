@@ -42,12 +42,21 @@ const BOM_MATCH_ALEX_ROW_HASH = "7d1c6100c5e54182aa5e5dadcfba8e2c";
 const BOM_MATCH_EMPTY_ROW_HASH = "03ddb12f9bf54717a10ce65bf60f2d8a";
 const BOM_MATCH_EMPTY_ROW_HASH_2 = "bff6437d96344def848f2351a37ed71b";
 const MERGED_EXPORT_UUID = "12345678-1234-1234-1234-123456789abc";
+const SEPARATE_MARKDOWN_EXPORT_UUID = "87654321-4321-4321-4321-cba987654321";
 const MERGED_PAGE_HASH = "99999999aaaabbbbccccdddddddddddd";
 const SPLIT_ROW_DB_HASH = "44444444111122223333444455556666";
 const SPLIT_ROW_HASH = "55555555111122223333444455556666";
 const LINKED_COLLECTION_VIEW_HASH = "90909090111122223333444455556666";
 const VISION_PARENT_PAGE_HASH = "23232323111122223333444455556666";
 const VISION_TOGGLE_PAGE_HASH = "aaaaaaaa111122223333444455556666";
+const SAME_NAME_PAGE_HASH_1 = "10101010111122223333444455556666";
+const SAME_NAME_PAGE_HASH_2 = "20202020111122223333444455556666";
+const MODERN_EXTERNAL_ICON_DB_HASH = "30303030111122223333444455556666";
+const MODERN_EMOJI_ICON_DB_HASH = "40404040111122223333444455556666";
+const MODERN_LOCAL_ICON_DB_HASH = "50505050111122223333444455556666";
+const MODERN_NO_ICON_DB_HASH = "60606060111122223333444455556666";
+const MD_FIELDS_ALPHA_ROW_HASH = "70707070111122223333444455556666";
+const MD_FIELDS_BETA_ROW_HASH = "80808080111122223333444455556666";
 
 function notionPage(title, body, properties = "", headerPrefix = "") {
   return `<!doctype html><html><body><article class="page sans"><header>${headerPrefix}<h1 class="page-title">${title}</h1>${properties}</header><div class="page-body">${body}</div></article></body></html>`;
@@ -156,6 +165,48 @@ try {
       "",
       `<img class="page-cover-image" src="https://www.notion.so/images/page-cover/met_klimt_1912.jpg" style="object-position:center 15%"/>`
     ),
+    "utf8"
+  );
+  const modernDatabaseFixtures = [
+    {
+      title: "Modern External Icon",
+      hash: MODERN_EXTERNAL_ICON_DB_HASH,
+      header: '<div class="page-header-icon"><img class="icon notion-static-icon" src="https://app.notion.com/icons/database_gray.svg"/></div>'
+    },
+    {
+      title: "Modern Emoji Icon",
+      hash: MODERN_EMOJI_ICON_DB_HASH,
+      header: '<div class="page-header-icon"><span class="icon">📊</span></div>'
+    },
+    {
+      title: "Modern Local Icon",
+      hash: MODERN_LOCAL_ICON_DB_HASH,
+      header: `<div class="page-header-icon"><img class="icon" src="Modern%20Local%20Icon%20${MODERN_LOCAL_ICON_DB_HASH}/icon.png"/></div>`
+    },
+    {
+      title: "Modern No Icon",
+      hash: MODERN_NO_ICON_DB_HASH,
+      header: ""
+    }
+  ];
+  for (const fixture of modernDatabaseFixtures) {
+    const csvName = `${fixture.title} ${fixture.hash}.csv`;
+    await writeFile(join(source, csvName), "Name,Value\nExample,1\n", "utf8");
+    await writeFile(
+      join(source, `${fixture.title} ${fixture.hash}.html`),
+      notionPage(
+        fixture.title,
+        `<a href="${encodeURIComponent(csvName)}"><code>${csvName}</code></a><br/><div style="font-size:0.7em"><b>Metadata: Filters &amp; Sorts</b><br/>The following filters and sorts are applied to the database<table><tbody><tr><th>Property name</th><th>Type</th><th>Condition</th></tr></tbody></table><br/></div>`,
+        "",
+        fixture.header
+      ),
+      "utf8"
+    );
+  }
+  await mkdir(join(source, `Modern Local Icon ${MODERN_LOCAL_ICON_DB_HASH}`), { recursive: true });
+  await writeFile(
+    join(source, `Modern Local Icon ${MODERN_LOCAL_ICON_DB_HASH}`, "icon.png"),
+    "fake local database icon",
     "utf8"
   );
   await writeFile(
@@ -273,6 +324,33 @@ try {
       "Name,Link,Done,Amount,Today",
       "Alpha,https://example.com/a,Yes,\"$1,234.50\",\"May 27, 2026\"",
       "Beta,https://example.com/b,No,42,2026/05/28"
+    ].join("\n"),
+    "utf8"
+  );
+  await mkdir(join(source, "Markdown Fields"), { recursive: true });
+  await writeFile(
+    join(source, "Markdown Fields", `Alpha ${MD_FIELDS_ALPHA_ROW_HASH}.md`),
+    [
+      "# Alpha",
+      "",
+      "Archived property: former value",
+      "Link: https://example.com/a",
+      "Done: Yes",
+      "Amount: $1,234.50",
+      "Today: May 27, 2026",
+      "",
+      "This is the real Markdown row body."
+    ].join("\n"),
+    "utf8"
+  );
+  await writeFile(
+    join(source, "Markdown Fields", `Beta ${MD_FIELDS_BETA_ROW_HASH}.md`),
+    [
+      "# Beta",
+      "",
+      "Context: this is ordinary page content",
+      "",
+      "This line must also remain."
     ].join("\n"),
     "utf8"
   );
@@ -399,15 +477,62 @@ try {
     notionPage("Blank Standalone", ""),
     "utf8"
   );
+  await writeFile(
+    join(source, `Same Name One ${SAME_NAME_PAGE_HASH_1}.html`),
+    notionPage("Untitled", "<p>First same-name page body.</p>"),
+    "utf8"
+  );
+  await writeFile(
+    join(source, `Same Name Two ${SAME_NAME_PAGE_HASH_2}.html`),
+    notionPage("Untitled", "<p>Second same-name page body.</p>"),
+    "utf8"
+  );
 
   const config = { touch: async () => undefined };
   const service = new NotionImportService(config);
+  const invalidSourceTarget = join(root, "invalid-source-target");
+  await mkdir(invalidSourceTarget, { recursive: true });
+  await writeFile(join(invalidSourceTarget, "keep.txt"), "must survive", "utf8");
+  await assert.rejects(
+    service.runImport([], invalidSourceTarget, true),
+    /At least one Notion export folder is required/,
+    "An empty multi-source request should fail before touching its target"
+  );
+  assert.equal(
+    await readFile(join(invalidSourceTarget, "keep.txt"), "utf8"),
+    "must survive",
+    "Invalid source input must not remove existing target data"
+  );
   const result = await service.runImport(source, target, true, {
     skipEmptyRowsAndPages: true,
     dedupeMarkdownFiles: true,
     includeOriginalHtml: true
   });
   assert.ok(result.reportPageId, "Import should return the generated report page id");
+  assert.ok(result.report, "Import should return a structured detailed report");
+  assert.equal(result.report.nameConflicts.pageGroups >= 1, true, "Report should group same-name pages");
+  assert.equal(result.report.nameConflicts.databaseGroups >= 1, true, "Report should group same-name databases");
+  assert.equal(result.report.nameConflicts.crossTypeGroups >= 1, true, "Report should group page/database name collisions");
+  const untitledConflict = result.report.nameConflicts.groups.find((group) => group.name === "Untitled");
+  assert.ok(untitledConflict, "Report should include the Untitled name-conflict group");
+  assert.equal(
+    untitledConflict.entries.filter((entry) => entry.kind === "page").length,
+    2,
+    "Both same-name pages should be retained and reported"
+  );
+  assert.equal(
+    untitledConflict.entries.filter((entry) => entry.kind === "database").length >= 2,
+    true,
+    "Both same-name databases should be retained and reported"
+  );
+  assert.equal(
+    untitledConflict.entries.every((entry) => entry.id && entry.source && entry.target),
+    true,
+    "Every conflict entry should carry its stable id and source-to-target mapping"
+  );
+  for (const artifactPath of Object.values(result.report.artifacts)) {
+    assert.equal(existsSync(artifactPath), true, `Detailed report artifact should exist: ${artifactPath}`);
+  }
 
   const userDbs = await readdir(join(target, "databases", "user"), { withFileTypes: true });
   const tasksFolder = userDbs.find((entry) => entry.isDirectory() && entry.name.startsWith("Tasks--db_"));
@@ -451,6 +576,40 @@ try {
     15,
     "Imported database cover offsets should preserve Notion's object-position percentage"
   );
+  const schemaForNotionHash = async (hash) => {
+    for (const entry of userDbs) {
+      if (!entry.isDirectory()) continue;
+      const schema = JSON.parse(await readFile(join(target, "databases", "user", entry.name, "schema.json"), "utf8"));
+      if (schema.notion_source_hash === hash) return schema;
+    }
+    assert.fail(`Expected imported database schema for Notion hash ${hash}`);
+  };
+  assert.equal(
+    (await schemaForNotionHash(MODERN_EXTERNAL_ICON_DB_HASH)).icon,
+    "https://app.notion.com/icons/database_gray.svg",
+    "Current Notion HTML database wrappers should transfer remote icons into database schemas"
+  );
+  assert.equal(
+    (await schemaForNotionHash(MODERN_EMOJI_ICON_DB_HASH)).icon,
+    "emoji:📊",
+    "Current Notion HTML database wrappers should transfer emoji icons into database schemas"
+  );
+  const localDatabaseIcon = (await schemaForNotionHash(MODERN_LOCAL_ICON_DB_HASH)).icon;
+  assert.match(
+    localDatabaseIcon,
+    /^attachments\/images\/[0-9a-f]+-icon\.png$/,
+    "Current Notion HTML database wrappers should import local database icon attachments"
+  );
+  assert.equal(
+    existsSync(join(target, localDatabaseIcon)),
+    true,
+    "Imported local database icon attachments should exist"
+  );
+  assert.equal(
+    (await schemaForNotionHash(MODERN_NO_ICON_DB_HASH)).icon,
+    undefined,
+    "Databases without a Notion icon should remain iconless"
+  );
   assert.deepEqual(
     tasksView.fieldOrder,
     ["title", "notes", "url", "balance", "done", "owner", "notion_original_html", "notion_original_csv"],
@@ -485,6 +644,19 @@ try {
   assert.equal(markdownAlphaRow?.done, "true", "CSV-only checkbox values should normalize to canonical booleans");
   assert.equal(markdownAlphaRow?.amount, "1234.50", "CSV-only number values should normalize to canonical numbers");
   assert.equal(markdownAlphaRow?.today, "2026-05-27", "CSV-only date values should normalize to canonical dates");
+  const markdownAlphaBody = await readFile(join(markdownFieldsDbPath, "pages", markdownAlphaRow.page_file), "utf8");
+  assert.equal(
+    markdownAlphaBody,
+    "This is the real Markdown row body.",
+    "Markdown row property blocks, including historical fields, should not be duplicated into the page body"
+  );
+  const markdownBetaRow = markdownFieldsRows.find((row) => row.title === "Beta");
+  const markdownBetaBody = await readFile(join(markdownFieldsDbPath, "pages", markdownBetaRow.page_file), "utf8");
+  assert.equal(
+    markdownBetaBody,
+    "Context: this is ordinary page content\n\nThis line must also remain.",
+    "Unknown colon-prefixed prose should remain when it does not contain a recognized database property"
+  );
 
   const tasksRows = rowsAsObjects(await readFile(join(tasksDbPath, "data.csv"), "utf8"));
   assert.equal(tasksRows.length, 2, "Blank CSV rows should be omitted when skipEmptyRowsAndPages is enabled");
@@ -691,6 +863,13 @@ try {
   );
   const pageRows = rowsAsObjects(await readFile(pagesDataPath, "utf8"));
   const entityRows = rowsAsObjects(await readFile(entitiesDataPath, "utf8"));
+  for (const fixture of modernDatabaseFixtures) {
+    assert.equal(
+      pageRows.some((row) => row.title === fixture.title),
+      false,
+      `Current Notion HTML database wrapper should not create a duplicate page: ${fixture.title}`
+    );
+  }
   assert.ok(entityRows.some((row) => row.kind === "database" && row.title === "Tasks"), "Entities database should index databases");
   assert.ok(entityRows.some((row) => row.kind === "row" && row.title === "Task One"), "Entities database should index row pages");
   assert.ok(entityRows.some((row) => row.kind === "page" && row.title === "Alpha"), "Entities database should index standalone pages");
@@ -949,6 +1128,27 @@ try {
   );
   const reportBody = await readFile(join(target, reportPage.body_path), "utf8");
   assert.match(reportBody, /# Notion import report/, "The import report body should be readable");
+  assert.match(reportBody, /## Same-name Pages And Databases/, "Report should explain same-name object handling");
+  assert.match(reportBody, /## Icon Coverage/, "Report should include page, database, and row icon coverage");
+  assert.match(reportBody, /## Data Integrity/, "Report should include data reconciliation checks");
+  assert.match(reportBody, /## Performance/, "Report should include stage timings");
+  assert.match(reportBody, /stable Notion IDs/, "Report should state the non-destructive identity rule");
+  const structuredReport = JSON.parse(await readFile(result.report.artifacts.json, "utf8"));
+  assert.equal(structuredReport.report.nameConflicts.pageGroups >= 1, true);
+  const importManifest = JSON.parse(await readFile(result.report.artifacts.manifest, "utf8"));
+  assert.equal(importManifest.identityRule, "stable_notion_id");
+  assert.equal(importManifest.nameCollisionRule, "retain_all");
+  assert.equal(importManifest.rows.length > 0, true, "Source-to-target manifest should include database rows");
+  assert.equal(
+    importManifest.rows.every((row) => row.databaseId && row.rowId && row.title && row.target),
+    true,
+    "Every emitted database row should have a target mapping"
+  );
+  assert.equal(
+    importManifest.pages.filter((page) => page.title === "Untitled").length,
+    2,
+    "Source-to-target manifest should retain both same-name pages"
+  );
   const importReviewRows = rowsAsObjects(
     await readFile(join(target, "databases", "user", "Import_review--db_import_review", "data.csv"), "utf8")
   );
@@ -1469,12 +1669,17 @@ try {
   const splitSource = join(root, "split-source");
   const splitTarget = join(root, "split-workspace");
   const splitExportRoot = join(splitSource, `Export-${MERGED_EXPORT_UUID}`);
-  const splitExportRootPart2 = join(splitSource, `Export-${MERGED_EXPORT_UUID} 2`);
+  const splitExportRootPart2 = join(splitSource, `Export-${SEPARATE_MARKDOWN_EXPORT_UUID}`);
   await mkdir(join(splitExportRoot, "Writing", "Letters"), { recursive: true });
-  await mkdir(join(splitExportRootPart2, "Writing"), { recursive: true });
+  await mkdir(join(splitExportRootPart2, "Writing", "Letters"), { recursive: true });
   await writeFile(
     join(splitExportRootPart2, "Writing", `Letters ${SPLIT_ROW_DB_HASH}.csv`),
     "Name,Created time\n2025/09/24 给恺媛的回信,\"September 24, 2025 8:49 PM\"\n",
+    "utf8"
+  );
+  await writeFile(
+    join(splitExportRootPart2, "Writing", "Letters", `2025 09 24 给恺媛的回信 ${SPLIT_ROW_HASH}.md`),
+    "# 2025/09/24 给恺媛的回信\n\nMarkdown fallback body.\n",
     "utf8"
   );
   await writeFile(
@@ -1482,11 +1687,14 @@ try {
     notionPage(
       "2025/09/24 给恺媛的回信",
       "<p>Split export row body.</p>",
-      `<table class="properties"><tbody><tr class="property-row property-row-created_time"><th>Created time</th><td><time>September 24, 2025 8:49 PM</time></td></tr></tbody></table>`
+      `<table class="properties"><tbody><tr class="property-row property-row-created_time"><th>Created time</th><td><time>September 24, 2025 8:49 PM</time></td></tr></tbody></table>`,
+      '<div class="page-header-icon"><img class="icon notion-static-icon" src="https://app.notion.com/icons/mail_gray.svg"/></div>'
     ),
     "utf8"
   );
-  await service.runImport(splitSource, splitTarget, true, {
+  const splitScan = await service.scan([splitExportRootPart2, splitExportRoot]);
+  assert.equal(splitScan.databasesKept, 1, "Separate Markdown/CSV and HTML folders should scan as one import");
+  await service.runImport([splitExportRootPart2, splitExportRoot], splitTarget, true, {
     skipEmptyRowsAndPages: true,
     dedupeMarkdownFiles: true,
     includeOriginalHtml: true
@@ -1501,8 +1709,17 @@ try {
   assert.equal(
     splitRows[0].notion_original_html,
     `attachments/original/Export-${MERGED_EXPORT_UUID}/Writing/Letters/2025 09 24 给恺媛的回信 ${SPLIT_ROW_HASH}.html`,
-    "CSV rows in an Export-uuid 2 part should match HTML row pages in the base Export-uuid part"
+    "CSV rows from a separate Markdown export should match HTML row pages by stable Notion ids"
   );
+  assert.equal(
+    splitRows[0].row_icon,
+    "https://app.notion.com/icons/mail_gray.svg",
+    "HTML row icons should survive when CSV/Markdown and HTML come from separate export folders"
+  );
+  const splitBodyFiles = await readdir(join(splitTarget, "databases", "user", lettersFolder.name, "pages"));
+  const splitBody = await readFile(join(splitTarget, "databases", "user", lettersFolder.name, "pages", splitBodyFiles[0]), "utf8");
+  assert.match(splitBody, /Split export row body\./, "HTML should supply the richer body when both exports contain the same row");
+  assert.doesNotMatch(splitBody, /Markdown fallback body/, "HTML should replace the matching Markdown body instead of duplicating it");
   const splitPageRows = rowsAsObjects(
     await readFile(join(splitTarget, "databases", "system", "pages--db_pages", "data.csv"), "utf8")
   );

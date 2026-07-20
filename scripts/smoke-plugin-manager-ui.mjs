@@ -13,6 +13,7 @@ import {
   captureElementSnapshot,
   forEachViewport,
   openPage,
+  setLotionLocale,
   selectedViewports,
   withLotionUIHarness,
   workspacePath,
@@ -21,6 +22,7 @@ import {
 } from "./ui-harness.mjs";
 
 const result = await withLotionUIHarness("plugin-manager-ui", async ({ artifactRoot, cdpUrl, page, openWorkspace }) => {
+  await setLotionLocale(page, "zh");
   const fixture = await createPluginManagerFixture();
   await openWorkspace(fixture.root);
   const viewportResults = [];

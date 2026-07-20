@@ -11,6 +11,7 @@ import {
   assertWithinViewport,
   captureElementSnapshot,
   forEachViewport,
+  setLotionLocale,
   selectedViewports,
   withLotionUIHarness
 } from "./ui-harness.mjs";
@@ -19,6 +20,7 @@ import { assertGlobalSearchVisualArtifactContract } from "./lib/global-search-vi
 const sharedHarnessMode = Boolean(process.env.LOTION_UI_HARNESS_NO_AUTOSTART);
 
 const result = await withLotionUIHarness("search-title", async ({ artifactRoot, cdpUrl, openWorkspace, page }) => {
+  await setLotionLocale(page, "zh");
   const viewports = [];
   const expectedViewports = selectedViewports();
   await forEachViewport(page, expectedViewports, async (viewport) => {
@@ -1396,7 +1398,7 @@ async function assertFavoriteCurrentPageCommand(page, createdPage, viewport) {
   await openGlobalSearch(page);
   await page.locator(".global-search-input").fill("favorite");
   const favoriteHit = page.locator(".global-search-hit")
-    .filter({ hasText: "收藏/取消收藏当前页面" })
+    .filter({ hasText: "收藏/取消收藏当前内容" })
     .filter({ hasText: "命令" })
     .first();
   await favoriteHit.waitFor({ timeout: 8_000 });
@@ -2298,10 +2300,10 @@ async function createSearchTitleFixture(viewportName) {
   const safeViewport = viewportName.replace(/[^a-z0-9_-]+/gi, "_");
   const root = await mkdtemp(join(tmpdir(), `lotion-search-title-${safeViewport}-`));
   const now = "2026-01-01T00:00:00.000Z";
-  const pageId = `bbbbbbbb-cccc-4ddd-8eee-ffffffffffff_${safeViewport}`;
-  const pageTitle = "[完成] exampleSearchPage";
+  const pageId = `7918b506-cf94-4bdd-99bb-47da14a7607f_${safeViewport}`;
+  const pageTitle = "[完成] createDeepDive";
   const pageIcon = "✅";
-  const query = "exampleSearchPage";
+  const query = "createDeepDive";
   const tagName = "Focus";
   const tagTitle = `#${tagName}`;
   const tagPageCount = 1;

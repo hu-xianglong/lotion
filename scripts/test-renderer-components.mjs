@@ -58,6 +58,7 @@ try {
     renderGalleryBody,
     renderGalleryBodyEmpty,
     renderGlobalSearchPanelContentEmpty,
+    renderGlobalSearchPanelContentEnglish,
     renderGlobalSearchPanelContentLoading,
     renderGlobalSearchPanelContentRecent,
     renderGlobalSearchPanelContentResults,
@@ -82,6 +83,7 @@ try {
     renderNotionAuditResult,
     renderNotionImportDialogPick,
     renderNotionImportPanelPick,
+    renderNotionImportSummary,
     renderNotionImportSettingsWithReport,
     renderDatabaseTemplatePicker,
     renderDefaultFieldProviders,
@@ -164,6 +166,7 @@ try {
   testGlobalSearchPanelContentResults(renderGlobalSearchPanelContentResults());
   testGlobalSearchPanelContentLoading(renderGlobalSearchPanelContentLoading());
   testGlobalSearchPanelContentEmpty(renderGlobalSearchPanelContentEmpty());
+  testGlobalSearchPanelContentEnglish(renderGlobalSearchPanelContentEnglish());
   testSearchAiSurface(renderSearchAiSurface());
   testViewSettingsDialog(renderViewSettingsDialog());
   testRowTemplateDialog(renderRowTemplateDialog());
@@ -207,6 +210,7 @@ try {
   testNotionAuditPassingResult(renderNotionAuditPassingResult());
   testNotionImportDialogPick(renderNotionImportDialogPick());
   testNotionImportPanelPick(renderNotionImportPanelPick());
+  testNotionImportSummary(renderNotionImportSummary());
   testNotionImportSettingsWithReport(renderNotionImportSettingsWithReport());
   testListBody(renderListBody());
   testGalleryBody(renderGalleryBody());
@@ -646,6 +650,19 @@ function testGlobalSearchPanelContentEmpty(html) {
   assert.match(html, /<span>全部<\/span><span class="global-search-filter-count">0<\/span>/, "empty typed search should render zero filter counts");
 }
 
+function testGlobalSearchPanelContentEnglish(html) {
+  assert.match(html, /aria-label="Command palette: search pages, databases, row content, or run a command"/, "English search input should use the configured locale");
+  assert.match(html, /placeholder="Search pages, databases, row content, commands…"/, "English search placeholder should use the configured locale");
+  assert.match(html, /role="group"[^>]+aria-label="Search result types"/, "English search filters should be labelled");
+  for (const label of ["All", "Title", "Content \/ field", "Reference", "Database", "Command"]) {
+    assert.match(html, new RegExp(`<span>${label}<\\/span>`), `English search filter ${label} should render`);
+  }
+  assert.match(html, /aria-label="Search sort"/, "English search sort should be labelled");
+  assert.match(html, /Showing 2 of 2 results/, "English search progress should use the configured locale");
+  assert.match(html, /gs-kind-badge command[^>]*>Command</, "English command badges should use the configured locale");
+  assert.doesNotMatch(html, /命令面板|搜索结果类型|没有匹配|加载更多/, "English search chrome should not mix in Chinese copy");
+}
+
 function testViewSettingsDialog(html) {
   assert.match(html, /role="dialog"[^>]+aria-label="View settings"/, "view settings dialog should be labelled");
   assert.match(html, /<h2>View settings<\/h2>/, "view settings heading should render");
@@ -855,6 +872,10 @@ function testStandaloneDatabaseHeader(html) {
   assert.match(html, /class="page-header-addition page-add-cover"[\s\S]*Add cover/, "localized cover affordance should render when no cover is set");
   assert.match(html, /class="database-open-window"/, "open-in-new-window affordance should render");
   assert.match(html, /aria-label="Open in new window"/, "open-in-new-window affordance should be labelled");
+  assert.match(html, /class="favorite-toggle on"/, "favorited database should render the active favorite control");
+  assert.match(html, /aria-label="Remove from favorites"/, "database favorite control should use the localized label");
+  assert.match(html, /aria-pressed="true"/, "database favorite control should expose its active state");
+  assert.match(html, /fill="currentColor"/, "active database favorite should use the filled star");
 }
 
 function testEmbeddedDatabaseHeader(html) {
@@ -866,6 +887,7 @@ function testEmbeddedDatabaseHeader(html) {
   assert.match(html, /aria-label="Refresh"/, "embedded refresh action should be labelled");
   assert.match(html, /aria-label="View settings"/, "embedded settings action should be labelled");
   assert.match(html, /data-testid="embedded-actions"/, "embedded view actions slot should render");
+  assert.doesNotMatch(html, /favorite-toggle/, "embedded database views should not expose a standalone favorite control");
 }
 
 function testEmbeddedViewRendererCached(html) {
@@ -1138,16 +1160,19 @@ function testManagementRecentView(html) {
 function testManagementFavoritesView(html) {
   assert.match(html, /class="management-view"/, "favorites management shell should render");
   assert.match(html, /<h1>Favorites<\/h1>/, "favorites heading should render");
-  assert.match(html, /class="management-subtitle"[^>]*>2<\/div>/, "favorites count should render");
+  assert.match(html, /class="management-subtitle"[^>]*>3<\/div>/, "favorites count should render");
   assert.match(html, /data-testid="favorites-management-view"/, "favorites table should expose a stable test id");
   assert.match(html, /<th>Item<\/th><th>Kind<\/th><th>Context<\/th>/, "favorites table headers should render");
   assert.match(html, /Project Plan/, "favorite page title should render");
+  assert.match(html, /Daily Habits/, "favorite database title should render");
   assert.match(html, /2026\/06\/23 Review/, "favorite row-page title should resolve from cache");
   assert.match(html, />Page<\/td>/, "favorite page kind should render");
+  assert.match(html, />Database<\/td>/, "favorite database kind should render");
   assert.match(html, />Database row<\/td>/, "favorite row-page kind should render");
   assert.match(html, /Workspace \/ Project Plan/, "favorite page path context should render");
   assert.match(html, /Workspace \/ Daily Habits/, "favorite row-page database path should render");
   assert.match(html, /entity-icon-emoji[^>]*>🧭</, "favorite page icon should render");
+  assert.match(html, /entity-icon-emoji[^>]*>🗃️</, "favorite database icon should render");
   assert.match(html, /entity-icon-emoji[^>]*>🚜</, "favorite row-page icon should render");
   assert.doesNotMatch(html, /row_daily/, "known favorite row pages should not expose raw row ids");
 }
@@ -1312,26 +1337,47 @@ function testNotionImportPanelPick(html) {
   assert.match(html, /class="notion-import-panel embedded"/, "embedded import panel should render plugin-page shell");
   assert.doesNotMatch(html, /dialog-backdrop/, "embedded import panel should not render modal backdrop");
   assert.match(html, /<h2>Import from Notion<\/h2>/, "import panel heading should render");
+  assert.match(html, /Markdown &amp; CSV export/, "import panel should identify the Markdown and CSV export");
+  assert.match(html, /HTML export/, "import panel should identify the separate HTML export");
+  assert.match(html, /matches their stable Notion IDs/, "import panel should explain how separate exports are merged");
   assert.match(html, /<legend>Import settings<\/legend>/, "import settings group should render");
   assert.equal(count(html, 'type="checkbox"'), 3, "import panel should render the default option checkboxes");
   assert.equal(count(html, 'checked=""'), 3, "all import options should be enabled by default");
   assert.match(html, /Do not import blank rows and pages/, "blank-skip option should render");
-  assert.match(html, /Blank definition\./, "blank definition explanation should render");
+  assert.match(html, /What counts as blank\?/, "blank definition disclosure should render");
   assert.match(html, /system fields, row id, row icon, page file/i, "blank definition should explain ignored system fields");
   assert.match(html, /Auto-dedupe duplicate Notion pages/, "dedupe option should render");
   assert.match(html, /Preserve original Notion export for audit/, "original export option should render");
-  assert.match(html, /Choose folder…<\/button>/, "choose-folder action should render");
+  assert.equal(count(html, "Choose folder…"), 2, "each source export should have its own folder picker");
+  assert.match(html, /disabled=""[^>]*>Review selected exports<\/button>/, "review should stay disabled until a source is selected");
+}
+
+function testNotionImportSummary(html) {
+  assert.match(html, /Import complete with items to review/, "detailed report status should render");
+  assert.match(html, /Same-name objects \(2 groups\)/, "same-name group count should render");
+  assert.match(html, /Weekly Review/, "same-name page group should render");
+  assert.match(html, /Projects/, "same-name database group should render");
+  assert.match(html, /Names never overwrite another object/, "identity safety rule should render");
+  assert.match(html, /Icon coverage/, "icon coverage disclosure should render");
+  assert.match(html, /Markdown report/, "Markdown report action should render");
+  assert.match(html, /JSON report/, "JSON report action should render");
+  assert.match(html, /Import manifest/, "source-to-target manifest action should render");
 }
 
 function testNotionImportDialogPick(html) {
   assert.match(html, /class="dialog-backdrop"/, "import dialog should render a modal backdrop");
-  assert.match(html, /class="dialog notion-dialog"/, "import dialog should render the Notion import modal shell");
+  assert.match(html, /class="notion-dialog"[^>]+role="dialog"[^>]+aria-modal="true"/, "import dialog should render an accessible modal shell");
+  assert.match(html, /<h2 id="notion-import-dialog-title">Import from Notion<\/h2>/, "import dialog shell should render its heading");
+  assert.match(html, /aria-label="Close import dialog"/, "import dialog should render an accessible close action");
   assert.match(html, /class="notion-import-panel"/, "import dialog should render the import panel");
   assert.doesNotMatch(html, /class="notion-import-panel embedded"/, "modal import panel should not use embedded plugin-page styling");
-  assert.doesNotMatch(html, /<h2>Import from Notion<\/h2>/, "modal import panel should not duplicate the modal shell heading");
+  assert.equal(count(html, "Import from Notion"), 1, "modal import panel should not duplicate the modal shell heading");
+  assert.match(html, /Markdown &amp; CSV export/, "modal should identify the Markdown and CSV export");
+  assert.match(html, /HTML export/, "modal should identify the separate HTML export");
+  assert.match(html, /matches their stable Notion IDs/, "modal should explain how separate exports are merged");
   assert.match(html, /<legend>Import settings<\/legend>/, "modal import settings should render");
   assert.match(html, /Do not import blank rows and pages/, "modal blank-skip option should render");
-  assert.match(html, /Choose folder…<\/button>/, "modal choose-folder action should render");
+  assert.equal(count(html, "Choose folder…"), 2, "modal should render one folder picker per source export");
 }
 
 function testNotionImportSettingsWithReport(html) {
@@ -1770,7 +1816,7 @@ function rendererComponentEntry() {
     import { StartupLoadingScreen } from "./src/renderer/App.tsx";
     import { I18nValueProvider } from "./src/renderer/lib/i18n.ts";
     import { AuditResult, NotionAuditPanel } from "./src/builtin-plugins/notion-import/NotionAuditPanel.tsx";
-    import { NotionImportDialog, NotionImportPanel } from "./src/builtin-plugins/notion-import/NotionImportDialog.tsx";
+    import { ImportSummary, NotionImportDialog, NotionImportPanel } from "./src/builtin-plugins/notion-import/NotionImportDialog.tsx";
     import { NotionImportSettings } from "./src/builtin-plugins/notion-import/index.tsx";
     import { LotionActionsProvider } from "./src/renderer/context/lotion-actions.tsx";
     import { pluginHost } from "./src/renderer/plugin-host/index.ts";
@@ -2720,9 +2766,15 @@ function rendererComponentEntry() {
       );
     }
 
+    function withSearchLocale(locale, child) {
+      return React.createElement(I18nValueProvider, {
+        value: { locale, t: (key) => key, setLocale() {} }
+      }, child);
+    }
+
     export function renderGlobalSearchPanelContentRecent() {
       return renderToStaticMarkup(
-        React.createElement(GlobalSearchPanelContent, {
+        withSearchLocale("zh", React.createElement(GlobalSearchPanelContent, {
           pattern: "",
           trimmedPattern: "",
           loading: false,
@@ -2745,13 +2797,13 @@ function rendererComponentEntry() {
           onHoverItem: () => {},
           onLoadMore: () => {},
           onBackdropClick: () => {}
-        })
+        }))
       );
     }
 
     export function renderGlobalSearchPanelContentResults() {
       return renderToStaticMarkup(
-        React.createElement(GlobalSearchPanelContent, {
+        withSearchLocale("zh", React.createElement(GlobalSearchPanelContent, {
           pattern: "uber",
           trimmedPattern: "uber",
           loading: false,
@@ -2774,13 +2826,13 @@ function rendererComponentEntry() {
           onHoverItem: () => {},
           onLoadMore: () => {},
           onBackdropClick: () => {}
-        })
+        }))
       );
     }
 
     export function renderGlobalSearchPanelContentLoading() {
       return renderToStaticMarkup(
-        React.createElement(GlobalSearchPanelContent, {
+        withSearchLocale("zh", React.createElement(GlobalSearchPanelContent, {
           pattern: "uber",
           trimmedPattern: "uber",
           loading: true,
@@ -2803,13 +2855,13 @@ function rendererComponentEntry() {
           onHoverItem: () => {},
           onLoadMore: () => {},
           onBackdropClick: () => {}
-        })
+        }))
       );
     }
 
     export function renderGlobalSearchPanelContentEmpty() {
       return renderToStaticMarkup(
-        React.createElement(GlobalSearchPanelContent, {
+        withSearchLocale("zh", React.createElement(GlobalSearchPanelContent, {
           pattern: "missing",
           trimmedPattern: "missing",
           loading: false,
@@ -2832,7 +2884,36 @@ function rendererComponentEntry() {
           onHoverItem: () => {},
           onLoadMore: () => {},
           onBackdropClick: () => {}
-        })
+        }))
+      );
+    }
+
+    export function renderGlobalSearchPanelContentEnglish() {
+      return renderToStaticMarkup(
+        withSearchLocale("en", React.createElement(GlobalSearchPanelContent, {
+          pattern: "open",
+          trimmedPattern: "open",
+          loading: false,
+          flatItems: makeSearchResultItems().slice(0, 2),
+          filteredItemsLength: 2,
+          totalSearchHitCount: 0,
+          resultTruncated: false,
+          hasMore: false,
+          activeIndex: 0,
+          activeMatchFilter: "all",
+          activeSortMode: "relevance",
+          commandHitsLength: 2,
+          tagHitsLength: 0,
+          typeCounts: makeSearchTypeCounts(),
+          onPatternChange: () => {},
+          onKeyDown: () => {},
+          onSelectMatchFilter: () => {},
+          onSelectSortMode: () => {},
+          onActivateItem: () => {},
+          onHoverItem: () => {},
+          onLoadMore: () => {},
+          onBackdropClick: () => {}
+        }))
       );
     }
 
@@ -3121,7 +3202,9 @@ function rendererComponentEntry() {
           onPickCover: () => {},
           onClearCover: () => {},
           onCommitCoverOffset: () => {},
-          onOpenInNewWindow: () => {}
+          onOpenInNewWindow: () => {},
+          favorited: true,
+          onToggleFavorite: () => {}
         })
       );
     }
@@ -3616,6 +3699,64 @@ function rendererComponentEntry() {
 
     export function renderNotionImportDialogPick() {
       return renderToStaticMarkup(React.createElement(NotionImportDialog, { onClose: () => {} }));
+    }
+
+    export function renderNotionImportSummary() {
+      return renderToStaticMarkup(
+        React.createElement(ImportSummary, {
+          summary: {
+            workspaceRoot: "/tmp/lotion-import",
+            reportPageId: "pg_report",
+            scan: {
+              sources: ["/tmp/markdown", "/tmp/html"],
+              databasesRaw: 2,
+              databasesKept: 2,
+              databases: [{ title: "Projects", rows: 4, userFields: 3 }],
+              topLevelPages: 3,
+              attachments: 6
+            },
+            report: {
+              status: "complete_with_warnings",
+              generatedAt: "2026-07-20T18:38:01.000Z",
+              durationMs: 42600,
+              counts: { sources: 2, pages: 3, databases: 2, rows: 4, attachments: 6, warnings: 1, reviewItems: 2 },
+              nameConflicts: {
+                pageGroups: 1,
+                databaseGroups: 1,
+                crossTypeGroups: 0,
+                groups: [
+                  {
+                    name: "Weekly Review",
+                    kinds: ["page"],
+                    entries: [
+                      { id: "pg_1", notionId: "a", name: "Weekly Review", kind: "page", source: "/tmp/a.html", target: "pages/a.md" },
+                      { id: "pg_2", notionId: "b", name: "Weekly Review", kind: "page", source: "/tmp/b.html", target: "pages/b.md" }
+                    ]
+                  },
+                  {
+                    name: "Projects",
+                    kinds: ["database"],
+                    entries: [
+                      { id: "db_1", notionId: "c", name: "Projects", kind: "database", source: "/tmp/c.csv", target: "databases/c" },
+                      { id: "db_2", notionId: "d", name: "Projects", kind: "database", source: "/tmp/d.csv", target: "databases/d" }
+                    ]
+                  }
+                ]
+              },
+              icons: { pagesWithIcon: 2, pagesWithoutIcon: 1, databasesWithIcon: 1, databasesWithoutIcon: 1, rowsWithIcon: 3, rowsWithoutIcon: 1 },
+              performance: { prepareTargetMs: 10, resolveSourcesMs: 20, indexSourcesMs: 300, selectDatabasesMs: 40, planAndParseMs: 2000, writeWorkspaceMs: 1000, totalMs: 3370 },
+              warnings: ["2 intentionally skipped or redirected items are available in Import review."],
+              artifacts: {
+                directory: "/tmp/lotion-import/reports/import-1",
+                markdown: "/tmp/lotion-import/reports/import-1/report.md",
+                json: "/tmp/lotion-import/reports/import-1/report.json",
+                warningsCsv: "/tmp/lotion-import/reports/import-1/warnings.csv",
+                manifest: "/tmp/lotion-import/reports/import-1/manifest.json"
+              }
+            }
+          }
+        })
+      );
     }
 
     export function renderNotionImportSettingsWithReport() {
@@ -4515,6 +4656,7 @@ function rendererComponentEntry() {
     function makeManagementFavorites() {
       return [
         { type: "page", id: "pg_plan" },
+        { type: "database", id: "db_daily" },
         { type: "row_page", databaseId: "db_daily", rowId: "row_daily" }
       ];
     }
@@ -4581,6 +4723,7 @@ function rendererComponentEntry() {
         databases,
         favorites: [
           { type: "page", id: "pg_plan" },
+          { type: "database", id: "db_daily" },
           { type: "row_page", databaseId: "db_daily", rowId: "row_daily" }
         ],
         recents: makeManagementRecents(),

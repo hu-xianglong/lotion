@@ -144,9 +144,9 @@ const api: LotionApi = {
     clearShellOpenRequests: () => invoke("debug:clearShellOpenRequests")
   },
   notion: {
-    pickFolder: () => invoke("notion:pickFolder"),
+    pickFolder: (kind) => invoke("notion:pickFolder", kind),
     pickTarget: () => invoke("notion:pickTarget"),
-    scan: (folderPath) => invoke("notion:scan", folderPath),
+    scan: (sourcePaths) => invoke("notion:scan", sourcePaths),
     runImport: (payload) => invoke("notion:import", payload),
     audit: (input) => invoke("notion:audit", input),
     // Subscribe to per-phase progress events emitted by the importer.

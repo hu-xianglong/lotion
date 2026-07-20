@@ -236,17 +236,17 @@ export function registerIpc(workspace: WorkspaceService, appConfig: AppConfigSer
     attachments.importFiles(payload.paths)
   );
 
-  handle("notion:pickFolder", () => notion.pickFolder());
+  handle("notion:pickFolder", (_event, kind?: "markdown_csv" | "html") => notion.pickFolder(kind));
   handle("notion:pickTarget", () => notion.pickTargetFolder());
-  handle("notion:scan", (_event, folderPath: string) => notion.scan(folderPath));
+  handle("notion:scan", (_event, sourcePaths: string | string[]) => notion.scan(sourcePaths));
   handle(
     "notion:import",
-    (event, payload: { sourcePath: string; targetPath: string; force?: boolean; options?: NotionImportOptions }) =>
+    (event, payload: { sourcePath?: string; sourcePaths?: string[]; targetPath: string; force?: boolean; options?: NotionImportOptions }) =>
       // Pipe per-phase progress events back to the originating webContents
       // so the dialog can paint a live progress bar. Throttling lives in
       // the service; here we just forward every event.
       notion.runImport(
-        payload.sourcePath,
+        payload.sourcePaths?.length ? payload.sourcePaths : payload.sourcePath ?? "",
         payload.targetPath,
         payload.force ?? false,
         payload.options,

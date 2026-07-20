@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
   <title id="title">Lotion app icon</title>
-  <desc id="desc">The Lotion folded-page L mark on a neutral macOS app-icon tile.</desc>
-  <rect x="64" y="64" width="896" height="896" rx="208" fill="#f7f7f4" stroke="#deded8" stroke-width="12"/>
-  <g transform="translate(115 115) scale(1.55)" fill="#1d1e1b">
+  <desc id="desc">The Lotion folded-page L mark on a green macOS app-icon tile.</desc>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#66bf8d"/>
+  <g transform="translate(115 115) scale(1.55)" fill="#181916">
     <path fill-rule="evenodd" d="M112 88 H328 L416 176 V404 Q416 428 392 428 H112 Q88 428 88 404 V112 Q88 88 112 88 Z M160 158 H220 V326 H338 V382 H160 Z"/>
     <path d="M346 106 V160 H400 Z"/>
   </g>

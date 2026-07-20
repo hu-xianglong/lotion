@@ -107,6 +107,7 @@ export function ManagementView({ kind, pages, databases, favorites = [], recents
         pages={pages}
         databases={databases}
         onOpenPage={actions.selectPage}
+        onOpenDatabase={actions.selectDatabase}
         onOpenRowPage={actions.openRowPage}
       />
     );
@@ -1538,12 +1539,14 @@ function FavoritesTable({
   pages,
   databases,
   onOpenPage,
+  onOpenDatabase,
   onOpenRowPage
 }: {
   favorites: FavoriteItem[];
   pages: PageMeta[];
   databases: DatabaseSummary[];
   onOpenPage: (id: string) => void;
+  onOpenDatabase: (id: string) => void;
   onOpenRowPage: (databaseId: string, rowId: string) => void;
 }) {
   const { t } = useI18n();
@@ -1583,6 +1586,22 @@ function FavoritesTable({
                   <span>{title}</span>
                 </td>
                 <td>{t("page.backlinkSourcePage")}</td>
+                <td>{context}</td>
+              </tr>
+            );
+          }
+
+          if (favorite.type === "database") {
+            const database = databases.find((item) => item.id === favorite.id);
+            const title = database?.name ?? favorite.id;
+            const context = database ? databasePathLabel(database) || database.name : favorite.id;
+            return (
+              <tr key={`favorite-database-${favorite.id}-${index}`} onClick={() => onOpenDatabase(favorite.id)}>
+                <td className="manage-table-name">
+                  <EntityIcon kind="database" icon={database?.icon} size={18} />
+                  <span>{title}</span>
+                </td>
+                <td>{t("page.backlinkSourceDatabase")}</td>
                 <td>{context}</td>
               </tr>
             );

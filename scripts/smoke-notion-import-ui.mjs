@@ -14,6 +14,7 @@ import {
   assertWithinViewport,
   captureElementSnapshot,
   forEachViewport,
+  setLotionLocale,
   selectedViewports,
   withLotionUIHarness
 } from "./ui-harness.mjs";
@@ -28,14 +29,23 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
   page,
   registerTempWorkspace
 }) => {
+  await setLotionLocale(page, "zh");
   const viewportResults = [];
   const diagnosticResults = [];
   const modalResults = [];
+  const directModalResults = [];
   const expectedViewports = selectedViewports();
   await forEachViewport(page, expectedViewports, async (viewport) => {
     const fixture = await createAuditFixture(`${viewport.name}-passing`);
     registerTempWorkspace(fixture.root);
     modalResults.push(await runImportModalOverlayCheck({
+      artifactRoot,
+      fixture,
+      openWorkspace,
+      page,
+      viewport
+    }));
+    directModalResults.push(await runDirectImportModalCheck({
       artifactRoot,
       fixture,
       openWorkspace,
@@ -67,6 +77,7 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
   const summary = {
     cdpUrl,
     diagnostics: diagnosticResults,
+    directImportModal: directModalResults,
     importModal: modalResults,
     viewports: viewportResults,
     status: "passed"
@@ -140,6 +151,81 @@ async function runImportModalOverlayCheck({ artifactRoot, fixture, openWorkspace
   return {
     viewport: viewport.name,
     overlay,
+    snapshot: snapshotSummary(snapshot),
+    workspaceRoot: fixture.workspaceRoot
+  };
+}
+
+async function runDirectImportModalCheck({ artifactRoot, fixture, openWorkspace, page, viewport }) {
+  await openWorkspace(fixture.workspaceRoot);
+  await page.getByText("Audit UI Home").first().waitFor({ timeout: 8_000 });
+  await page.locator(".workspace-selector").click();
+  const menu = page.getByRole("menu").first();
+  await menu.waitFor({ timeout: 8_000 });
+  await menu.getByRole("button", { name: "Import from Notion…" }).click();
+
+  const modal = page.locator(".notion-dialog").first();
+  await modal.waitFor({ timeout: 8_000 });
+  await assertWithinViewport(page, modal, `direct Notion import modal ${viewport.name}`, 8);
+  await assertNoDocumentHorizontalOverflow(page, `direct Notion import modal ${viewport.name}`, 2);
+
+  const layout = await page.evaluate(() => {
+    const backdrop = document.querySelector(".dialog-backdrop");
+    const dialog = document.querySelector(".notion-dialog");
+    const dialogRect = dialog?.getBoundingClientRect();
+    const backdropRect = backdrop?.getBoundingClientRect();
+    const style = dialog ? window.getComputedStyle(dialog) : null;
+    const bodyStyle = document.body ? window.getComputedStyle(document.body) : null;
+    return {
+      ariaModal: dialog?.getAttribute("aria-modal") ?? "",
+      backdropCoversViewport: Boolean(backdropRect)
+        && backdropRect.left <= 1
+        && backdropRect.top <= 1
+        && backdropRect.right >= window.innerWidth - 1
+        && backdropRect.bottom >= window.innerHeight - 1,
+      backgroundColor: style?.backgroundColor ?? "",
+      bodyBackgroundColor: bodyStyle?.backgroundColor ?? "",
+      htmlLabel: dialog?.querySelector(".notion-import-source:nth-of-type(2) strong")?.textContent?.trim() ?? "",
+      height: Math.round(dialogRect?.height ?? 0),
+      markdownCsvLabel: dialog?.querySelector(".notion-import-source:first-of-type strong")?.textContent?.trim() ?? "",
+      mergeById: (dialog?.textContent ?? "").includes("matches their stable Notion IDs"),
+      modalRole: dialog?.getAttribute("role") ?? "",
+      title: dialog?.querySelector(".notion-dialog-header h2")?.textContent?.trim() ?? "",
+      width: Math.round(dialogRect?.width ?? 0)
+    };
+  });
+  if (
+    layout.title !== "Import from Notion" ||
+    layout.modalRole !== "dialog" ||
+    layout.ariaModal !== "true" ||
+    layout.markdownCsvLabel !== "Markdown & CSV export" ||
+    layout.htmlLabel !== "HTML export" ||
+    !layout.mergeById ||
+    !layout.backdropCoversViewport ||
+    !layout.backgroundColor ||
+    layout.backgroundColor === "rgba(0, 0, 0, 0)" ||
+    layout.backgroundColor === "transparent"
+  ) {
+    throw new Error(`Direct Notion import modal is incomplete: ${JSON.stringify(layout)}`);
+  }
+
+  const snapshot = await captureElementSnapshot({
+    artifactRoot,
+    locator: modal,
+    metadata: {
+      layout,
+      phase: "direct-modal",
+      workspaceRoot: fixture.workspaceRoot
+    },
+    name: `notion-import-direct-modal-${viewport.name}`,
+    page,
+    viewport
+  });
+  await modal.getByRole("button", { name: "Close import dialog" }).click();
+  await page.waitForSelector(".notion-dialog", { state: "detached", timeout: 8_000 });
+  return {
+    viewport: viewport.name,
+    layout,
     snapshot: snapshotSummary(snapshot),
     workspaceRoot: fixture.workspaceRoot
   };

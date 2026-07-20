@@ -19,7 +19,21 @@ test("integration: imports a Notion export and opens the resulting workspace thr
   try {
     await createMiniNotionExport(source);
 
-    const scan = await api.notion.scan(source);
+    const blockedTarget = join(root, "blocked-workspace");
+    await mkdir(blockedTarget, { recursive: true });
+    await writeFile(join(blockedTarget, "keep.txt"), "must survive", "utf8");
+    await assert.rejects(
+      api.notion.runImport({ sourcePaths: [source], targetPath: blockedTarget }),
+      /Target folder is not empty/,
+      "A target containing user data must remain blocked"
+    );
+    assert.equal(await readFile(join(blockedTarget, "keep.txt"), "utf8"), "must survive");
+
+    await mkdir(join(target, ".lotion-cache"), { recursive: true });
+    await writeFile(join(target, ".DS_Store"), "finder metadata", "utf8");
+    await writeFile(join(target, ".lotion-cache", "backlinks.json"), "{}\n", "utf8");
+
+    const scan = await api.notion.scan([source]);
     assert.equal(scan.databasesRaw, 1);
     assert.equal(scan.databasesKept, 1);
     assert.equal(scan.databases[0].title, "Projects");
@@ -27,9 +41,9 @@ test("integration: imports a Notion export and opens the resulting workspace thr
     assert.equal(scan.attachments >= 1, true);
 
     const imported = await api.notion.runImport({
-      sourcePath: source,
+      sourcePaths: [source],
       targetPath: target,
-      force: true,
+      force: false,
       options: {
         skipEmptyRowsAndPages: true,
         dedupeMarkdownFiles: true,
@@ -38,7 +52,16 @@ test("integration: imports a Notion export and opens the resulting workspace thr
       onProgress: (event) => progress.push(event)
     });
     assert.equal(imported.workspaceRoot, target);
+    await assert.rejects(readFile(join(target, ".lotion-cache", "backlinks.json"), "utf8"), /ENOENT/);
     assert.ok(imported.reportPageId);
+    assert.equal(imported.report.counts.databases, 1);
+    assert.equal(imported.report.counts.rows, 1);
+    assert.equal(imported.report.counts.pages, 1);
+    assert.match(await readFile(imported.report.artifacts.markdown, "utf8"), /## Data Integrity/);
+    const reportManifest = JSON.parse(await readFile(imported.report.artifacts.manifest, "utf8"));
+    assert.equal(reportManifest.nameCollisionRule, "retain_all");
+    assert.equal(reportManifest.rows.length, 1);
+    assert.equal(reportManifest.rows[0].notionId, ROW_HASH);
     assert.equal(progress.some((event) => event.phase === "done"), true);
 
     await api.workspace.open(target);
@@ -86,6 +109,8 @@ test("integration: imports a Notion export and opens the resulting workspace thr
     const report = await api.pages.get(imported.reportPageId);
     assert.match(report.markdown, /# Notion import report/);
     assert.match(report.markdown, /## Summary/);
+    assert.match(report.markdown, /## Same-name Pages And Databases/);
+    assert.match(report.markdown, /## Icon Coverage/);
     assert.match(report.markdown, /Projects/);
 
     const originalHtmlRel = cellByFieldName(projects, row, "Original Notion HTML");

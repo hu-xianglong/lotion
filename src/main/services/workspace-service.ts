@@ -180,8 +180,8 @@ export class WorkspaceService {
   }
 
   /**
-   * Add or remove a favorite. Pages key on `id`; row-pages key on
-   * `databaseId+rowId`. Newly favorited items are appended.
+   * Add or remove a favorite. Pages and databases key on `id`;
+   * row-pages key on `databaseId+rowId`. Newly favorited items append.
    */
   async toggleFavorite(item: NonNullable<SpaceManifest["favorites"]>[number]): Promise<SpaceManifest> {
     const manifest = await this.getManifest();
@@ -479,6 +479,7 @@ function sameFavorite(
 ): boolean {
   if (a.type !== b.type) return false;
   if (a.type === "page" && b.type === "page") return a.id === b.id;
+  if (a.type === "database" && b.type === "database") return a.id === b.id;
   if (a.type === "row_page" && b.type === "row_page") {
     return a.databaseId === b.databaseId && a.rowId === b.rowId;
   }

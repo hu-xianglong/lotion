@@ -729,6 +729,8 @@ function AppContent() {
     let item: FavoriteItem | null = null;
     if (state.activePage) {
       item = { type: "page", id: state.activePage.meta.id };
+    } else if (state.activeDatabaseId) {
+      item = { type: "database", id: state.activeDatabaseId };
     } else if (state.activeRowPage) {
       item = {
         type: "row_page",
@@ -1540,6 +1542,7 @@ function AppContent() {
     );
   } else if (activeBundle) {
     const view = activeBundle.views[0];
+    const favorited = isFavorited(state.favorites, { type: "database", id: activeBundle.schema.id });
     content = (
       <DatabaseTable
         bundle={activeBundle}
@@ -1552,6 +1555,8 @@ function AppContent() {
         onCommitCoverOffset={(offset) => updateDatabaseCoverOffset(activeBundle.schema.id, offset)}
         onUpdateTags={(tags) => updateDatabaseTags(activeBundle.schema.id, tags)}
         onOpenInNewWindow={() => openItemInNewWindow({ type: "database", id: activeBundle.schema.id })}
+        favorited={favorited}
+        onToggleFavorite={toggleFavoriteCurrent}
       />
     );
   } else if (state.activeRowPage && activeRowBundle && activeRow) {
@@ -1991,6 +1996,7 @@ function isFavorited(list: FavoriteItem[], item: FavoriteItem): boolean {
   return list.some((f) => {
     if (f.type !== item.type) return false;
     if (f.type === "page" && item.type === "page") return f.id === item.id;
+    if (f.type === "database" && item.type === "database") return f.id === item.id;
     if (f.type === "row_page" && item.type === "row_page") {
       return f.databaseId === item.databaseId && f.rowId === item.rowId;
     }

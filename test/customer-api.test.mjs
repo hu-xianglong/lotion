@@ -219,6 +219,11 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
         rows: [{ title: "Acme", status: "Todo", url: "https://example.com/acme" }]
       }
     });
+    await api.workspace.toggleFavorite({ type: "database", id: bundle.schema.id });
+    assert.deepEqual(await api.workspace.listFavorites(), [
+      { type: "page", id: page.meta.id },
+      { type: "database", id: bundle.schema.id }
+    ]);
     const databaseId = bundle.schema.id;
     assert.equal(bundle.schema.path?.join(" / "), "Sales / Deals");
     assert.equal(bundle.records[0]?.title, "Acme");

@@ -17,18 +17,11 @@ import { CodeMirrorMarkdownEditor, type CodeMirrorMarkdownEditorHandle, type Mar
 import { EntityIcon } from "../../components/EntityIcon";
 import { CoverArea } from "./CoverArea";
 import { PageLayout } from "./PageLayout";
-import { ArrowUpRight, CaseSensitive, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus, Star } from "lucide-react";
+import { ArrowUpRight, CaseSensitive, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus } from "lucide-react";
 import { useDatabaseCache } from "../../context/database-cache";
 import { ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { pluginHost } from "../../plugin-host";
-
-// The favorite toggle uses Lucide's Star — filled when active so the
-// gold "favorited" state is unambiguous without changing icon shape.
-function StarIcon({ filled }: { filled: boolean }) {
-  return (
-    <Star size={16} strokeWidth={1.8} fill={filled ? "currentColor" : "none"} />
-  );
-}
+import { FavoriteToggle } from "../../components/FavoriteToggle";
 
 interface PageEditorProps {
   page: PageDocument;
@@ -557,15 +550,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
         />
         <div className="page-action-bar" aria-label={t("page.actions")}>
           {onToggleFavorite && (
-            <button
-              type="button"
-              className={favorited ? "favorite-toggle on" : "favorite-toggle"}
-              onClick={onToggleFavorite}
-              title={favorited ? t("page.unfavorite") : t("page.favorite")}
-              aria-pressed={!!favorited}
-            >
-              <StarIcon filled={!!favorited} />
-            </button>
+            <FavoriteToggle favorited={favorited} onToggle={onToggleFavorite} />
           )}
           <div className="page-options-wrap">
             <button

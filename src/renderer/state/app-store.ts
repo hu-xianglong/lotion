@@ -48,7 +48,7 @@ export interface AppState {
   manifest?: SpaceManifest;
   pages: PageMeta[];
   databases: DatabaseSummary[];
-  /** Bookmarks (pages + row-pages) from manifest.favorites. */
+  /** Bookmarks (pages, databases, and row-pages) from manifest.favorites. */
   favorites: FavoriteItem[];
   /** Most-recent navigations, most-recent first. */
   recents: RecentItem[];

@@ -51,9 +51,10 @@ export interface WorkspaceMeta {
   updated_time: string;
 }
 
-/** A bookmark to a page or row-page. Order in the list is preserved. */
+/** A bookmark to a page, database, or row-page. Order is preserved. */
 export type FavoriteItem =
   | { type: "page"; id: ID }
+  | { type: "database"; id: ID }
   | { type: "row_page"; databaseId: ID; rowId: ID };
 
 /** Most-recently-visited entry. Mirrors FavoriteItem + databases. */

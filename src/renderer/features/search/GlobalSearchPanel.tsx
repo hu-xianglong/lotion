@@ -5,6 +5,7 @@ import type { Command } from "../../../shared/plugin-api";
 import type { DatabaseSummary, PageMeta, RecentItem } from "../../../shared/types";
 import { EntityIcon, type EntityKind } from "../../components/EntityIcon";
 import { useLotionActions, type LotionActions } from "../../context/lotion-actions";
+import { useI18n, type Locale } from "../../lib/i18n";
 import { useSettings } from "../../lib/settings";
 import { pluginHost } from "../../plugin-host";
 import { shortcutMap } from "../../../shared/shortcuts";
@@ -86,37 +87,121 @@ interface GlobalSearchPanelContentProps {
   onBackdropClick: () => void;
 }
 
-const GROUP_LABEL: Record<Kind, string> = {
-  page: "页面",
-  database: "数据库",
-  row: "页面",
-  rowPage: "页面"
-};
 const DEFAULT_VISIBLE_HITS = 100;
 const LARGE_RESULT_THRESHOLD = 250;
-const MATCH_FILTERS: Array<{ id: MatchFilter; label: string }> = [
-  { id: "all", label: "全部" },
-  { id: "title", label: "标题" },
-  { id: "content", label: "正文/字段" },
-  { id: "reference", label: "引用" },
-  { id: "database", label: "数据库" },
-  { id: "command", label: "命令" }
-];
+const SEARCH_MATCH_TYPE_ORDER: SearchMatchType[] = ["title", "content", "reference", "database"];
+const SEARCH_COPY = {
+  en: {
+    groupLabel: { page: "Page", database: "Database", row: "Page", rowPage: "Page" },
+    matchFilters: [
+      { id: "all", label: "All" },
+      { id: "title", label: "Title" },
+      { id: "content", label: "Content / field" },
+      { id: "reference", label: "Reference" },
+      { id: "database", label: "Database" },
+      { id: "command", label: "Command" }
+    ],
+    searchSorts: [
+      { id: "relevance", label: "Relevance" },
+      { id: "updated_desc", label: "Updated: newest" },
+      { id: "updated_asc", label: "Updated: oldest" },
+      { id: "created_desc", label: "Created: newest" },
+      { id: "created_asc", label: "Created: oldest" }
+    ],
+    matchLabel: { title: "Title", content: "Content / field", reference: "Reference", database: "Database" },
+    inputAria: "Command palette: search pages, databases, row content, or run a command",
+    inputPlaceholder: "Search pages, databases, row content, commands…",
+    resultTypesAria: "Search result types",
+    sortLabel: "Sort",
+    sortAria: "Search sort",
+    loadMore: "Load more",
+    noMatches: "No matches.",
+    commandBadge: "Command",
+    recentBadge: "Recent",
+    tagBadge: "Tag",
+    page: "Page",
+    database: "Database",
+    tagPage: "Tag page",
+    builtIn: "Built-in",
+    untitled: "Untitled",
+    untitledDatabase: "Untitled database",
+    builtInCommandTitle: {
+      "lotion.new-page": "New page",
+      "lotion.new-database": "New database",
+      "lotion.open-pages": "Open all pages",
+      "lotion.open-databases": "Open all databases",
+      "lotion.open-recent": "Open recent",
+      "lotion.open-favorites": "Open favorites",
+      "lotion.open-plugins": "Open plugins",
+      "lotion.open-settings": "Open settings",
+      "lotion.open-sidebar-settings": "Open sidebar settings",
+      "lotion.toggle-vim-mode": "Toggle Vim mode",
+      "lotion.toggle-raw-markdown": "Toggle raw Markdown",
+      "lotion.toggle-embed-source": "Toggle embed source",
+      "lotion.toggle-favorite": "Toggle favorite for current item",
+      "lotion.toggle-full-width": "Toggle full width for current page",
+      "lotion.toggle-small-text": "Toggle small text for current page",
+      "lotion.open-current-in-new-window": "Open current item in new window"
+    }
+  },
+  zh: {
+    groupLabel: { page: "页面", database: "数据库", row: "页面", rowPage: "页面" },
+    matchFilters: [
+      { id: "all", label: "全部" },
+      { id: "title", label: "标题" },
+      { id: "content", label: "正文/字段" },
+      { id: "reference", label: "引用" },
+      { id: "database", label: "数据库" },
+      { id: "command", label: "命令" }
+    ],
+    searchSorts: [
+      { id: "relevance", label: "相关性" },
+      { id: "updated_desc", label: "更新：新到旧" },
+      { id: "updated_asc", label: "更新：旧到新" },
+      { id: "created_desc", label: "创建：新到旧" },
+      { id: "created_asc", label: "创建：旧到新" }
+    ],
+    matchLabel: { title: "标题", content: "正文/字段", reference: "引用", database: "数据库" },
+    inputAria: "命令面板：搜索页面、数据库、行内容或执行命令",
+    inputPlaceholder: "搜索页面、数据库、行内容、命令…",
+    resultTypesAria: "搜索结果类型",
+    sortLabel: "排序",
+    sortAria: "搜索排序",
+    loadMore: "加载更多",
+    noMatches: "没有匹配。",
+    commandBadge: "命令",
+    recentBadge: "最近",
+    tagBadge: "标签",
+    page: "页面",
+    database: "数据库",
+    tagPage: "标签页",
+    builtIn: "内置",
+    untitled: "（无标题）",
+    untitledDatabase: "未命名数据库",
+    builtInCommandTitle: {
+      "lotion.new-page": "新建页面",
+      "lotion.new-database": "新建数据库",
+      "lotion.open-pages": "打开所有页面",
+      "lotion.open-databases": "打开所有数据库",
+      "lotion.open-recent": "打开最近访问",
+      "lotion.open-favorites": "打开收藏",
+      "lotion.open-plugins": "打开插件",
+      "lotion.open-settings": "打开设置中心",
+      "lotion.open-sidebar-settings": "打开侧栏设置",
+      "lotion.toggle-vim-mode": "切换 Vim 模式",
+      "lotion.toggle-raw-markdown": "切换原文模式",
+      "lotion.toggle-embed-source": "切换嵌入源码显示",
+      "lotion.toggle-favorite": "收藏/取消收藏当前内容",
+      "lotion.toggle-full-width": "切换当前页面全宽",
+      "lotion.toggle-small-text": "切换当前页面小字号",
+      "lotion.open-current-in-new-window": "在新窗口打开当前项目"
+    }
+  }
+} as const;
 
-const SEARCH_SORTS: Array<{ id: SearchSortMode; label: string }> = [
-  { id: "relevance", label: "相关性" },
-  { id: "updated_desc", label: "更新：新到旧" },
-  { id: "updated_asc", label: "更新：旧到新" },
-  { id: "created_desc", label: "创建：新到旧" },
-  { id: "created_asc", label: "创建：旧到新" }
-];
-
-const MATCH_LABEL: Record<SearchMatchType, string> = {
-  title: "标题",
-  content: "正文/字段",
-  reference: "引用",
-  database: "数据库"
-};
+function searchCopy(locale: Locale) {
+  return SEARCH_COPY[locale];
+}
 
 /**
  * Cmd+Shift+F global search. Debounced query → main process ripgrep
@@ -125,8 +210,9 @@ const MATCH_LABEL: Record<SearchMatchType, string> = {
  */
 export function GlobalSearchPanel({ pages, databases, recents, initialPattern = "", onClose }: GlobalSearchPanelProps) {
   const actions = useLotionActions();
+  const { locale } = useI18n();
   const { shortcutOverrides } = useSettings();
-  const commandIndex = useMemo(() => buildCommandIndex(actions), [actions]);
+  const commandIndex = useMemo(() => buildCommandIndex(actions, locale), [actions, locale]);
   const shortcutsById = useMemo(() => shortcutMap(shortcutOverrides), [shortcutOverrides]);
   const [pattern, setPattern] = useState(initialPattern);
   const [settledPattern, setSettledPattern] = useState("");
@@ -209,8 +295,8 @@ export function GlobalSearchPanel({ pages, databases, recents, initialPattern = 
 
   const typeCounts = useMemo(() => countMatchTypes(result.hits), [result.hits]);
   const recentHits = useMemo(
-    () => trimmedPattern ? [] : buildRecentSearchHits(recents, pages, databases),
-    [databases, pages, recents, trimmedPattern]
+    () => trimmedPattern ? [] : buildRecentSearchHits(recents, pages, databases, locale),
+    [databases, locale, pages, recents, trimmedPattern]
   );
   const commandHits = useMemo(
     () => searchCommands(commandIndex, activePattern, shortcutsById),
@@ -429,6 +515,8 @@ export function GlobalSearchPanelContent({
   onLoadMore,
   onBackdropClick
 }: GlobalSearchPanelContentProps) {
+  const { locale } = useI18n();
+  const copy = searchCopy(locale);
   const progress = searchProgressState({
     commandHitsLength,
     filteredItemsLength,
@@ -439,22 +527,22 @@ export function GlobalSearchPanelContent({
     tagHitsLength,
     totalSearchHitCount,
     trimmedPattern
-  });
+  }, locale);
   return (
     <div className="dialog-backdrop" onClick={onBackdropClick}>
       <div className="dialog global-search" onClick={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           className="global-search-input"
-          aria-label="命令面板：搜索页面、数据库、行内容或执行命令"
+          aria-label={copy.inputAria}
           value={pattern}
-          placeholder="搜索页面、数据库、行内容、命令…"
+          placeholder={copy.inputPlaceholder}
           onChange={(e) => onPatternChange(e.target.value)}
           onKeyDown={onKeyDown}
         />
         {trimmedPattern && (
-          <div className="global-search-filters" role="group" aria-label="搜索结果类型">
-            {MATCH_FILTERS.map((filter) => {
+          <div className="global-search-filters" role="group" aria-label={copy.resultTypesAria}>
+            {copy.matchFilters.map((filter) => {
               const count = filter.id === "all"
                 ? totalSearchHitCount + commandHitsLength + tagHitsLength
                 : filter.id === "command"
@@ -473,13 +561,13 @@ export function GlobalSearchPanelContent({
               );
             })}
             <label className="global-search-sort-control">
-              <span>排序</span>
+              <span>{copy.sortLabel}</span>
               <select
-                aria-label="搜索排序"
+                aria-label={copy.sortAria}
                 value={activeSortMode}
                 onChange={(event) => onSelectSortMode(event.currentTarget.value as SearchSortMode)}
               >
-                {SEARCH_SORTS.map((sort) => (
+                {copy.searchSorts.map((sort) => (
                   <option key={sort.id} value={sort.id}>{sort.label}</option>
                 ))}
               </select>
@@ -531,22 +619,22 @@ export function GlobalSearchPanelContent({
               >
                 {item.type === "command" ? (
                   <>
-                    <div className="global-search-label">{renderCommandLabel(item.commandHit)}</div>
+                    <div className="global-search-label">{renderCommandLabel(item.commandHit, locale)}</div>
                     <div className="global-search-preview">{renderCommandText(item.commandHit)}</div>
                   </>
                 ) : item.type === "recent" ? (
                   <>
-                    <div className="global-search-label">{renderRecentLabel(item.recentHit)}</div>
+                    <div className="global-search-label">{renderRecentLabel(item.recentHit, locale)}</div>
                     <div className="global-search-preview">{item.recentHit.subtitle}</div>
                   </>
                 ) : item.type === "tag" ? (
                   <>
-                    <div className="global-search-label">{renderTagLabel(item.tagHit)}</div>
-                    <div className="global-search-preview">{renderTagText(item.tagHit)}</div>
+                    <div className="global-search-label">{renderTagLabel(item.tagHit, locale)}</div>
+                    <div className="global-search-preview">{renderTagText(item.tagHit, locale)}</div>
                   </>
                 ) : (
                   <>
-                    <div className="global-search-label">{renderLabel(item.hit)}</div>
+                    <div className="global-search-label">{renderLabel(item.hit, locale)}</div>
                     {item.hit.entityPath && <div className="global-search-path">{item.hit.entityPath}</div>}
                     {item.hit.kind !== "database" && (
                       <div className="global-search-preview">{renderText(item.hit)}</div>
@@ -562,11 +650,11 @@ export function GlobalSearchPanelContent({
               className="global-search-more"
               onClick={onLoadMore}
             >
-              加载更多
+              {copy.loadMore}
             </button>
           )}
           {!loading && trimmedPattern && flatItems.length === 0 && (
-            <div className="global-search-empty">没有匹配。</div>
+            <div className="global-search-empty">{copy.noMatches}</div>
           )}
         </div>
       </div>
@@ -600,30 +688,40 @@ function searchProgressState({
   tagHitsLength: number;
   totalSearchHitCount: number;
   trimmedPattern: string;
-}): { detail: string; label: string; percent: string; state: "empty" | "loading" | "partial" | "complete" | "recent" } {
+}, locale: Locale): { detail: string; label: string; percent: string; state: "empty" | "loading" | "partial" | "complete" | "recent" } {
+  const isZh = locale === "zh";
   if (!trimmedPattern) {
     return flatItemsLength > 0
       ? {
         state: "recent",
-        label: "最近访问、标签和命令",
-        detail: `Enter 打开页面、标签或执行命令 · 标签 ${tagHitsLength} 个 · 命令 ${commandHitsLength} 条`,
+        label: isZh ? "最近访问、标签和命令" : "Recent, tags, and commands",
+        detail: isZh
+          ? `Enter 打开页面、标签或执行命令 · 标签 ${tagHitsLength} 个 · 命令 ${commandHitsLength} 条`
+          : `Press Enter to open a page or tag, or run a command · ${tagHitsLength} tags · ${commandHitsLength} commands`,
         percent: "0%"
       }
-      : { state: "empty", label: "输入关键词搜索页面、数据库、行内容和命令。", detail: "", percent: "0%" };
+      : {
+        state: "empty",
+        label: isZh ? "输入关键词搜索页面、数据库、行内容和命令。" : "Search pages, databases, row content, and commands.",
+        detail: "",
+        percent: "0%"
+      };
   }
   if (loading) {
     return {
       state: "loading",
-      label: `搜索“${trimmedPattern}”…`,
-      detail: "正在匹配页面、数据库、正文和引用；输入框保持可编辑。",
+      label: isZh ? `搜索“${trimmedPattern}”…` : `Searching for “${trimmedPattern}”…`,
+      detail: isZh
+        ? "正在匹配页面、数据库、正文和引用；输入框保持可编辑。"
+        : "Matching pages, databases, content, and references. You can keep editing the query.",
       percent: "38%"
     };
   }
   if (filteredItemsLength === 0) {
     return {
       state: "empty",
-      label: "没有匹配。",
-      detail: "尝试更短的关键词，或切换结果类型。",
+      label: isZh ? "没有匹配。" : "No matches.",
+      detail: isZh ? "尝试更短的关键词，或切换结果类型。" : "Try a shorter query or switch the result type.",
       percent: "100%"
     };
   }
@@ -635,24 +733,32 @@ function searchProgressState({
     const hidden = Math.max(filteredItemsLength - flatItemsLength, 0);
     return {
       state: "partial",
-      label: `显示 ${visible}/${total} 个结果`,
+      label: isZh ? `显示 ${visible}/${total} 个结果` : `Showing ${visible} of ${total} results`,
       detail: resultTruncated
-        ? `结果已截断；当前只挂载 ${visible} 条，缩小关键词可继续定位。`
+        ? (isZh
+          ? `结果已截断；当前只挂载 ${visible} 条，缩小关键词可继续定位。`
+          : `Results were truncated. ${visible} are mounted; narrow the query to keep searching.`)
         : hidden > 0
-          ? `还有 ${hidden} 条未挂载，加载更多前输入和方向键仍保持响应。`
-          : `结果较多，已完成整理；标签 ${tagHitsLength} 个，命令 ${commandHitsLength} 条，搜索命中 ${totalSearchHitCount} 条。`,
+          ? (isZh
+            ? `还有 ${hidden} 条未挂载，加载更多前输入和方向键仍保持响应。`
+            : `${hidden} more results are not mounted. Typing and arrow keys remain responsive.`)
+          : (isZh
+            ? `结果较多，已完成整理；标签 ${tagHitsLength} 个，命令 ${commandHitsLength} 条，搜索命中 ${totalSearchHitCount} 条。`
+            : `Results organized: ${tagHitsLength} tags, ${commandHitsLength} commands, ${totalSearchHitCount} search hits.`),
       percent
     };
   }
   return {
     state: "complete",
-    label: `显示 ${visible}/${filteredItemsLength} 个结果`,
-    detail: `搜索完成；标签 ${tagHitsLength} 个，命令 ${commandHitsLength} 条，搜索命中 ${totalSearchHitCount} 条。`,
+    label: isZh ? `显示 ${visible}/${filteredItemsLength} 个结果` : `Showing ${visible} of ${filteredItemsLength} results`,
+    detail: isZh
+      ? `搜索完成；标签 ${tagHitsLength} 个，命令 ${commandHitsLength} 条，搜索命中 ${totalSearchHitCount} 条。`
+      : `Search complete: ${tagHitsLength} tags, ${commandHitsLength} commands, ${totalSearchHitCount} search hits.`,
     percent: "100%"
   };
 }
 
-function buildCommandIndex(actions: LotionActions): CommandSearchEntry[] {
+function buildCommandIndex(actions: LotionActions, locale: Locale): CommandSearchEntry[] {
   const inspection = pluginHost.inspect();
   const sourceByCommandId = new Map(
     inspection.commands.map((command) => [command.id, command.sourcePluginId])
@@ -666,106 +772,108 @@ function buildCommandIndex(actions: LotionActions): CommandSearchEntry[] {
     };
   });
   return [
-    ...buildBuiltinCommandIndex(actions),
+    ...buildBuiltinCommandIndex(actions, locale),
     ...pluginCommands
   ];
 }
 
-function buildBuiltinCommandIndex(actions: LotionActions): CommandSearchEntry[] {
+function buildBuiltinCommandIndex(actions: LotionActions, locale: Locale): CommandSearchEntry[] {
+  const copy = searchCopy(locale);
+  const titles = copy.builtInCommandTitle;
   const commands: Command[] = [
     {
       id: "lotion.new-page",
-      title: "新建页面",
+      title: titles["lotion.new-page"],
       category: "Lotion",
       run: () => actions.createPage()
     },
     {
       id: "lotion.new-database",
-      title: "新建数据库",
+      title: titles["lotion.new-database"],
       category: "Lotion",
       run: () => actions.createDatabase()
     },
     {
       id: "lotion.open-pages",
-      title: "打开所有页面",
+      title: titles["lotion.open-pages"],
       category: "Lotion",
       run: () => actions.openManage("pages")
     },
     {
       id: "lotion.open-databases",
-      title: "打开所有数据库",
+      title: titles["lotion.open-databases"],
       category: "Lotion",
       run: () => actions.openManage("databases")
     },
     {
       id: "lotion.open-recent",
-      title: "打开最近访问",
+      title: titles["lotion.open-recent"],
       category: "Lotion",
       run: () => actions.openManage("recent")
     },
     {
       id: "lotion.open-favorites",
-      title: "打开收藏",
+      title: titles["lotion.open-favorites"],
       category: "Lotion",
       run: () => actions.openManage("favorites")
     },
     {
       id: "lotion.open-plugins",
-      title: "打开插件",
+      title: titles["lotion.open-plugins"],
       category: "Lotion",
       run: () => actions.openManage("plugins")
     },
     {
       id: "lotion.open-settings",
-      title: "打开设置中心",
+      title: titles["lotion.open-settings"],
       category: "Lotion",
       run: () => actions.openManage("settings")
     },
     {
       id: "lotion.open-sidebar-settings",
-      title: "打开侧栏设置",
+      title: titles["lotion.open-sidebar-settings"],
       category: "Lotion",
       run: () => actions.openSidebarSettings()
     },
     {
       id: "lotion.toggle-vim-mode",
-      title: "切换 Vim 模式",
+      title: titles["lotion.toggle-vim-mode"],
       category: "Lotion",
       run: () => actions.toggleVimMode()
     },
     {
       id: "lotion.toggle-raw-markdown",
-      title: "切换原文模式",
+      title: titles["lotion.toggle-raw-markdown"],
       category: "Lotion",
       run: () => actions.toggleRawMarkdownMode()
     },
     {
       id: "lotion.toggle-embed-source",
-      title: "切换嵌入源码显示",
+      title: titles["lotion.toggle-embed-source"],
       category: "Lotion",
       run: () => actions.toggleEmbedSourceVisibility()
     },
     {
       id: "lotion.toggle-favorite",
-      title: "收藏/取消收藏当前页面",
+      title: titles["lotion.toggle-favorite"],
       category: "Lotion",
       run: () => actions.toggleFavoriteCurrent()
     },
     {
       id: "lotion.toggle-full-width",
-      title: "切换当前页面全宽",
+      title: titles["lotion.toggle-full-width"],
       category: "Lotion",
       run: () => actions.toggleFullWidthCurrent()
     },
     {
       id: "lotion.toggle-small-text",
-      title: "切换当前页面小字号",
+      title: titles["lotion.toggle-small-text"],
       category: "Lotion",
       run: () => actions.toggleSmallTextCurrent()
     },
     {
       id: "lotion.open-current-in-new-window",
-      title: "在新窗口打开当前项目",
+      title: titles["lotion.open-current-in-new-window"],
       category: "Lotion",
       run: () => actions.openActiveInNewWindow()
     }
@@ -773,15 +881,17 @@ function buildBuiltinCommandIndex(actions: LotionActions): CommandSearchEntry[] 
 
   return commands.map((command) => ({
     command,
-    sourceName: "内置"
+    sourceName: copy.builtIn
   }));
 }
 
 function buildRecentSearchHits(
   recents: RecentItem[],
   pages: PageMeta[],
-  databases: DatabaseSummary[]
+  databases: DatabaseSummary[],
+  locale: Locale
 ): RecentSearchHit[] {
+  const copy = searchCopy(locale);
   const pagesById = new Map(pages.map((page) => [page.id, page]));
   const databasesById = new Map(databases.map((database) => [database.id, database]));
   return recents.map((recent) => {
@@ -789,8 +899,8 @@ function buildRecentSearchHits(
       const page = pagesById.get(recent.id);
       return {
         recent,
-        title: page?.title || "（无标题）",
-        subtitle: recentSubtitle("页面", page?.path),
+        title: page?.title || copy.untitled,
+        subtitle: recentSubtitle(copy.page, page?.path),
         kind: "page",
         icon: page?.icon
       };
@@ -799,8 +909,8 @@ function buildRecentSearchHits(
       const database = databasesById.get(recent.id);
       return {
         recent,
-        title: database?.name || "Untitled database",
-        subtitle: recentSubtitle("数据库", database?.path),
+        title: database?.name || copy.untitledDatabase,
+        subtitle: recentSubtitle(copy.database, database?.path),
         kind: "database",
         icon: database?.icon
       };
@@ -808,8 +918,8 @@ function buildRecentSearchHits(
     const database = databasesById.get(recent.databaseId);
     return {
       recent,
-      title: recent.title || "（无标题）",
-      subtitle: recentSubtitle(database ? `页面 · ${database.name}` : "页面", database?.path),
+      title: recent.title || copy.untitled,
+      subtitle: recentSubtitle(database ? `${copy.page} · ${database.name}` : copy.page, database?.path),
       kind: "row_page",
       icon: recent.icon
     };
@@ -957,10 +1067,11 @@ function scoreCommand(command: Command, query: string): number {
   return 0;
 }
 
-function renderCommandLabel(hit: CommandSearchHit): React.ReactNode {
+function renderCommandLabel(hit: CommandSearchHit, locale: Locale): React.ReactNode {
+  const copy = searchCopy(locale);
   return (
     <>
-      <span className="gs-kind-badge command">命令</span>
+      <span className="gs-kind-badge command">{copy.commandBadge}</span>
       <span className="gs-command-icon">⌘</span>
       <span className="gs-title">{hit.command.title}</span>
       {hit.shortcutLabel && <span className="gs-shortcut-label">{hit.shortcutLabel}</span>}
@@ -983,29 +1094,34 @@ function renderCommandText(hit: CommandSearchHit): string {
     .join(" · ");
 }
 
-function renderRecentLabel(hit: RecentSearchHit): React.ReactNode {
+function renderRecentLabel(hit: RecentSearchHit, locale: Locale): React.ReactNode {
+  const copy = searchCopy(locale);
   return (
     <>
-      <span className="gs-kind-badge recent">最近</span>
+      <span className="gs-kind-badge recent">{copy.recentBadge}</span>
       <EntityIcon kind={hit.kind} icon={hit.icon} size={16} className="gs-entity-icon" />
       <span className="gs-title">{hit.title}</span>
     </>
   );
 }
 
-function renderTagLabel(hit: TagSearchHit): React.ReactNode {
+function renderTagLabel(hit: TagSearchHit, locale: Locale): React.ReactNode {
+  const copy = searchCopy(locale);
   return (
     <>
-      <span className="gs-kind-badge tag">标签</span>
+      <span className="gs-kind-badge tag">{copy.tagBadge}</span>
       <span className="gs-tag-icon">#</span>
       <span className="gs-title">{hit.title}</span>
-      <span className="gs-context">{hit.count} 个项目</span>
+      <span className="gs-context">{locale === "zh" ? `${hit.count} 个项目` : `${hit.count} items`}</span>
     </>
   );
 }
 
-function renderTagText(hit: TagSearchHit): string {
-  return `标签页 · ${hit.count} 个项目 · 页面 ${hit.pageCount} · 数据库 ${hit.databaseCount}`;
+function renderTagText(hit: TagSearchHit, locale: Locale): string {
+  const copy = searchCopy(locale);
+  return locale === "zh"
+    ? `${copy.tagPage} · ${hit.count} 个项目 · ${copy.page} ${hit.pageCount} · ${copy.database} ${hit.databaseCount}`
+    : `${copy.tagPage} · ${hit.count} items · ${hit.pageCount} pages · ${hit.databaseCount} databases`;
 }
 
 function searchItemKey(item: SearchPanelItem, index: number): string {
@@ -1020,13 +1136,14 @@ function searchItemKey(item: SearchPanelItem, index: number): string {
   return `${item.hit.kind}-${item.hit.path}-${item.hit.line}-${index}`;
 }
 
-function renderLabel(hit: SearchHit): React.ReactNode {
+function renderLabel(hit: SearchHit, locale: Locale): React.ReactNode {
+  const copy = searchCopy(locale);
   switch (hit.kind) {
     case "page":
       return (
         <>
-          <KindBadge kind={hit.kind} />
-          <MatchTypeBadge hit={hit} />
+          <KindBadge kind={hit.kind} locale={locale} />
+          <MatchTypeBadge hit={hit} locale={locale} />
           <EntityIcon kind={iconKind(hit)} icon={hit.icon} size={16} className="gs-entity-icon" />
           {hit.databaseName && (
             <>
@@ -1040,8 +1157,8 @@ function renderLabel(hit: SearchHit): React.ReactNode {
     case "database":
       return (
         <>
-          <KindBadge kind={hit.kind} />
-          <MatchTypeBadge hit={hit} />
+          <KindBadge kind={hit.kind} locale={locale} />
+          <MatchTypeBadge hit={hit} locale={locale} />
           <EntityIcon kind="database" icon={hit.icon} size={16} className="gs-entity-icon" />
           <span className="gs-title">{hit.databaseName}</span>
         </>
@@ -1049,19 +1166,19 @@ function renderLabel(hit: SearchHit): React.ReactNode {
     case "row":
       return (
         <>
-          <KindBadge kind={hit.kind} />
-          <MatchTypeBadge hit={hit} />
+          <KindBadge kind={hit.kind} locale={locale} />
+          <MatchTypeBadge hit={hit} locale={locale} />
           <EntityIcon kind="row_page" icon={hit.icon} size={16} className="gs-entity-icon" />
           <span className="gs-context">{hit.databaseName}</span>
           <span className="gs-sep">·</span>
-          <span className="gs-title">{hit.rowTitle || "（无标题）"}</span>
+          <span className="gs-title">{hit.rowTitle || copy.untitled}</span>
         </>
       );
     case "rowPage":
       return (
         <>
-          <KindBadge kind={hit.kind} />
-          <MatchTypeBadge hit={hit} />
+          <KindBadge kind={hit.kind} locale={locale} />
+          <MatchTypeBadge hit={hit} locale={locale} />
           <EntityIcon kind="row_page" icon={hit.icon} size={16} className="gs-entity-icon" />
           <span className="gs-context">{hit.databaseName}</span>
           <span className="gs-sep">·</span>
@@ -1071,13 +1188,13 @@ function renderLabel(hit: SearchHit): React.ReactNode {
   }
 }
 
-function KindBadge({ kind }: { kind: Kind }) {
-  return <span className="gs-kind-badge">{GROUP_LABEL[kind]}</span>;
+function KindBadge({ kind, locale }: { kind: Kind; locale: Locale }) {
+  return <span className="gs-kind-badge">{searchCopy(locale).groupLabel[kind]}</span>;
 }
 
-function MatchTypeBadge({ hit }: { hit: SearchHit }) {
+function MatchTypeBadge({ hit, locale }: { hit: SearchHit; locale: Locale }) {
   const matchType = hitPrimaryMatchType(hit);
-  return <span className={`gs-match-badge ${matchType}`}>{MATCH_LABEL[matchType]}</span>;
+  return <span className={`gs-match-badge ${matchType}`}>{searchCopy(locale).matchLabel[matchType]}</span>;
 }
 
 function iconKind(hit: SearchHit): EntityKind {
@@ -1142,7 +1259,5 @@ function isSearchMatchType(value: unknown): value is SearchMatchType {
 
 function orderHitMatchTypes(types: SearchMatchType[]): SearchMatchType[] {
   const seen = new Set(types);
-  return MATCH_FILTERS
-    .map((filter) => filter.id)
-    .filter((type): type is SearchMatchType => isSearchMatchType(type) && seen.has(type));
+  return SEARCH_MATCH_TYPE_ORDER.filter((type) => seen.has(type));
 }

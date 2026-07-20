@@ -135,9 +135,10 @@ export interface LotionCustomerApi {
     backlinks(id: string): Promise<EntityBacklink[]>;
   };
   notion: {
-    scan(folderPath: string): Promise<NotionScanResult>;
+    scan(sourcePaths: string | string[]): Promise<NotionScanResult>;
     runImport(payload: {
-      sourcePath: string;
+      sourcePath?: string;
+      sourcePaths?: string[];
       targetPath: string;
       force?: boolean;
       options?: NotionImportOptions;
@@ -228,9 +229,9 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
       backlinks: (id) => entities.backlinks(id)
     },
     notion: {
-      scan: (folderPath) => notion.scan(folderPath),
+      scan: (sourcePaths) => notion.scan(sourcePaths),
       runImport: (payload) => notion.runImport(
-        payload.sourcePath,
+        payload.sourcePaths?.length ? payload.sourcePaths : payload.sourcePath ?? "",
         payload.targetPath,
         payload.force ?? false,
         payload.options,

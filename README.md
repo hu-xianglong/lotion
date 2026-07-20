@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="design/lotion-logo-inverse.svg">
+  <img src="design/lotion-logo.svg" width="88" height="88" alt="Lotion logo">
+</picture>
+
 # Lotion
 
 ### A local-first knowledge workspace with Notion-like editing and files you can keep.
@@ -173,6 +178,49 @@ To create a production build:
 npm run build
 npm start
 ```
+
+## Import from Notion
+
+For the best migration fidelity, export the same Notion workspace twice. The
+two exports complement each other:
+
+- **Markdown & CSV** supplies database schemas, properties, rows, and portable
+  Markdown pages.
+- **HTML** supplies richer page blocks, colors, callouts, icons, covers, and
+  embedded views.
+
+### 1. Export your Notion workspace
+
+1. Open Notion on desktop or the web, then go to **Settings → General**.
+2. Select **Export all workspace content**.
+3. Choose **Markdown & CSV**, start the export, and download the ZIP when
+   Notion sends the link.
+4. Repeat the export and choose **HTML**.
+5. Unzip the two downloads into separate folders. Do not combine or rearrange
+   their contents.
+
+See [Notion's workspace export guide](https://www.notion.com/help/back-up-your-data)
+if the export option is unavailable or the workspace is split into several
+`Export-…` archives.
+
+### 2. Import both exports into Lotion
+
+1. Start Lotion and choose **Import from Notion…** from the workspace menu. You
+   can also open **Plugins → Notion Import** from an existing workspace.
+2. For **Markdown & CSV export**, choose the extracted Markdown export folder.
+3. For **HTML export**, choose the extracted HTML export folder. Selecting only
+   one export is supported, but selecting both gives the best result.
+4. Select **Review selected exports** and check the detected page, database,
+   row, and attachment counts.
+5. Select **Choose target & import…**, then choose a new empty folder for the
+   Lotion workspace. The currently open workspace is not modified.
+6. When the import finishes, review the generated **Import report** and
+   **Import review** database for skipped, duplicate, or ambiguous items.
+
+Lotion matches the two exports using stable Notion IDs. Same-name pages and
+databases do not overwrite each other. With the default audit option enabled,
+the original export is also retained under `attachments/original/` inside the
+new workspace.
 
 ## Quality Gates
 

@@ -12,11 +12,13 @@ import {
   captureElementSnapshot,
   forEachViewport,
   openPage,
+  setLotionLocale,
   selectedViewports,
   withLotionUIHarness
 } from "./ui-harness.mjs";
 
 const result = await withLotionUIHarness("llm-chat-ui", async ({ artifactRoot, cdpUrl, openWorkspace, page }) => {
+  await setLotionLocale(page, "zh");
   const viewports = [];
   const expectedViewports = selectedViewports();
   await forEachViewport(page, expectedViewports, async (viewport) => {

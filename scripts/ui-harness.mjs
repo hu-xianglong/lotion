@@ -189,6 +189,17 @@ export async function reloadRendererPage(page) {
   }
 }
 
+export async function setLotionLocale(page, locale) {
+  if (locale !== "en" && locale !== "zh") throw new Error(`Unsupported Lotion locale: ${locale}`);
+  await page.evaluate((nextLocale) => window.localStorage.setItem("lotion.locale", nextLocale), locale);
+  await reloadRendererPage(page);
+  await page.waitForFunction(
+    (nextLocale) => document.documentElement.lang === (nextLocale === "zh" ? "zh-Hans" : "en"),
+    locale,
+    { timeout: 8_000 }
+  );
+}
+
 function isIgnorableReloadNavigationError(error) {
   const message = String(error?.message || error || "");
   if (!message.includes("page.reload")) return false;

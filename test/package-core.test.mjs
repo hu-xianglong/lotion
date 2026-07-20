@@ -914,8 +914,22 @@ test("workspace, page, pages database, and entity services persist core workspac
     assert.deepEqual(await workspace.listFavorites(), [{ type: "page", id: "pg_missing" }]);
     await workspace.toggleFavorite({ type: "page", id: "pg_missing" });
     assert.deepEqual(await workspace.listFavorites(), []);
+    await workspace.toggleFavorite({ type: "database", id: "db_b" });
     await workspace.toggleFavorite({ type: "row_page", databaseId: "db_b", rowId: "row_1" });
-    assert.equal((await workspace.listFavorites())[0].rowId, "row_1");
+    assert.deepEqual(await workspace.listFavorites(), [
+      { type: "database", id: "db_b" },
+      { type: "row_page", databaseId: "db_b", rowId: "row_1" }
+    ]);
+    const reopenedWorkspace = new WorkspaceService(config);
+    await reopenedWorkspace.open(workspaceRoot);
+    assert.deepEqual(await reopenedWorkspace.listFavorites(), [
+      { type: "database", id: "db_b" },
+      { type: "row_page", databaseId: "db_b", rowId: "row_1" }
+    ]);
+    await workspace.toggleFavorite({ type: "database", id: "db_b" });
+    assert.deepEqual(await workspace.listFavorites(), [
+      { type: "row_page", databaseId: "db_b", rowId: "row_1" }
+    ]);
 
     await workspace.pushRecent({ type: "database", id: "db_b" });
     await workspace.pushRecent({ type: "database", id: "db_b" });

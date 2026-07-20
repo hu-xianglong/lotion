@@ -18,3 +18,4 @@ samples/demo-space/databases/**/*db_rows_500k/data.csv
 
 .scratch/
 artifacts/
+marketing/video/.build/

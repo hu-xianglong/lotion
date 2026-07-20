@@ -12,6 +12,7 @@ import {
   assertNoDocumentHorizontalOverflow,
   captureElementSnapshot,
   forEachViewport,
+  setLotionLocale,
   selectedViewports,
   withLotionUIHarness
 } from "./ui-harness.mjs";
@@ -23,6 +24,7 @@ const backendThresholdMs = Number(process.env.LOTION_SEARCH_BACKEND_THRESHOLD_MS
 const inputThresholdMs = Number(process.env.LOTION_SEARCH_INPUT_KEY_THRESHOLD_MS ?? 80);
 
 const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cdpUrl, openWorkspace, page }) => {
+  await setLotionLocale(page, "zh");
   const viewports = [];
   const expectedViewports = selectedViewports();
   await forEachViewport(page, expectedViewports, async (viewport) => {
