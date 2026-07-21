@@ -52,9 +52,12 @@ import { useLotionViewBridge } from "./useLotionViewBridge";
 import {
   applySlashCommandTemplate,
   BASE_SLASH_COMMANDS,
+  createChildPageInput,
   createDatabaseSlashCommands,
-  createPageSlashCommands
+  createPageSlashCommands,
+  type SlashPageParent
 } from "../../../shared/slash-commands";
+import { useI18n } from "../../lib/i18n";
 import type { DatabaseSummary, PageMeta } from "../../../shared/types";
 
 declare global {
@@ -80,6 +83,7 @@ interface CodeMirrorMarkdownEditorProps {
    *  custom icon inside inline link widgets. */
   pages?: PageMeta[];
   databases?: DatabaseSummary[];
+  currentPage?: SlashPageParent;
 }
 
 export interface CodeMirrorMarkdownEditorHandle {
@@ -111,7 +115,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
   navigationAnchorKey,
   onViewStateChange,
   pages,
-  databases
+  databases,
+  currentPage
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -127,6 +132,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
   const slashStateRef = useRef<((next: SlashState) => void) | null>(null);
   slashStateRef.current = setSlash;
   const { vimMode, rawMarkdown, showEmbedSource } = useSettings();
+  const { t } = useI18n();
   const actions = useLotionActions();
   const lotionViewBridge = useLotionViewBridge();
   const slashCommands = useMemo(
@@ -431,6 +437,35 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
           onPick={(cmd) => {
             const view = viewRef.current;
             if (!view) return;
+            if (cmd.id === "new-page" && currentPage) {
+              setSlash({ open: false });
+              void (async () => {
+                try {
+                  const page = await actions.createPage(
+                    createChildPageInput(currentPage, t("common.untitled")),
+                    { open: false }
+                  );
+                  const linkCommand = createPageSlashCommands([page.meta])[0];
+                  if (!linkCommand || !viewRef.current) return;
+                  const edit = applySlashCommandTemplate({
+                    doc: view.state.doc.toString(),
+                    lineFrom: slash.lineFrom!,
+                    slashFrom: slash.slashPos!,
+                    slashTo: slash.endPos!,
+                    command: linkCommand
+                  });
+                  view.dispatch({
+                    changes: { from: edit.from, to: edit.to, insert: edit.insert },
+                    selection: { anchor: edit.cursor }
+                  });
+                  await actions.selectPage(page.meta.id);
+                } catch (error) {
+                  console.error("[lotion] failed to create page from slash command:", error);
+                  view.focus();
+                }
+              })();
+              return;
+            }
             const edit = applySlashCommandTemplate({
               doc: view.state.doc.toString(),
               lineFrom: slash.lineFrom!,

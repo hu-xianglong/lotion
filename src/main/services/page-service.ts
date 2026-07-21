@@ -52,7 +52,7 @@ export class PageService {
         path,
         ...(input.parentId ? { parentId: input.parentId, parentKind } : {})
       },
-      markdown: `# ${title}\n\nStart writing here.`
+      markdown: ""
     };
 
     const paths = this.workspace.requirePaths();

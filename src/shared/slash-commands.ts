@@ -1,4 +1,5 @@
 import { PAGES_DATABASE_ID } from "./constants.js";
+import type { CreatePageInput } from "./types.js";
 import { pageMarkdownFileName, rowPagesWorkspacePath } from "./workspace-paths.js";
 
 export type SlashCommandPlacement = "inline" | "line";
@@ -44,8 +45,25 @@ export interface SlashTemplateEdit {
   cursor: number;
 }
 
+export interface SlashPageParent {
+  id: string;
+  kind: "page" | "row";
+  title: string;
+  path?: string[];
+}
+
 export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { id: "text", label: "Text", hint: "普通文本", group: "Basic", iconId: "text", aliases: ["paragraph", "正文", "文本", "普通文本"], template: "|", placement: "inline" },
+  {
+    id: "new-page",
+    label: "Page",
+    hint: "Create a new page",
+    group: "Basic",
+    iconId: "page",
+    aliases: ["page", "new page", "create a new page", "child page", "subpage", "页面", "新页面", "子页面", "创建页面"],
+    template: "",
+    placement: "inline"
+  },
   { id: "h1", label: "Heading 1", hint: "大标题", group: "Basic", iconId: "h1", aliases: ["title", "标题", "一级标题", "大标题"], template: "# |", placement: "line" },
   { id: "h2", label: "Heading 2", hint: "中标题", group: "Basic", iconId: "h2", aliases: ["subtitle", "标题", "二级标题", "中标题"], template: "## |", placement: "line" },
   { id: "h3", label: "Heading 3", hint: "小标题", group: "Basic", iconId: "h3", aliases: ["标题", "三级标题", "小标题"], template: "### |", placement: "line" },
@@ -208,6 +226,18 @@ export function createPageSlashCommands(pages: Array<{ id: string; title: string
       placement: "inline"
     };
   });
+}
+
+export function createChildPageInput(parent: SlashPageParent, title: string): CreatePageInput {
+  const normalizedTitle = title.trim() || "Untitled";
+  const parentPath = (parent.path ?? []).map((segment) => segment.trim()).filter(Boolean);
+  if (parentPath.length === 0 && parent.title.trim()) parentPath.push(parent.title.trim());
+  return {
+    title: normalizedTitle,
+    parentId: parent.id,
+    parentKind: parent.kind,
+    path: [...parentPath, normalizedTitle]
+  };
 }
 
 export function createDatabaseSlashCommands(databases: Array<{ id: string; name: string; path?: string[] }>): SlashCommand[] {

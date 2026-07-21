@@ -2,12 +2,48 @@ import assert from "node:assert/strict";
 import {
   applySlashCommandTemplate,
   BASE_SLASH_COMMANDS,
+  createChildPageInput,
   createDatabaseSlashCommands,
   createPageSlashCommands,
   filterSlashCommands
 } from "../dist-electron/shared/slash-commands.js";
 
 const byId = new Map(BASE_SLASH_COMMANDS.map((command) => [command.id, command]));
+
+{
+  assert.equal(filterSlashCommands(BASE_SLASH_COMMANDS, "page")[0]?.id, "new-page");
+  assert.equal(filterSlashCommands(BASE_SLASH_COMMANDS, "页面")[0]?.id, "new-page");
+  assert.equal(filterSlashCommands(BASE_SLASH_COMMANDS, "new page")[0]?.id, "new-page");
+  assert.equal(filterSlashCommands(BASE_SLASH_COMMANDS, "新页面")[0]?.id, "new-page");
+  assert.equal(filterSlashCommands(BASE_SLASH_COMMANDS, "子页面")[0]?.id, "new-page");
+  assert.equal(filterSlashCommands(BASE_SLASH_COMMANDS, "创建页面")[0]?.id, "new-page");
+}
+
+{
+  assert.deepEqual(
+    createChildPageInput({
+      id: "pg_parent",
+      kind: "page",
+      title: "Parent",
+      path: ["Projects", "Parent"]
+    }, "Child"),
+    {
+      title: "Child",
+      parentId: "pg_parent",
+      parentKind: "page",
+      path: ["Projects", "Parent", "Child"]
+    }
+  );
+  assert.deepEqual(
+    createChildPageInput({ id: "row_parent", kind: "row", title: "Record" }, "子页面"),
+    {
+      title: "子页面",
+      parentId: "row_parent",
+      parentKind: "row",
+      path: ["Record", "子页面"]
+    }
+  );
+}
 
 for (const command of BASE_SLASH_COMMANDS) {
   const visibleHint = command.hint.trim();

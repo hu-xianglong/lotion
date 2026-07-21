@@ -478,6 +478,7 @@ test("storage, file cache, dates, formula helpers, app config, and git service c
     assert.equal(await fileService.readText(markdownPath), "Body only\n");
     assert.equal(parsePage("No heading").meta.title, "Untitled");
     assert.equal(serializeMarkdownBody("Trimmed\n\n"), "Trimmed\n");
+    assert.equal(serializeMarkdownBody("\n\n"), "");
 
     await fileService.writeBuffer(join(root, "buffer.bin"), Buffer.from("abc"));
     assert.equal((await fileService.readBuffer(join(root, "buffer.bin"))).toString("utf8"), "abc");
@@ -948,7 +949,8 @@ test("workspace, page, pages database, and entity services persist core workspac
     assert.match(page.meta.id, /^pg_/);
     assert.equal((await pageService.list()).some((item) => item.title === "First Page"), true);
     const loadedPage = await pageService.get(page.meta.id);
-    assert.equal(loadedPage.markdown.includes("Start writing here."), true);
+    assert.equal(loadedPage.markdown, "");
+    assert.equal(await readFile(join(workspaceRoot, pageBodyPath(page.meta.id, page.meta.title)), "utf8"), "");
 
     const updatedPage = await pageService.update(page.meta.id, {
       markdown: "# First Page\n\nUpdated body",

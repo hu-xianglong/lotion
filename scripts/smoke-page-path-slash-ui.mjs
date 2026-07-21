@@ -59,6 +59,7 @@ await withLotionUIHarness("page-path-slash-ui", async ({ cdpUrl, page, openWorks
 
     const parentOpened = await assertParentBreadcrumbOpensPage(page, fixture, viewport.name);
     await assertNoDocumentHorizontalOverflow(page, `page path slash parent ${viewport.name}`);
+    const slashCreated = await assertSlashCreatesChildPage(page, fixture, viewport.name);
 
     viewportResults.push({
       viewport: viewport.name,
@@ -66,7 +67,8 @@ await withLotionUIHarness("page-path-slash-ui", async ({ cdpUrl, page, openWorks
       pageId: fixture.pageId,
       pageTitle: fixture.pageTitle,
       rendered,
-      parentOpened
+      parentOpened,
+      slashCreated
     });
   });
 
@@ -83,6 +85,74 @@ async function waitForPageService(page, pageId) {
     const pages = await window.lotion.pages.list();
     return pages.some((candidate) => candidate.id === targetPageId);
   }, pageId, { timeout: 8_000 });
+}
+
+async function assertSlashCreatesChildPage(page, fixture, viewportName) {
+  const editor = page.locator(".cm-content").first();
+  await editor.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+End" : "Control+End");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/page");
+
+  const menu = page.locator(".slash-menu").first();
+  await menu.waitFor({ timeout: 5_000 });
+  const command = menu.locator(".slash-menu-item").filter({ hasText: /Page|页面/ }).first();
+  await command.waitFor({ timeout: 5_000 });
+  await assertWithinViewport(page, command, `new page slash command ${viewportName}`, 4);
+  await command.click();
+
+  let created = null;
+  const deadline = Date.now() + 12_000;
+  while (Date.now() < deadline && !created) {
+    created = await page.evaluate(async ({ parentId, existingChildId }) => {
+      const pages = await window.lotion.pages.list();
+      const child = pages.find((candidate) => (
+        candidate.parentId === parentId && candidate.id !== parentId && candidate.id !== existingChildId
+      ));
+      if (!child) return null;
+      const childDocument = await window.lotion.pages.get(child.id);
+      if (childDocument.markdown !== "") return null;
+      const parent = await window.lotion.pages.get(parentId);
+      if (!parent.markdown.includes(child.id) || !parent.markdown.includes(`[${child.title}]`)) return null;
+      const title = document.querySelector(".title-input")?.value ?? "";
+      if (title !== child.title) return null;
+      return {
+        childId: child.id,
+        childTitle: child.title,
+        childPath: child.path ?? [],
+        childParentId: child.parentId,
+        childParentKind: child.parentKind,
+        childMarkdown: childDocument.markdown,
+        parentMarkdown: parent.markdown
+      };
+    }, { parentId: fixture.parentId, existingChildId: fixture.pageId });
+    if (!created) await page.waitForTimeout(100);
+  }
+  if (!created) {
+    const debug = await page.evaluate(async (parentId) => ({
+      title: document.querySelector(".title-input")?.value ?? "",
+      pages: await window.lotion.pages.list(),
+      parent: await window.lotion.pages.get(parentId)
+    }), fixture.parentId);
+    throw new Error(`Slash-created page did not become durable: ${JSON.stringify(debug)}`);
+  }
+  if (created.childParentId !== fixture.parentId || created.childParentKind !== "page") {
+    throw new Error(`Slash-created page has the wrong parent: ${JSON.stringify(created)}`);
+  }
+  const expectedPathPrefix = [fixture.parentSegment];
+  if (
+    created.childPath.length !== 2 ||
+    created.childPath[0] !== expectedPathPrefix[0] ||
+    created.childPath[1] !== created.childTitle
+  ) {
+    throw new Error(`Slash-created page has the wrong path: ${JSON.stringify(created)}`);
+  }
+  if (/\/page\s*$/m.test(created.parentMarkdown)) {
+    throw new Error(`Slash source was not replaced in parent markdown: ${JSON.stringify(created.parentMarkdown)}`);
+  }
+  await assertNoDocumentHorizontalOverflow(page, `slash-created-child-${viewportName}`);
+  return created;
 }
 
 async function assertParentBreadcrumbOpensPage(page, fixture, viewportName) {

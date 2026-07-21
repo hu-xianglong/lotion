@@ -29,6 +29,7 @@ interface PageEditorProps {
   /** All workspace pages — passed through to the editor so inline link
    *  widgets can resolve target page icons. */
   pages?: PageMeta[];
+  entityKind?: "page" | "row";
   onChange: (markdown: string) => void;
   onRename: (title: string) => void;
   /** Called when the user clicks the icon slot. The host wires this to
@@ -81,6 +82,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   page,
   databases,
   pages,
+  entityKind = "page",
   onChange,
   onRename,
   onPickIcon,
@@ -719,6 +721,12 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
               onViewStateChange={mergeViewState}
               pages={pages}
               databases={databases}
+              currentPage={{
+                id: page.meta.id,
+                kind: entityKind,
+                title: page.meta.title,
+                path: page.meta.path
+              }}
             />
           </div>
         </>

@@ -772,29 +772,36 @@ function AppContent() {
     setState((current) => ({ ...current, pagesTree }));
   }
 
-  async function createPage(input: Partial<CreatePageInput> = {}) {
+  async function createPage(
+    input: Partial<CreatePageInput> = {},
+    options: { open?: boolean } = {}
+  ): Promise<PageDocument> {
     const title = input.title?.trim() || t("common.untitled");
     const page = await window.lotion.pages.create({
       title,
       ...(input.path ? { path: input.path } : {}),
       ...(input.parentId ? { parentId: input.parentId, parentKind: input.parentKind ?? "page" } : {})
     });
+    pageDocCacheRef.current.set(page.meta.id, page);
     setState((current) => ({
       ...current,
       pages: [
         page.meta,
         ...current.pages.filter((item) => item.id !== page.meta.id)
       ],
-      activeItem: { type: "page", id: page.meta.id },
-      activePage: page,
-      activeDatabaseId: undefined,
-      activeRowPage: undefined,
-      tabs: replaceActiveTabItem(current, { type: "page", id: page.meta.id })
+      ...(options.open === false ? {} : {
+        activeItem: { type: "page", id: page.meta.id } as const,
+        activePage: page,
+        activeDatabaseId: undefined,
+        activeRowPage: undefined,
+        tabs: replaceActiveTabItem(current, { type: "page", id: page.meta.id })
+      })
     }));
-    await recordRecent({ type: "page", id: page.meta.id });
+    if (options.open !== false) await recordRecent({ type: "page", id: page.meta.id });
     void refreshLists().catch((error) => {
       console.warn("[lotion] failed to refresh lists after creating page:", error);
     });
+    return page;
   }
 
   function createDatabase() {
@@ -1608,6 +1615,7 @@ function AppContent() {
           page={page}
           databases={state.databases}
           pages={state.pages}
+          entityKind="row"
           onChange={saveRowPageBody}
           onRename={renameRowPage}
           onPickCover={() => pickCoverForRow(rp.databaseId, rp.rowId)}

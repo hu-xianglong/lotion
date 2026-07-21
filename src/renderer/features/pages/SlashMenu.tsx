@@ -46,6 +46,10 @@ const BASE_SLASH_COPY: Record<string, Record<Locale, Pick<SlashCommandDisplay, "
     en: { label: "Text", hint: "Plain paragraph" },
     zh: { label: "文本", hint: "普通段落" }
   },
+  "new-page": {
+    en: { label: "Page", hint: "Create a new page" },
+    zh: { label: "页面", hint: "新建子页面" }
+  },
   h1: {
     en: { label: "Heading 1", hint: "Large section title" },
     zh: { label: "大标题", hint: "一级标题" }
