@@ -1515,7 +1515,7 @@ class InternalLinkIconWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean {
-    return true;
+    return false;
   }
 }
 
@@ -1530,6 +1530,14 @@ export type LinkIconResolver = (url: string) => string | undefined;
 export const linkIconResolver = Facet.define<LinkIconResolver | null, LinkIconResolver | null>({
   combine: (values) => (values.length > 0 ? values[0] : null)
 });
+
+export type LinkTitleResolver = (url: string) => string | undefined;
+
+export const linkTitleResolver = Facet.define<LinkTitleResolver | null, LinkTitleResolver | null>({
+  combine: (values) => (values.length > 0 ? values[0] : null)
+});
+
+export const refreshLinkMetadataEffect = StateEffect.define<void>();
 
 class HrWidget extends WidgetType {
   eq(other: HrWidget): boolean {
@@ -2654,7 +2662,10 @@ class MarkdownInlinePlugin {
     // plugin needs to rebuild on selectionSet as well as doc / viewport.
     const nextActiveLineKey = activeLineKey(update.state);
     const activeLinesChanged = nextActiveLineKey !== this.activeLineKey;
-    if (update.docChanged || update.viewportChanged || (update.selectionSet && activeLinesChanged)) {
+    const linkMetadataChanged = update.transactions.some((transaction) => (
+      transaction.effects.some((effect) => effect.is(refreshLinkMetadataEffect))
+    ));
+    if (update.docChanged || update.viewportChanged || linkMetadataChanged || (update.selectionSet && activeLinesChanged)) {
       this.activeLineKey = nextActiveLineKey;
       this.decorations = this.build(update.view);
     } else if (update.selectionSet) {
@@ -2741,6 +2752,7 @@ function buildInlineDecorations(
   const doc = state.doc;
   const sel = state.selection.main;
   const resolver = state.facet(linkIconResolver);
+  const titleResolver = state.facet(linkTitleResolver);
   let visitedNodes = 0;
   let links = 0;
   let tasks = 0;
@@ -2804,13 +2816,16 @@ function buildInlineDecorations(
             const labelStartLine = labelFrom >= 0 ? doc.lineAt(labelFrom) : null;
             const labelEndLine = labelTo > labelFrom ? doc.lineAt(labelTo - 1) : null;
             const singleLineLabel = !!labelStartLine && !!labelEndLine && labelStartLine.number === labelEndLine.number;
-            if (labelFrom >= 0 && labelTo > labelFrom && singleLineLabel && !activeLines.has(labelStartLine.number)) {
+            if (labelFrom >= 0 && labelTo > labelFrom && singleLineLabel) {
               const label = doc.sliceString(labelFrom, labelTo);
               const decodedLabel = decodedVisibleLinkLabel(label);
-              if (decodedLabel && decodedLabel !== label) {
+              const currentTitle = titleResolver?.(url)?.trim();
+              const visibleLabel = currentTitle || decodedLabel;
+              const shouldReplace = Boolean(currentTitle) || !activeLines.has(labelStartLine.number);
+              if (shouldReplace && visibleLabel && visibleLabel !== label) {
                 replacedLinkLabelRanges.push({ from: labelFrom, to: labelTo });
                 ranges.push(
-                  Decoration.replace({ widget: new DecodedLinkLabelWidget(decodedLabel, url) })
+                  Decoration.replace({ widget: new DecodedLinkLabelWidget(visibleLabel, url) })
                     .range(labelFrom, labelTo)
                 );
               }

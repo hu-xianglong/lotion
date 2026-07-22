@@ -94,6 +94,7 @@ Source: 用户实测 export（149 DB / 53 顶层页 / 5400+ 子页 / 40990 个 .
 | Page icon (emoji)       | —    | 解析为 `emoji:<glyph>`，写入 page / row / DB icon metadata 并渲染 | ✅   |
 | Page icon (image)       | 319  | 路径重写到 attachments，写入 page / row / DB icon metadata 并渲染 | ✅   |
 | Cover image             | —    | 解析 `.page-cover-image`，写入 page / row / DB cover metadata，并保留 object-position offset | ✅   |
+| Created / last edited time | — | 导出包含对应属性时规范化为 ISO，并同步到 Pages、数据库行和 Entities 系统时间 | ✅   |
 | `<table class=properties>` 行属性 | 419 | flatten 进 row record               | ✅   |
 | Page description        | 498  | 当 body 一部分                          | ✅   |
 

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion brush calligraphy mark</title>
+  <desc id="desc">A Chinese calligraphy brush drawing an L-shaped horizontal stroke.</desc>
+  <g fill="currentColor">
+    <path d="M154 62 L232 50 L266 260 L188 272 Z"/>
+    <path d="M190 284 L268 272 L274 310 L196 322 Z"/>
+    <path d="M196 330 L274 318 C264 360 240 398 208 420 C196 386 192 356 196 330 Z"/>
+    <path d="M208 420 C232 398 260 398 294 406 C334 414 376 406 424 384 C412 400 412 414 420 426 C374 434 328 438 282 434 C246 432 220 428 208 420 Z"/>
+  </g>
+</svg>

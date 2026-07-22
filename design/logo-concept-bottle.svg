@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion bottle logo concept</title>
+  <desc id="desc">A minimal black pump bottle with a file-shaped negative-space label.</desc>
+  <rect width="800" height="800" fill="#f7f7f4"/>
+
+  <g fill="#20221f">
+    <rect x="354" y="170" width="92" height="102" rx="18"/>
+    <rect x="327" y="128" width="148" height="54" rx="24"/>
+    <path d="M452 128 H548 C566 128 580 142 580 160 V174 H452 Z"/>
+    <path d="M303 250 H497 V285 C545 302 574 344 574 396 V610 C574 665 529 710 474 710 H326 C271 710 226 665 226 610 V396 C226 344 255 302 303 285 Z"/>
+  </g>
+
+  <!-- A plain file label keeps the bottle tied to Lotion's file-first product. -->
+  <path d="M318 408 H449 L482 441 V568 C482 582 470 594 456 594 H318 Z" fill="#f7f7f4"/>
+  <path d="M449 408 V441 H482" fill="none" stroke="#20221f" stroke-width="16" stroke-linejoin="round"/>
+</svg>

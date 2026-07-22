@@ -13,6 +13,8 @@ import { WorkspaceService } from "./services/workspace-service.js";
 import { fileService } from "./services/file-service.js";
 import type {
   AddFieldInput,
+  CopyFieldToSystemTimeInput,
+  CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
   CreatePageInput,
   CreateViewInput,
@@ -85,6 +87,7 @@ export interface LotionCustomerApi {
   pages: {
     list(): Promise<PageMeta[]>;
     create(input: CreatePageInput): Promise<PageDocument>;
+    duplicate(id: string): Promise<PageDocument>;
     get(id: string): Promise<PageDocument>;
     update(id: string, input: UpdatePageInput): Promise<PageDocument>;
     rename(id: string, title: string): Promise<PageDocument>;
@@ -100,6 +103,7 @@ export interface LotionCustomerApi {
     updateMeta(input: UpdateDatabaseMetaInput): Promise<DatabaseBundle>;
     addField(id: string, input: AddFieldInput): Promise<DatabaseBundle>;
     updateField(input: UpdateFieldInput): Promise<DatabaseBundle>;
+    copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult>;
     deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle>;
     updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
     addRow(databaseId: string, templateId?: string): Promise<DatabaseBundle>;
@@ -179,6 +183,7 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
     pages: {
       list: () => pages.list(),
       create: (input) => pages.create(input),
+      duplicate: (id) => pages.duplicate(id),
       get: (id) => pages.get(id),
       update: (id, input) => pages.update(id, input),
       rename: (id, title) => pages.rename(id, title),
@@ -194,6 +199,7 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
       updateMeta: (input) => databases.updateMeta(input),
       addField: (id, input) => databases.addField(id, input),
       updateField: (input) => databases.updateField(input),
+      copyFieldToSystemTime: (input) => databases.copyFieldToSystemTime(input),
       deleteField: (databaseId, fieldId) => databases.deleteField(databaseId, fieldId),
       updateCell: (input) => databases.updateCell(input),
       addRow: (databaseId, templateId) => databases.addRow(databaseId, templateId),
@@ -261,8 +267,7 @@ async function getPagesTree(
   databases: DatabaseService
 ): Promise<PagesTree> {
   const [topLevelPages, summaries] = await Promise.all([pages.list(), databases.list()]);
-  const folders: PagesTreeDatabaseFolder[] = [];
-  for (const summary of summaries) {
+  const folders = await Promise.all(summaries.map(async (summary): Promise<PagesTreeDatabaseFolder> => {
     let fileNames: string[] = [];
     try {
       const dir = workspace.requirePaths().rowPagesDir(summary.id);
@@ -271,8 +276,8 @@ async function getPagesTree(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    folders.push({ databaseId: summary.id, name: summary.name, fileNames });
-  }
+    return { databaseId: summary.id, name: summary.name, fileNames };
+  }));
   return { topLevelPages, databases: folders };
 }
 

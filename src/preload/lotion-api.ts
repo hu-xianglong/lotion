@@ -1,5 +1,7 @@
 import type {
   AddFieldInput,
+  CopyFieldToSystemTimeInput,
+  CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
   CreatePageInput,
   CreateViewInput,
@@ -76,6 +78,7 @@ export interface LotionApi {
   pages: {
     list(): Promise<PageMeta[]>;
     create(input: CreatePageInput): Promise<PageDocument>;
+    duplicate(id: string): Promise<PageDocument>;
     get(id: string): Promise<PageDocument>;
     update(id: string, input: UpdatePageInput): Promise<PageDocument>;
     rename(id: string, title: string): Promise<PageDocument>;
@@ -91,6 +94,7 @@ export interface LotionApi {
     updateMeta(input: UpdateDatabaseMetaInput): Promise<DatabaseBundle>;
     addField(id: string, input: AddFieldInput): Promise<DatabaseBundle>;
     updateField(input: UpdateFieldInput): Promise<DatabaseBundle>;
+    copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult>;
     deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle>;
     updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
     addRow(databaseId: string, templateId?: string): Promise<DatabaseBundle>;

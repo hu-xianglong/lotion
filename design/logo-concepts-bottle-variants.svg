@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1000" viewBox="0 0 1500 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion bottle logo variants</title>
+  <desc id="desc">Six monochrome bottle-inspired logo directions for Lotion.</desc>
+  <rect width="1500" height="1000" fill="#f7f7f4"/>
+
+  <!-- 01: classic pump with a file label -->
+  <g transform="translate(100 55)" fill="#20221f">
+    <rect x="135" y="20" width="54" height="67" rx="10"/>
+    <rect x="118" y="0" width="88" height="32" rx="15"/>
+    <path d="M192 0 H252 C265 0 275 10 275 23 V30 H192 Z"/>
+    <path d="M105 75 H219 V96 C248 107 265 132 265 163 V291 C265 324 238 351 205 351 H119 C86 351 59 324 59 291 V163 C59 132 76 107 105 96 Z"/>
+    <path d="M114 171 H190 L210 191 V268 C210 278 202 286 192 286 H114 Z" fill="#f7f7f4"/>
+    <path d="M190 171 V191 H210" fill="none" stroke="#20221f" stroke-width="10" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 02: square pump with an L cut from the body -->
+  <g transform="translate(600 55)" fill="#20221f">
+    <rect x="132" y="20" width="60" height="68" rx="9"/>
+    <rect x="112" y="0" width="101" height="34" rx="12"/>
+    <path d="M198 0 H265 V31 H198 Z"/>
+    <path d="M74 82 H250 V118 C272 135 284 159 284 188 V300 C284 329 260 353 231 353 H93 C64 353 40 329 40 300 V188 C40 159 52 135 74 118 Z"/>
+    <path d="M109 157 V270 H224" fill="none" stroke="#f7f7f4" stroke-width="31" stroke-linecap="square" stroke-linejoin="miter"/>
+  </g>
+
+  <!-- 03: squeeze tube with a page-shaped opening -->
+  <g transform="translate(1100 55)" fill="#20221f">
+    <path d="M71 20 H253 L235 279 C233 305 211 325 185 325 H139 C113 325 91 305 89 279 Z"/>
+    <rect x="92" y="318" width="140" height="39" rx="10"/>
+    <path d="M116 121 H187 L210 144 V240 H116 Z" fill="#f7f7f4"/>
+    <path d="M187 121 V144 H210" fill="none" stroke="#20221f" stroke-width="10" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 04: cream jar with three durable data layers -->
+  <g transform="translate(100 555)" fill="#20221f">
+    <rect x="62" y="55" width="200" height="58" rx="20"/>
+    <path d="M77 122 H247 V273 C247 316 212 351 169 351 H155 C112 351 77 316 77 273 Z"/>
+    <rect x="113" y="170" width="98" height="20" rx="10" fill="#f7f7f4"/>
+    <rect x="113" y="211" width="98" height="20" rx="10" fill="#f7f7f4"/>
+    <rect x="113" y="252" width="98" height="20" rx="10" fill="#f7f7f4"/>
+  </g>
+
+  <!-- 05: round bottle with a continuous loop label -->
+  <g transform="translate(600 555)" fill="#20221f">
+    <rect x="137" y="28" width="50" height="58" rx="10"/>
+    <rect x="116" y="4" width="92" height="31" rx="15"/>
+    <path d="M192 4 H255 V33 H192 Z"/>
+    <path d="M162 78 C240 78 288 128 288 213 C288 303 245 354 162 354 C79 354 36 303 36 213 C36 128 84 78 162 78 Z"/>
+    <path d="M91 219 C91 171 145 165 174 219 C203 273 257 267 257 219 C257 171 203 165 174 219 C145 273 91 267 91 219" fill="none" stroke="#f7f7f4" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 06: flip-cap bottle with a compact CSV grid -->
+  <g transform="translate(1100 555)" fill="#20221f">
+    <rect x="121" y="16" width="82" height="57" rx="15"/>
+    <path d="M100 65 H224 V104 C254 120 272 150 272 185 V302 C272 331 248 355 219 355 H105 C76 355 52 331 52 302 V185 C52 150 70 120 100 104 Z"/>
+    <g fill="#f7f7f4">
+      <rect x="103" y="164" width="42" height="42" rx="8"/>
+      <rect x="179" y="164" width="42" height="42" rx="8"/>
+      <rect x="103" y="236" width="42" height="42" rx="8"/>
+      <rect x="179" y="236" width="42" height="42" rx="8"/>
+    </g>
+  </g>
+
+  <g fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15">
+    <g transform="translate(100 452)"><text font-weight="700">01</text><text x="40">FILE PUMP</text></g>
+    <g transform="translate(600 452)"><text font-weight="700">02</text><text x="40">NEGATIVE L</text></g>
+    <g transform="translate(1100 452)"><text font-weight="700">03</text><text x="40">TUBE</text></g>
+    <g transform="translate(100 952)"><text font-weight="700">04</text><text x="40">DATA JAR</text></g>
+    <g transform="translate(600 952)"><text font-weight="700">05</text><text x="40">LOOP BOTTLE</text></g>
+    <g transform="translate(1100 952)"><text font-weight="700">06</text><text x="40">GRID BOTTLE</text></g>
+  </g>
+</svg>

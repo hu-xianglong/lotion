@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    ".lotion-renderer-components-*/*.tsx",
+    "src/builtin-plugins/**/*.ts",
+    "src/builtin-plugins/**/*.tsx",
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.tsx",
+    "src/shared/**/*.ts",
+    "src/shared/**/*.tsx"
+  ]
+}

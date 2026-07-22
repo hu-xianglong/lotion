@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 950" width="1800" height="950">
+  <rect width="1800" height="950" fill="#f7f7f4"/>
+  <g color="#20221f">
+      <g transform="translate(30 24) scale(0.234375)"><path fill="currentColor" d="M176 72 L288 72 L316 136 L232 336 L160 424 L116 284 Z"/><path fill="currentColor" d="M176 424 L298 292 L396 424 Z"/></g>
+      <text x="90" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">01</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(210 24) scale(0.234375)"><path fill="currentColor" d="M132 80 H252 L280 112 L232 348 L180 424 H100 L144 348 Z"/><path fill="currentColor" d="M196 424 L276 326 H416 L380 424 Z"/></g>
+      <text x="270" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">02</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(390 24) scale(0.234375)"><path fill="currentColor" d="M160 72 H280 L248 368 L176 424 H104 L148 360 Z"/><path fill="currentColor" d="M192 424 L316 324 L420 424 Z"/></g>
+      <text x="450" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">03</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(570 24) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M120 80 H264 L300 116 L244 356 L184 424 H104 L148 356 Z M172 324 L216 336 L180 384 Z"/><path fill="currentColor" d="M200 424 L288 340 L424 376 L396 424 Z"/></g>
+      <text x="630" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">04</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(750 24) scale(0.234375)"><path fill="currentColor" d="M188 64 H288 L244 376 L190 424 H118 L154 376 Z"/><path fill="currentColor" d="M206 424 L302 360 H424 L396 424 Z"/></g>
+      <text x="810" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">05</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(930 24) scale(0.234375)"><path fill="currentColor" d="M104 80 H280 V336 L192 424 H104 Z"/><path fill="currentColor" d="M208 424 L296 336 H424 V424 Z"/></g>
+      <text x="990" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">06</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1110 24) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M120 72 H288 L256 344 H424 V424 H144 L96 376 Z M176 136 H220 L200 304 L164 344 L148 328 Z"/></g>
+      <text x="1170" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">07</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1290 24) scale(0.234375)"><path fill="currentColor" d="M116 72 H244 L268 112 L220 328 L148 408 L96 280 Z"/><path fill="currentColor" d="M160 420 L232 340 L292 376 L252 424 Z"/><path fill="currentColor" d="M276 424 L316 356 L428 404 L416 424 Z"/></g>
+      <text x="1350" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">08</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1470 24) scale(0.234375)"><path fill="currentColor" d="M112 80 H224 V424 H112 Z"/><path fill="currentColor" d="M240 80 H304 L272 336 L240 368 Z"/><path fill="currentColor" d="M240 384 H424 V424 H240 Z"/></g>
+      <text x="1530" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">09</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1650 24) scale(0.234375)"><path fill="currentColor" d="M148 96 H284 L300 128 L240 344 L180 416 H116 L156 336 Z"/><path fill="currentColor" d="M196 416 L286 336 H396 L376 416 Z"/></g>
+      <text x="1710" y="172" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">10</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(30 214) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M120 64 H304 L392 152 V440 H120 Z M184 160 H236 V340 H328 V392 H184 Z"/><path fill="currentColor" d="M320 80 V136 H376 Z"/></g>
+      <text x="90" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">11</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(210 214) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M132 72 H300 L380 152 V416 Q380 440 356 440 H132 Q108 440 108 416 V96 Q108 72 132 72 Z M176 156 H232 V344 H324 V396 H176 Z"/><path fill="currentColor" d="M316 88 V136 H364 Z"/></g>
+      <text x="270" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">12</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(390 214) scale(0.234375)"><path fill="currentColor" opacity=".38" d="M164 48 H356 V384 H164 Z"/><path fill="currentColor" fill-rule="evenodd" d="M108 104 H300 L372 176 V448 H108 Z M172 184 H228 V344 H320 V400 H172 Z"/><path fill="currentColor" d="M316 120 V160 H356 Z"/></g>
+      <text x="450" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">13</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(570 214) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M96 80 H320 L416 176 V432 H96 Z M168 152 H232 V336 H344 V400 H168 Z M336 96 V160 H400 Z"/></g>
+      <text x="630" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">14</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(750 214) scale(0.234375)"><path fill="currentColor" d="M96 72 H256 V352 L184 424 H96 Z"/><path fill="currentColor" d="M272 120 H360 L416 176 V424 H208 L272 360 Z"/><path fill="currentColor" d="M376 136 V160 H400 Z"/></g>
+      <text x="810" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">15</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(930 214) scale(0.234375)"><path fill="currentColor" d="M112 64 H272 L320 112 V344 L240 424 H112 Z"/><path fill="currentColor" d="M256 424 L336 344 H424 V424 Z"/><path fill="currentColor" d="M288 80 V96 H304 Z"/></g>
+      <text x="990" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">16</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1110 214) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M96 64 H360 V448 H96 Z M148 116 H308 V396 H148 Z M196 164 H244 V320 H292 V368 H196 Z"/></g>
+      <text x="1170" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">17</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1290 214) scale(0.234375)"><path fill="currentColor" d="M96 80 H248 V424 H96 Z"/><path fill="currentColor" d="M264 80 H360 L416 136 V248 H264 Z"/><path fill="currentColor" d="M264 264 H416 V424 H200 L264 360 Z"/></g>
+      <text x="1350" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">18</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1470 214) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M104 96 H184 L216 64 H344 Q368 64 368 88 V424 Q368 448 344 448 H104 Q80 448 80 424 V120 Q80 96 104 96 Z M152 160 H208 V336 H304 V392 H152 Z"/></g>
+      <text x="1530" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">19</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1650 214) scale(0.234375)"><path fill="currentColor" d="M112 72 H224 V424 H112 Z"/><path fill="currentColor" d="M240 72 H352 V184 H240 Z"/><path fill="currentColor" d="M240 200 H352 V312 H240 Z"/><path fill="currentColor" d="M240 328 H424 V424 H240 Z"/></g>
+      <text x="1710" y="362" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">20</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(30 404) scale(0.234375)"><rect fill="currentColor" x="104" y="72" width="144" height="352" rx="48"/><rect fill="currentColor" x="200" y="328" width="224" height="96" rx="48"/></g>
+      <text x="90" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">21</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(210 404) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="56" stroke-linecap="round" d="M176 104 V344 Q176 400 232 400 H408"/><path fill="none" stroke="currentColor" stroke-width="28" stroke-linecap="round" d="M176 144 V304"/></g>
+      <text x="270" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">22</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(390 404) scale(0.234375)"><rect fill="currentColor" x="104" y="64" width="128" height="168" rx="16"/><rect fill="currentColor" x="104" y="248" width="128" height="176" rx="16"/><rect fill="currentColor" x="248" y="296" width="176" height="128" rx="16"/></g>
+      <text x="450" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">23</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(570 404) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="48" stroke-linecap="square" d="M120 80 V424 H424"/><path fill="none" stroke="currentColor" stroke-width="32" d="M216 128 V328 H376"/></g>
+      <text x="630" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">24</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(750 404) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" d="M152 104 V360 Q152 408 200 408 H392"/><circle fill="currentColor" cx="152" cy="104" r="56"/><circle fill="currentColor" cx="152" cy="296" r="56"/><circle fill="currentColor" cx="392" cy="408" r="56"/></g>
+      <text x="810" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">25</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(930 404) scale(0.234375)"><path fill="currentColor" d="M104 64 H208 V424 H104 Z"/><path fill="currentColor" d="M224 304 H424 V408 H224 Z"/><path fill="currentColor" d="M176 336 L256 256 L312 312 L232 392 Z"/></g>
+      <text x="990" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">26</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1110 404) scale(0.234375)"><path fill="currentColor" d="M96 64 H224 V320 H288 V384 H416 V448 H96 Z"/></g>
+      <text x="1170" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">27</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1290 404) scale(0.234375)"><path fill="currentColor" d="M104 64 H248 V272 L288 312 L248 352 V424 H104 Z"/><path fill="currentColor" d="M264 352 L304 312 L344 352 H424 V424 H264 Z"/></g>
+      <text x="1350" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">28</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1470 404) scale(0.234375)"><rect fill="currentColor" x="104" y="64" width="120" height="360" rx="28"/><rect fill="currentColor" x="256" y="304" width="168" height="120" rx="28"/><circle fill="none" stroke="currentColor" stroke-width="32" cx="240" cy="408" r="36"/></g>
+      <text x="1530" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">29</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1650 404) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" d="M152 88 V352 Q152 424 224 424 H408"/><path fill="none" stroke="currentColor" stroke-width="28" stroke-linecap="round" d="M248 296 Q312 232 376 296"/></g>
+      <text x="1710" y="552" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">30</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(30 594) scale(0.234375)"><path fill="currentColor" opacity=".28" d="M168 48 H248 V336 H408 V416 H168 Z"/><path fill="currentColor" opacity=".55" d="M136 72 H216 V360 H376 V440 H136 Z"/><path fill="currentColor" d="M104 96 H184 V384 H344 V464 H104 Z"/></g>
+      <text x="90" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">31</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(210 594) scale(0.234375)"><path fill="currentColor" opacity=".3" d="M176 48 H368 V368 H176 Z"/><path fill="currentColor" opacity=".55" d="M144 80 H336 V400 H144 Z"/><path fill="currentColor" fill-rule="evenodd" d="M112 112 H304 V432 H112 Z M160 160 H208 V336 H272 V384 H160 Z"/></g>
+      <text x="270" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">32</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(390 594) scale(0.234375)"><path fill="currentColor" d="M104 64 H192 V424 H104 Z"/><path fill="currentColor" d="M216 104 H352 V160 H216 Z"/><path fill="currentColor" d="M216 208 H320 V264 H216 Z"/><path fill="currentColor" d="M216 312 H424 V368 H216 Z"/></g>
+      <text x="450" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">33</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(570 594) scale(0.234375)"><path fill="currentColor" opacity=".3" d="M152 112 H264 V352 H416 V464 H152 Z"/><path fill="currentColor" d="M96 56 H208 V296 H360 V408 H96 Z"/></g>
+      <text x="630" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">34</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(750 594) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M96 64 H424 V448 H96 Z M160 128 H360 V384 H160 Z M224 192 H288 V320 H328 V344 H224 Z"/></g>
+      <text x="810" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">35</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(930 594) scale(0.234375)"><path fill="currentColor" d="M104 64 H232 V144 H104 Z"/><path fill="currentColor" d="M104 160 H232 V240 H104 Z"/><path fill="currentColor" d="M104 256 H232 V336 H104 Z"/><path fill="currentColor" d="M104 352 H424 V432 H104 Z"/></g>
+      <text x="990" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">36</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1110 594) scale(0.234375)"><path fill="currentColor" d="M96 64 H176 V424 H96 Z"/><path fill="currentColor" opacity=".35" d="M192 328 H424 V424 H192 Z"/><path fill="currentColor" opacity=".6" d="M192 272 H368 V352 H192 Z"/><path fill="currentColor" d="M192 216 H312 V296 H192 Z"/></g>
+      <text x="1170" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">37</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1290 594) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="44" d="M112 64 V424 H424"/><path fill="none" stroke="currentColor" stroke-width="36" opacity=".65" d="M168 80 V368 H408"/><path fill="none" stroke="currentColor" stroke-width="28" opacity=".35" d="M224 96 V312 H392"/></g>
+      <text x="1350" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">38</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1470 594) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="64" stroke-linecap="round" d="M152 80 V336 Q152 424 240 424 H416"/><path fill="currentColor" d="M304 320 L416 424 L304 464 Z"/><circle fill="currentColor" cx="152" cy="80" r="32"/></g>
+      <text x="1530" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">39</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1650 594) scale(0.234375)"><path fill="currentColor" d="M104 64 H232 V296 L200 328 L168 296 V128 H104 Z"/><path fill="currentColor" opacity=".65" d="M184 344 L232 296 L280 344 H424 V392 H184 Z"/><path fill="currentColor" opacity=".35" d="M216 408 L264 360 L312 408 H424 V456 H216 Z"/></g>
+      <text x="1710" y="742" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">40</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(30 784) scale(0.234375)"><path fill="currentColor" d="M148 64 C204 80 240 76 276 56 C244 152 224 264 216 344 C212 384 224 408 264 416 C312 424 360 408 424 376 C408 400 408 424 420 448 C336 464 264 464 208 448 C156 432 132 400 140 344 C152 256 168 152 148 64 Z"/></g>
+      <text x="90" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">41</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(210 784) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="72" stroke-linecap="round" stroke-linejoin="round" d="M168 80 V368 Q168 424 224 424 H408"/></g>
+      <text x="270" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">42</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(390 784) scale(0.234375)"><path fill="currentColor" d="M104 64 H288 V112 L240 128 V368 L376 352 L424 312 V448 H104 V400 L152 384 V128 L104 112 Z"/></g>
+      <text x="450" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">43</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(570 784) scale(0.234375)"><path fill="currentColor" d="M152 64 H280 L240 352 L208 400 H424 L392 448 H112 L152 352 Z"/></g>
+      <text x="630" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">44</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(750 784) scale(0.234375)"><path fill="currentColor" d="M192 64 H304 L240 368 H416 L400 448 H112 L128 368 H176 Z"/></g>
+      <text x="810" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">45</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(930 784) scale(0.234375)"><path fill="currentColor" d="M104 64 H248 V256 H200 V112 H152 V400 H312 V352 H360 V448 H104 Z"/><path fill="currentColor" d="M376 352 H424 V448 H376 Z"/></g>
+      <text x="990" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">46</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1110 784) scale(0.234375)"><path fill="currentColor" fill-rule="evenodd" d="M104 64 H256 V352 H424 V448 H104 Z M184 160 L240 112 V336 L184 384 Z"/></g>
+      <text x="1170" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">47</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1290 784) scale(0.234375)"><path fill="currentColor" d="M152 64 H264 V344 Q264 384 304 384 H424 V448 H272 Q152 448 152 336 Z"/></g>
+      <text x="1350" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">48</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1470 784) scale(0.234375)"><path fill="none" stroke="currentColor" stroke-width="64" stroke-linecap="square" stroke-linejoin="round" d="M176 80 V328 Q176 424 272 424 H416"/><path fill="none" stroke="currentColor" stroke-width="40" d="M176 232 Q272 160 336 232 Q384 288 320 328"/></g>
+      <text x="1530" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">49</text>
+    </g>
+<g color="#20221f">
+      <g transform="translate(1650 784) scale(0.234375)"><rect fill="currentColor" x="120" y="64" width="112" height="384"/><rect fill="currentColor" x="120" y="336" width="304" height="112"/></g>
+      <text x="1710" y="932" text-anchor="middle" fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">50</text>
+    </g>
+</svg>

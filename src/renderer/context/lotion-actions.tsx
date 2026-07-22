@@ -19,6 +19,7 @@ export interface LotionActions {
   openRowPage(databaseId: string, rowId: string, options?: NavigationJumpOptions): void;
   openRowPageByFile(databaseId: string, fileName: string, options?: NavigationJumpOptions): void;
   createPage(input?: Partial<CreatePageInput>, options?: { open?: boolean }): Promise<PageDocument>;
+  duplicatePage(id: string): Promise<PageDocument>;
   createDatabase(): void;
   deletePage(id: string): Promise<void>;
   toggleFavoriteCurrent(): Promise<void> | void;

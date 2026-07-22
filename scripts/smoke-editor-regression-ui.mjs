@@ -1429,7 +1429,7 @@ async function exerciseNotionHtmlColorClassPaste(page, fixture, viewport) {
     throw new Error(`${label} leaked inactive color span source markers: ${JSON.stringify(rendered)}`);
   }
 
-  await selectEditorSourceText(page, highlightText);
+  await selectEditorTextWithSearch(page, highlightText);
   const selectedHighlight = await line.evaluate((element, expectedHighlight) => {
     const target = Array.from(element.querySelectorAll(".cm-md-notion-bg-yellow"))
       .find((node) => (node.textContent ?? "").includes(expectedHighlight));
@@ -1438,7 +1438,7 @@ async function exerciseNotionHtmlColorClassPaste(page, fixture, viewport) {
       found: Boolean(target),
       editorHasSelection: Boolean(element.closest(".cm-editor")?.classList.contains("cm-md-has-selection")),
       backgroundColor: style?.backgroundColor ?? "",
-      selectedText: window.getSelection()?.toString() ?? ""
+      selectedText: window.__lotionEditorSelectionText ?? ""
     };
   }, highlightText);
   if (!selectedHighlight.found
@@ -1448,6 +1448,7 @@ async function exerciseNotionHtmlColorClassPaste(page, fixture, viewport) {
     throw new Error(`${label} selected highlight should not obscure the native selection: ${JSON.stringify(selectedHighlight)}`);
   }
 
+  await page.keyboard.press("Escape");
   await moveToDocumentEnd(page);
   await page.keyboard.press("Enter");
   await page.keyboard.type(afterText);
@@ -3177,7 +3178,7 @@ async function exerciseMarkdownLinkClickEditing(page, fixture, viewport) {
 
     results.internal = await assertDirectClickOpensLinkAndBlankClickEdits(page, fixture, {
       label: `internal ${viewport.name}`,
-      visibleText: fixture.internalLinkLabel,
+      visibleText: fixture.secondaryTitle,
       editToken: ` internal${viewport.name}`,
       expectTitle: fixture.mainTitle,
       expectNavigationTitle: fixture.secondaryTitle
@@ -4369,6 +4370,11 @@ async function exerciseLotionIframeFence(page, fixture, viewport) {
 
 async function exerciseLotionToggleFence(page, fixture, viewport) {
   const token = `${viewport.name}-${Date.now()}`;
+  const toggleImagePath = `attachments/toggle-${token}.png`;
+  await writeFile(join(fixture.root, toggleImagePath), Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU4Y7wAAAABJRU5ErkJggg==",
+    "base64"
+  ));
   const summary = `Direct toggle summary ${token}`;
   const bodyText = `Direct toggle body ${token}`;
   const nestedCode = [
@@ -4402,7 +4408,7 @@ async function exerciseLotionToggleFence(page, fixture, viewport) {
       `| Toggle table ${token} | 42 |`
     ].join("\n"),
     "---",
-    `![Toggle image ${token}](attachments/toggle-${token}.png)`,
+    `![Toggle image ${token}](${toggleImagePath})`,
     `[Toggle link ${token}](https://example.com/toggle/${token})`,
     nestedCode,
     nestedToggle,
@@ -6036,7 +6042,9 @@ async function clickVisibleText(page, text, options = {}) {
 
 async function textPoint(page, text, options = {}) {
   return page.evaluate(({ needle, bias }) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const editor = document.querySelector('[data-testid="markdown-editor"] .cm-content');
+    if (!editor) throw new Error("Could not locate markdown editor content");
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
       const content = node.textContent ?? "";
@@ -6060,7 +6068,9 @@ async function textPoint(page, text, options = {}) {
 
 async function blankPointAfterText(page, text) {
   return page.evaluate((needle) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const editor = document.querySelector('[data-testid="markdown-editor"] .cm-content');
+    if (!editor) throw new Error("Could not locate markdown editor content");
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
       const content = node.textContent ?? "";
@@ -6132,45 +6142,28 @@ async function selectEditorTextByDrag(page, text) {
   await editor.click({ position: { x: 1, y: 1 }, trial: true }).catch(() => undefined);
 }
 
-async function selectEditorSourceText(page, text) {
-  await editorContent(page).waitFor({ timeout: 8_000 });
-  const result = await page.evaluate((expected) => {
-    const editor = document.querySelector(".cm-editor");
-    const viewHost = editor
-      ? [editor, ...Array.from(editor.querySelectorAll("*"))].find((element) => element.cmView?.view)
-      : null;
-    const view = viewHost?.cmView?.view;
-    if (!view) {
-      return {
-        selected: false,
-        reason: "missing-view",
-        cmViewHosts: editor ? [editor, ...Array.from(editor.querySelectorAll("*"))]
-          .filter((element) => Boolean(element.cmView))
-          .map((element) => ({
-            tag: element.tagName,
-            className: element.className,
-            keys: Object.keys(element.cmView ?? {})
-          }))
-          .slice(0, 12) : []
-      };
-    }
-    const doc = view.state.doc.toString();
-    const from = doc.indexOf(expected);
-    if (from < 0) return { selected: false, reason: "missing-text", docPreview: doc.slice(0, 400) };
-    const to = from + expected.length;
-    view.focus();
-    view.dispatch({ selection: { anchor: from, head: to } });
-    return {
-      selected: true,
-      from,
-      to,
-      selectedText: view.state.doc.sliceString(view.state.selection.main.from, view.state.selection.main.to),
-      editorHasSelection: editor.classList.contains("cm-md-has-selection")
-    };
-  }, text);
-  if (!result.selected || result.selectedText !== text || !result.editorHasSelection) {
-    throw new Error(`Could not select editor source text ${JSON.stringify(text)}: ${JSON.stringify(result)}`);
-  }
+async function selectEditorTextWithSearch(page, text) {
+  const editor = editorContent(page);
+  await editor.waitFor({ timeout: 8_000 });
+  await editor.click();
+  await page.keyboard.press(`${platformModifier()}+f`);
+  const searchInput = page.locator('.cm-search input[name="search"]').first();
+  await searchInput.waitFor({ timeout: 5_000 });
+  await searchInput.fill(text);
+  await page.locator('.cm-search button[name="next"]').first().click();
+  await page.waitForFunction(
+    ({ expected }) => window.__lotionEditorSelectionText === expected &&
+      Boolean(document.querySelector(".cm-editor.cm-md-has-selection")),
+    { expected: text },
+    { timeout: 5_000 }
+  ).catch(async (error) => {
+    const diagnostic = await page.evaluate(() => ({
+      selectedText: window.__lotionEditorSelectionText ?? "",
+      nativeSelection: window.getSelection()?.toString() ?? "",
+      editorHasSelection: Boolean(document.querySelector(".cm-editor.cm-md-has-selection"))
+    }));
+    throw new Error(`CodeMirror search did not select ${JSON.stringify(text)}: ${JSON.stringify(diagnostic)}. ${error.message}`);
+  });
 }
 
 async function createEditorRegressionFixture(viewportName) {

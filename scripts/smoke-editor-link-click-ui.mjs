@@ -114,17 +114,17 @@ async function assertRenderedLinkClickOpensExternal(page, fixture, capture, view
 
 async function assertRenderedPageLinkNavigates(page, fixture, capture, viewport) {
   await clearCapturedOpenRequests(page, capture);
-  const link = page.locator(".cm-md-link").filter({ hasText: fixture.internalLabel }).last();
+  const link = page.locator(".cm-md-link").filter({ hasText: fixture.secondaryTitle }).last();
   await link.waitFor({ timeout: 8_000 });
   await link.scrollIntoViewIfNeeded();
   await nextAnimationFrame(page);
   await assertIntersectsViewport(page, link, `internal page link ${viewport.name}`, 4);
-  const beforeLine = await renderedLineState(page, fixture.internalLabel);
+  const beforeLine = await renderedLineState(page, fixture.secondaryTitle);
   if (beforeLine.dataUrl !== fixture.secondaryPath || beforeLine.leakedSource) {
     throw new Error(`Internal rendered link did not expose the expected page target: ${JSON.stringify({ expected: fixture.secondaryPath, beforeLine })}`);
   }
 
-  await clickVisibleText(page, fixture.internalLabel);
+  await link.click();
   await waitForTitleValue(page, fixture.secondaryTitle);
   await page.getByText(fixture.secondaryBody).first().waitFor({ timeout: 8_000 });
   const opened = await readCapturedOpenRequests(page, capture);

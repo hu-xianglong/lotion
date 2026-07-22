@@ -16,8 +16,7 @@ export class PageService {
 
   async list(): Promise<PageMeta[]> {
     const manifest = await this.workspace.getManifest();
-    await this.pageRecords.ensure();
-    const known = new Map((await this.pageRecords.listMetas()).map((meta) => [meta.id, meta]));
+    const known = new Map((await this.pageRecords.listMetas(manifest.pages)).map((meta) => [meta.id, meta]));
     const pages: PageMeta[] = [];
 
     for (const id of manifest.pages) {
@@ -65,6 +64,40 @@ export class PageService {
       activePageId: id
     });
     return page;
+  }
+
+  async duplicate(id: string): Promise<PageDocument> {
+    const source = await this.get(id);
+    const existingTitles = new Set((await this.list()).map((page) => page.title.trim()));
+    const title = duplicatePageTitle(source.meta.title, existingTitles);
+    const now = new Date().toISOString();
+    const duplicateId = createId("pg");
+    const sourcePath = normalizePath(source.meta.path);
+    const path = sourcePath.length > 0
+      ? [...sourcePath.slice(0, -1), title]
+      : [title];
+    const duplicate: PageDocument = {
+      meta: {
+        ...source.meta,
+        id: duplicateId,
+        title,
+        created_time: now,
+        updated_time: now,
+        path
+      },
+      markdown: source.markdown
+    };
+
+    const bodyPath = pageBodyPath(duplicateId, title);
+    await writeMarkdownBody(join(this.workspace.requirePaths().root, bodyPath), duplicate.markdown);
+    await this.pageRecords.upsert({ ...defaultPageRecordInput(duplicate.meta), bodyPath });
+
+    const manifest = await this.workspace.getManifest();
+    const pages = [...manifest.pages];
+    const sourceIndex = pages.indexOf(id);
+    pages.splice(sourceIndex >= 0 ? sourceIndex + 1 : pages.length, 0, duplicateId);
+    await this.workspace.saveManifest({ ...manifest, pages, activePageId: duplicateId });
+    return duplicate;
   }
 
   async get(id: string): Promise<PageDocument> {
@@ -164,13 +197,19 @@ export class PageService {
   async rename(id: string, title: string): Promise<PageDocument> {
     const page = await this.get(id);
     const nextTitle = title.trim() || "Untitled";
-    const markdown = page.markdown.startsWith("# ")
+    const currentPath = page.meta.path?.map((segment) => segment.trim()).filter(Boolean) ?? [];
+    const nextPath = currentPath.length > 0
+      ? [...currentPath.slice(0, -1), nextTitle]
+      : [nextTitle];
+    const currentHeading = `# ${page.meta.title}`;
+    const markdown = page.markdown === currentHeading || page.markdown.startsWith(`${currentHeading}\n`)
       ? page.markdown.replace(/^# .*/, `# ${nextTitle}`)
-      : `# ${nextTitle}\n\n${page.markdown}`;
+      : page.markdown;
     const next: PageDocument = {
       meta: {
         ...page.meta,
         title: nextTitle,
+        path: nextPath,
         updated_time: new Date().toISOString()
       },
       markdown
@@ -242,7 +281,6 @@ export class PageService {
   }
 
   private async getOrCreateMeta(id: string): Promise<PageMeta> {
-    await this.pageRecords.ensure();
     const existing = await this.pageRecords.getMeta(id);
     if (existing) return existing;
     const meta = await this.createFallbackMeta(id);
@@ -315,6 +353,18 @@ export class PageService {
 
 function clampPct(n: number): number {
   return Math.max(0, Math.min(100, n));
+}
+
+function duplicatePageTitle(sourceTitle: string, existingTitles: Set<string>): string {
+  const cleanTitle = sourceTitle.trim() || "Untitled";
+  const baseTitle = cleanTitle.replace(/ \(Copy(?: \d+)?\)$/i, "");
+  let candidate = `${baseTitle} (Copy)`;
+  let copyNumber = 2;
+  while (existingTitles.has(candidate)) {
+    candidate = `${baseTitle} (Copy ${copyNumber})`;
+    copyNumber += 1;
+  }
+  return candidate;
 }
 
 function firstMarkdownHeading(markdown: string): string | undefined {

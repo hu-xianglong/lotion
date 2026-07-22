@@ -2,7 +2,13 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertNoHarnessConsoleErrors, readHarnessResultArtifactsSince, selectedViewports, withLotionUIHarness } from "./ui-harness.mjs";
+import {
+  assertNoHarnessConsoleErrors,
+  readHarnessResultArtifactsSince,
+  selectedViewports,
+  setLotionLocale,
+  withLotionUIHarness
+} from "./ui-harness.mjs";
 import { writeUiSuiteArtifactIndex } from "./lib/ui-suite-artifacts.mjs";
 import { smokeTempWorkspaceNeedles } from "./smoke-workspace-utils.mjs";
 
@@ -39,6 +45,7 @@ const suite = [
   ["Design system UI", "smoke-design-system-ui.mjs"],
   ["Image lightbox UI", "smoke-image-lightbox-ui.mjs"],
   ["Database created views UI", "smoke-database-created-views-ui.mjs"],
+  ["Copy system time UI", "smoke-copy-system-time-ui.mjs"],
   ["Window pop-out UI", "smoke-window-popout-ui.mjs"],
   ["Database template UI", "smoke-database-template-ui.mjs"]
 ];
@@ -65,12 +72,14 @@ const summary = await withLotionUIHarness("ui-suite", async ({ artifactRoot, cdp
   const results = [];
   for (const [name, script] of selectedSuite) {
     const started = Date.now();
+    await resetSharedHarnessState(page);
     console.log(`\n[smoke:ui] ${name}`);
     const result = spawnSync(process.execPath, [join(scriptDir, script)], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         LOTION_CDP_URL: cdpUrl,
+        LOTION_RENDERER_COVERAGE_FILE: "",
         LOTION_UI_HARNESS_NO_AUTOSTART: "1"
       },
       encoding: "utf8",
@@ -102,7 +111,7 @@ const summary = await withLotionUIHarness("ui-suite", async ({ artifactRoot, cdp
   };
   summary.artifactIndex = await writeUiSuiteArtifactIndex({ artifactRoot, summary });
   return summary;
-});
+}, { collectRendererCoverage: false });
 
 console.log("\n[smoke:ui] passed");
 console.log(JSON.stringify(summary, null, 2));
@@ -117,6 +126,31 @@ function uniqueSuiteEntries(entries) {
     selected.push(entry);
   }
   return selected;
+}
+
+async function resetSharedHarnessState(page) {
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => undefined);
+      await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 8_000 });
+      await setLotionLocale(page, "en");
+      await page.evaluate(() => window.localStorage.removeItem("lotion.debug.startupPhaseDelayMs"));
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isNavigationRace(error) || attempt === 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+  throw lastError;
+}
+
+function isNavigationRace(error) {
+  const message = String(error?.message || error || "");
+  return message.includes("Execution context was destroyed") ||
+    message.includes("most likely because of a navigation") ||
+    message.includes("ERR_NETWORK_CHANGED");
 }
 
 async function cleanupTempRecents(page) {

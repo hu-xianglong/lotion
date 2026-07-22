@@ -3,11 +3,14 @@ import { orderFieldIdsByContentRichness } from "../../shared/field-order.js";
 import { applyFormulasToRecords } from "../../shared/formula.js";
 import { createId, slugifyId } from "../../shared/ids.js";
 import { applyRollupsToRecords } from "../../shared/rollup.js";
+import { parseDateTimeValue } from "../../shared/date-values.js";
 import { pageMarkdownFileName } from "../../shared/workspace-paths.js";
 import type { RowPagesService } from "./row-pages-service.js";
 import type {
   AddFieldInput,
   ColumnSummaryType,
+  CopyFieldToSystemTimeInput,
+  CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
   CreateViewInput,
   DatabaseBundle,
@@ -90,15 +93,11 @@ export class DatabaseService {
 
   async list(): Promise<DatabaseSummary[]> {
     const manifest = await this.workspace.getManifest();
-    const summaries: DatabaseSummary[] = [];
     const paths = this.workspace.requirePaths();
-
-    for (const id of manifest.databases) {
+    return Promise.all(manifest.databases.map(async (id) => {
       const schema = normalizeDatabasePath(await readJsonFile<DatabaseSchema>(paths.schema(id)));
-      summaries.push({ id: schema.id, name: schema.name, path: schema.path, icon: schema.icon, tags: schema.tags });
-    }
-
-    return summaries;
+      return { id: schema.id, name: schema.name, path: schema.path, icon: schema.icon, tags: schema.tags };
+    }));
   }
 
   async listStats(): Promise<DatabaseStats[]> {
@@ -343,6 +342,67 @@ export class DatabaseService {
     return { ...bundle, schema, records: final };
   }
 
+  async copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult> {
+    const bundle = await this.get(input.databaseId);
+    const sourceField = bundle.schema.fields.find((field) => field.id === input.sourceFieldId);
+    if (!sourceField) throw new Error(`Source field not found: ${input.sourceFieldId}`);
+    if (!hasDateDisplay(sourceField.type)) {
+      throw new Error(`Source field is not date-like: ${input.sourceFieldId}`);
+    }
+    if (input.sourceFieldId === input.targetFieldId) {
+      throw new Error("Source and target time fields must be different");
+    }
+    const targetField = bundle.schema.fields.find((field) => field.id === input.targetFieldId);
+    if (!targetField || targetField.type !== input.targetFieldId || !targetField.system) {
+      throw new Error(`System time field not found: ${input.targetFieldId}`);
+    }
+
+    let copiedRows = 0;
+    let unchangedRows = 0;
+    let skippedEmptyRows = 0;
+    let skippedInvalidRows = 0;
+    const changedRecords: DatabaseRecord[] = [];
+    const records = bundle.records.map((record) => {
+      const rawValue = String(record[input.sourceFieldId] ?? "").trim();
+      if (!rawValue) {
+        skippedEmptyRows += 1;
+        return record;
+      }
+      const parsed = parseDateTimeValue(rawValue);
+      if (!parsed) {
+        skippedInvalidRows += 1;
+        return record;
+      }
+      const timestamp = parsed.toISOString();
+      if (String(record[input.targetFieldId] ?? "") === timestamp) {
+        unchangedRows += 1;
+        return record;
+      }
+      copiedRows += 1;
+      const next = { ...record, [input.targetFieldId]: timestamp };
+      changedRecords.push(next);
+      return next;
+    });
+
+    const final = copiedRows > 0
+      ? await this.writeBundle(bundle.schema, records, bundle.views)
+      : bundle.records;
+    if (changedRecords.length > 0) {
+      const finalById = new Map(final.map((record) => [String(record.id ?? ""), record]));
+      await this.syncPageRecordsForRows(
+        input.databaseId,
+        changedRecords.map((record) => finalById.get(String(record.id ?? "")) ?? record)
+      );
+    }
+    return {
+      bundle: { ...bundle, records: final },
+      copiedRows,
+      unchangedRows,
+      skippedEmptyRows,
+      skippedInvalidRows
+    };
+  }
+
   async deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle> {
     const bundle = await this.get(databaseId);
     const field = bundle.schema.fields.find((item) => item.id === fieldId);
@@ -506,26 +566,32 @@ export class DatabaseService {
   }
 
   async syncPageRecordForRow(databaseId: string, record: DatabaseRecord): Promise<void> {
-    const pageId = String(record.id ?? "");
-    if (!pageId) return;
-    const now = new Date().toISOString();
-    await this.pageRecords.upsert({
-      meta: {
-        id: pageId,
-        title: String(record.title ?? "").trim() || "Untitled",
-        created_time: String(record.created_time ?? "") || now,
-        updated_time: String(record.updated_time ?? "") || now,
-        icon: String(record.row_icon ?? "").trim() || undefined
-      },
-      kind: "page",
-      bodyPath: await this.pageRecords.getBodyPath(pageId),
-      databaseId,
-      rowId: pageId
-    });
+    await this.syncPageRecordsForRows(databaseId, [record]);
   }
 
   async syncPageRecordsForRows(databaseId: string, records: DatabaseRecord[]): Promise<void> {
-    await Promise.all(records.map((record) => this.syncPageRecordForRow(databaseId, record)));
+    if (records.length === 0) return;
+    const ids = records.map((record) => String(record.id ?? "")).filter(Boolean);
+    const existingById = new Map((await this.pageRecords.listMetas(ids)).map((meta) => [meta.id, meta]));
+    const now = new Date().toISOString();
+    await this.pageRecords.upsertMany(records.flatMap((record) => {
+      const id = String(record.id ?? "");
+      if (!id) return [];
+      const existing = existingById.get(id);
+      return [{
+        meta: {
+          ...existing,
+          id,
+          title: String(record.title ?? "").trim() || existing?.title || "Untitled",
+          created_time: String(record.created_time ?? "") || existing?.created_time || now,
+          updated_time: String(record.updated_time ?? "") || existing?.updated_time || now,
+          icon: String(record.row_icon ?? "").trim() || existing?.icon
+        },
+        kind: "page" as const,
+        databaseId,
+        rowId: id
+      }];
+    }));
   }
 
   async createView(input: CreateViewInput): Promise<DatabaseBundle> {

@@ -10,7 +10,6 @@ const REQUIRED_PHASES = [
 ];
 
 const REQUIRED_DEFAULT_TITLES = ["新建页面", "打开所有页面"];
-const REQUIRED_TYPED_QUERY = "exampleSearchPage";
 
 export async function assertGlobalSearchVisualArtifactContract(summary, {
   expectedViewportNames = ["desktop", "compact"]
@@ -140,7 +139,12 @@ async function assertSearchSnapshots(entry, viewportName) {
     if (visibleRows.length < 1) {
       throw new Error(`Global search visual artifact contract missing visible rows for ${viewportName} ${snapshot.phase}`);
     }
-    assertPhaseRows({ metadataPayload, phase: snapshot.phase, viewportName });
+    assertPhaseRows({
+      expectedTypedQuery: String(entry.query ?? ""),
+      metadataPayload,
+      phase: snapshot.phase,
+      viewportName
+    });
     if (metadataPayload.pageId) assertNoRawIdLeak(visibleRows, metadataPayload.pageId, `${snapshot.phase} ${viewportName}`);
 
     checked.push({
@@ -153,10 +157,10 @@ async function assertSearchSnapshots(entry, viewportName) {
   return checked;
 }
 
-function assertPhaseRows({ metadataPayload, phase, viewportName }) {
+function assertPhaseRows({ expectedTypedQuery, metadataPayload, phase, viewportName }) {
   const rows = metadataPayload.visibleRows;
   if (phase === "typed") {
-    if (metadataPayload.query !== REQUIRED_TYPED_QUERY) {
+    if (!expectedTypedQuery || metadataPayload.query !== expectedTypedQuery) {
       throw new Error(`Global search visual artifact contract typed query mismatch for ${viewportName}: ${metadataPayload.query}`);
     }
     if (!rows.some((row) => row.title === metadataPayload.pageTitle && row.badge)) {

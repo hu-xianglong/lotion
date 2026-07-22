@@ -49,11 +49,16 @@ Run the package coverage gate:
 npm run test:coverage
 ```
 
-`test:coverage` enforces 80% line coverage for the main/shared runtime package
-surface covered by `test:fast`.
+`test:coverage` enforces 90% line coverage independently for the main/shared
+runtime package, bundled plugin runtime, and testable Renderer core. The
+Renderer core gate covers parsing, state, settings, query, routing, template,
+and option-color logic; Electron UI behavior is covered separately by the
+multi-viewport UI regression lane.
 
 Run the API-only coverage gate when changing this entry point:
 
 ```sh
 npm run test:coverage:customer-api
 ```
+
+The API-only gate also enforces 90% line coverage.

@@ -243,6 +243,13 @@ npm run test:startup-latency
 npm run test:search-latency
 ```
 
+Install the tracked hooks with `npm run hooks:install`; the pre-commit hook runs
+`npm run gate:commit`. Production-shaped verification uses
+`npm run release:gate`, which runs the full regression and visual lanes, builds
+an isolated app snapshot, cold-starts it, verifies build hashes, and checks the
+complete Electron preload API contract. GitHub runs the same release gate for
+pull requests and pushes to `main`.
+
 The 500K-row stress CSV is generated locally because it exceeds GitHub's file
 size limit:
 
@@ -313,7 +320,10 @@ welcome. Before opening a pull request:
 
 1. Keep the change scoped to one behavior or product surface.
 2. Add regression coverage proportional to the risk.
-3. Run `npm test`, `npm run typecheck`, and `npm run build`.
+3. Run `npm test`, `npm run typecheck`, `npm run test:coverage`, and `npm run build`.
+   The coverage gate requires 90% lines independently for main/shared,
+   bundled plugins, and the Renderer core; visible interactions additionally
+   require the multi-viewport UI regression artifacts.
 4. Include UI artifacts when changing visible behavior.
 5. Do not include personal workspaces, credentials, or proprietary exports.
 

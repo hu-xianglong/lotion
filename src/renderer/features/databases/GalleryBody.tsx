@@ -1,11 +1,13 @@
 import type { DatabaseRecord, FieldSchema, TableView } from "../../../shared/types";
 import { formatDateForField, isDateLikeFieldType } from "../../../shared/date-values";
 import { EntityIcon, iconUrl } from "../../components/EntityIcon";
+import { resolveRowIcon } from "../../../shared/row-icons";
 
 interface GalleryBodyProps {
   records: DatabaseRecord[];
   fields: FieldSchema[];
   view: TableView;
+  databaseIcon?: string;
   onOpenRow: (rowId: string) => void;
 }
 
@@ -20,7 +22,7 @@ interface GalleryBodyProps {
  * a user can either use the row-detail cover or point the gallery at
  * a custom field (e.g. an image-URL column).
  */
-export function GalleryBody({ records, fields, view, onOpenRow }: GalleryBodyProps) {
+export function GalleryBody({ records, fields, view, databaseIcon, onOpenRow }: GalleryBodyProps) {
   // `fields` is the view's visible-field list. A cover field can be hidden
   // from the card captions while still driving the image, matching Notion's
   // gallery cover behavior.
@@ -62,7 +64,7 @@ export function GalleryBody({ records, fields, view, onOpenRow }: GalleryBodyPro
             </div>
             <div className="gallery-card-meta">
               <div className="gallery-card-title">
-                <EntityIcon kind="row_page" icon={String(record.row_icon ?? "") || undefined} size={16} />
+                <EntityIcon kind="row_page" icon={resolveRowIcon(record, databaseIcon)} size={16} />
                 <span>{String(record.title ?? "") || "Untitled"}</span>
               </div>
               {captionFields.map((field) => {

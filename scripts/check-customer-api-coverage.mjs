@@ -7,7 +7,7 @@ import { collectCoverage, run } from "./lib/v8-coverage.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const coverageDir = await mkdtemp(join(tmpdir(), "lotion-api-coverage-"));
-const threshold = Number(process.env.LOTION_CUSTOMER_API_COVERAGE_THRESHOLD ?? "80");
+const threshold = Number(process.env.LOTION_CUSTOMER_API_COVERAGE_THRESHOLD ?? "90");
 const targets = [join(root, "dist-electron/main/customer-api.js")];
 
 try {

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type WheelEvent } from "react";
-import type { ColumnSummaryType, DatabaseBundle, DatabaseRecord, DatabaseSummary, EntityRef, FieldSchema, FieldType, RecordValue, SelectOption, TableView } from "../../../shared/types";
+import type { ColumnSummaryType, DatabaseBundle, DatabaseRecord, DatabaseSummary, EntityRef, FieldSchema, FieldType, RecordValue, SelectOption, SystemTimeFieldId, TableView } from "../../../shared/types";
 import { formatDateForField, isDateLikeFieldType, parseDateValue } from "../../../shared/date-values";
 import type { DatabaseViewProvider, Disposable, WorkspaceAPI } from "../../../shared/plugin-api";
 import { useDatabaseCache } from "../../context/database-cache";
@@ -23,6 +23,7 @@ import { perfLog } from "../../lib/perf-log";
 import { pluginHost } from "../../plugin-host";
 import { isReactProvider } from "../../../shared/plugin-react";
 import { formulaColumnLabel } from "../../../shared/formula";
+import { resolveRowIcon } from "../../../shared/row-icons";
 
 const DEFAULT_COLUMN_WIDTH = 180;
 const MIN_COLUMN_WIDTH = 80;
@@ -90,6 +91,13 @@ export const DatabaseTable = memo(function DatabaseTable({
   const [fieldType, setFieldType] = useState<FieldSchema["type"]>("text");
   const [formula, setFormula] = useState("=IF(title=\"Done\", 1, 0)");
   const [editingField, setEditingField] = useState<FieldSchema>();
+  const [fieldContextMenu, setFieldContextMenu] = useState<{
+    fieldId: string;
+    left: number;
+    top: number;
+    copyingTarget?: SystemTimeFieldId;
+    message?: string;
+  } | null>(null);
   const [editingView, setEditingView] = useState<TableView>();
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
@@ -269,6 +277,24 @@ export const DatabaseTable = memo(function DatabaseTable({
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [templateMenuOpen]);
+
+  useEffect(() => {
+    if (!fieldContextMenu) return;
+    function closeFieldContextMenu(event: MouseEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".field-context-menu")) return;
+      setFieldContextMenu(null);
+    }
+    function closeFieldContextMenuWithKeyboard(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setFieldContextMenu(null);
+    }
+    document.addEventListener("mousedown", closeFieldContextMenu);
+    document.addEventListener("keydown", closeFieldContextMenuWithKeyboard);
+    return () => {
+      document.removeEventListener("mousedown", closeFieldContextMenu);
+      document.removeEventListener("keydown", closeFieldContextMenuWithKeyboard);
+    };
+  }, [fieldContextMenu]);
 
   async function addField() {
     if (!fieldName.trim()) return;
@@ -637,6 +663,15 @@ export const DatabaseTable = memo(function DatabaseTable({
                 key={field.id}
                 className={`column-header${dropTargetClass}${draggingClass}`}
                 draggable
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setFieldContextMenu({
+                    fieldId: field.id,
+                    left: Math.max(8, Math.min(event.clientX, window.innerWidth - 268)),
+                    top: Math.max(8, Math.min(event.clientY, window.innerHeight - 240))
+                  });
+                }}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = "move";
                   event.dataTransfer.setData("text/plain", field.id);
@@ -843,6 +878,44 @@ export const DatabaseTable = memo(function DatabaseTable({
     });
   }
 
+  async function copyFieldToSystemTimeFromView(field: FieldSchema, targetFieldId: SystemTimeFieldId) {
+    if (fieldContextMenu?.copyingTarget) return;
+    const targetLabel = targetFieldId === "created_time"
+      ? (locale === "zh" ? "创建时间" : "Created time")
+      : (locale === "zh" ? "最后更新时间" : "Last updated time");
+    const confirmed = window.confirm(locale === "zh"
+      ? `将“${field.name}”中的有效日期复制到“${targetLabel}”？现有系统时间会被覆盖。`
+      : `Copy valid dates from “${field.name}” to ${targetLabel}? Existing system timestamps will be overwritten.`);
+    if (!confirmed) return;
+    setFieldContextMenu((current) => current?.fieldId === field.id
+      ? { ...current, copyingTarget: targetFieldId, message: "" }
+      : current);
+    try {
+      const result = await cache.copyFieldToSystemTime({
+        databaseId: bundle.schema.id,
+        sourceFieldId: field.id,
+        targetFieldId
+      });
+      const message = locale === "zh"
+        ? `已复制 ${result.copiedRows} 行；${result.unchangedRows} 行无需修改；跳过 ${result.skippedEmptyRows} 个空值和 ${result.skippedInvalidRows} 个非法值。`
+        : `Copied ${result.copiedRows} rows; ${result.unchangedRows} unchanged; skipped ${result.skippedEmptyRows} empty and ${result.skippedInvalidRows} invalid values.`;
+      setFieldContextMenu((current) => current?.fieldId === field.id
+        ? { ...current, message }
+        : current);
+    } catch (error) {
+      const message = locale === "zh"
+        ? `复制失败：${error instanceof Error ? error.message : String(error)}`
+        : `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
+      setFieldContextMenu((current) => current?.fieldId === field.id
+        ? { ...current, message }
+        : current);
+    } finally {
+      setFieldContextMenu((current) => current?.fieldId === field.id
+        ? { ...current, copyingTarget: undefined }
+        : current);
+    }
+  }
+
   const wrapFieldSet = useMemo(
     () => resolveWrappedFieldIds(activeView, fields),
     [activeView, fields]
@@ -930,6 +1003,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           records={records}
           fields={fields}
           view={activeView}
+          databaseIcon={bundle.schema.icon}
           onOpenRow={(rowId) => openRowPage(bundle.schema.id, rowId)}
         />
       )}
@@ -938,6 +1012,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           records={records}
           fields={fields}
           view={activeView}
+          databaseIcon={bundle.schema.icon}
           onOpenRow={(rowId) => openRowPage(bundle.schema.id, rowId)}
         />
       )}
@@ -945,6 +1020,7 @@ export const DatabaseTable = memo(function DatabaseTable({
         <ListBody
           records={records}
           fields={fields}
+          databaseIcon={bundle.schema.icon}
           onOpenRow={(rowId) => openRowPage(bundle.schema.id, rowId)}
         />
       )}
@@ -983,6 +1059,7 @@ export const DatabaseTable = memo(function DatabaseTable({
                 wrap={wrapFieldSet.has(field.id)}
                 record={record}
                 databaseId={bundle.schema.id}
+                databaseIcon={bundle.schema.icon}
                 onChange={(value) => updateCell(String(record.id), field, value)}
                 onOptionColorChange={(optionId, color) => updateOptionColor(field, optionId, color)}
                 onOptionsChange={(options) => updateOptions(field, options)}
@@ -1091,6 +1168,61 @@ export const DatabaseTable = memo(function DatabaseTable({
         </div>
       )}
 
+      {fieldContextMenu && (() => {
+        const field = bundle.schema.fields.find((candidate) => candidate.id === fieldContextMenu.fieldId);
+        if (!field) return null;
+        const dateLike = isDateLikeFieldType(field.type);
+        return (
+          <div
+            className="field-context-menu"
+            role="menu"
+            aria-label={`${field.name} ${t("field.columnMenu")}`}
+            style={{ left: fieldContextMenu.left, top: fieldContextMenu.top }}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <div className="field-context-menu-title">{field.name}</div>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setFieldContextMenu(null);
+                setEditingField(field);
+              }}
+            >
+              {t("field.edit")}
+            </button>
+            {dateLike && (
+              <>
+                <div className="field-context-menu-divider" />
+                {field.id !== "created_time" && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!!fieldContextMenu.copyingTarget}
+                    onClick={() => void copyFieldToSystemTimeFromView(field, "created_time")}
+                  >
+                    {fieldContextMenu.copyingTarget === "created_time" ? t("field.copyingTimeValues") : t("field.copyToCreatedTime")}
+                  </button>
+                )}
+                {field.id !== "updated_time" && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!!fieldContextMenu.copyingTarget}
+                    onClick={() => void copyFieldToSystemTimeFromView(field, "updated_time")}
+                  >
+                    {fieldContextMenu.copyingTarget === "updated_time" ? t("field.copyingTimeValues") : t("field.copyToUpdatedTime")}
+                  </button>
+                )}
+              </>
+            )}
+            {fieldContextMenu.message && (
+              <output className="field-context-menu-result" role="status">{fieldContextMenu.message}</output>
+            )}
+          </div>
+        );
+      })()}
+
       {editingField && (
         <FieldSettingsDialog
           field={editingField}
@@ -1110,6 +1242,11 @@ export const DatabaseTable = memo(function DatabaseTable({
           }
           onClose={() => setEditingField(undefined)}
           onSave={(input) => updateField(editingField, input)}
+          onCopyToSystemTime={(targetFieldId) => cache.copyFieldToSystemTime({
+            databaseId: bundle.schema.id,
+            sourceFieldId: editingField.id,
+            targetFieldId
+          })}
         />
       )}
 
@@ -1167,6 +1304,7 @@ export interface CellProps {
   wrap: boolean;
   record: DatabaseRecord;
   databaseId: string;
+  databaseIcon?: string;
   onChange: (value: RecordValue) => void;
   onOptionColorChange: (optionId: string, color: string) => void;
   onOptionsChange: (options: SelectOption[]) => void;
@@ -1230,6 +1368,7 @@ export function Cell({
   wrap,
   record,
   databaseId,
+  databaseIcon,
   onChange,
   onOptionsChange,
   onOpenRowPage,
@@ -1237,7 +1376,7 @@ export function Cell({
 }: CellProps) {
   const { t } = useI18n();
   const empty = t("cell.empty");
-  const rowIcon = String(record.row_icon ?? "");
+  const rowIcon = resolveRowIcon(record, databaseIcon);
 
   // System fields, imported timestamp fields, formula fields, and rollup fields are
   // read-only regardless of provider — they're managed by the host or
@@ -1299,7 +1438,7 @@ export function Cell({
     const rowId = String(record.id);
     return (
       <span className="title-cell-with-icon">
-        <EntityIcon kind="row_page" icon={rowIcon || undefined} size={16} />
+        <EntityIcon kind="row_page" icon={rowIcon} size={16} />
         <span className="title-cell-editor">{editor}</span>
         {onOpenRowPage && (
           <button

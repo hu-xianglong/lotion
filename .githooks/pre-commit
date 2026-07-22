@@ -4,5 +4,5 @@ set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-echo "Running Lotion package coverage gate..."
-npm run test:coverage
+echo "Running Lotion commit quality gate..."
+npm run gate:commit

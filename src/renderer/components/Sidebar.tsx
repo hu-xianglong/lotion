@@ -26,6 +26,7 @@ import {
 import { EntityIcon } from "./EntityIcon";
 import type { CreatePageInput, DatabaseSummary, PageMeta, PagesTree } from "../../shared/types";
 import { databaseFolderName, pageMarkdownFileName } from "../../shared/workspace-paths";
+import { Copy } from "lucide-react";
 
 // ── Files section helpers ─────────────────────────────────────────────
 
@@ -316,6 +317,7 @@ export function SidebarPageContextMenuView({
   top,
   onOpen,
   onCreateChild,
+  onDuplicate,
   onDelete
 }: {
   page: PageMeta;
@@ -323,6 +325,7 @@ export function SidebarPageContextMenuView({
   top: number;
   onOpen: () => void;
   onCreateChild: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const { t } = useI18n();
@@ -342,6 +345,10 @@ export function SidebarPageContextMenuView({
       <button type="button" role="menuitem" onClick={onCreateChild}>
         <span className="sidebar-context-menu-icon"><NewPageIcon /></span>
         <span>{t("sidebar.contextNewChild")}</span>
+      </button>
+      <button type="button" role="menuitem" onClick={onDuplicate}>
+        <span className="sidebar-context-menu-icon"><Copy size={15} strokeWidth={1.9} /></span>
+        <span>{t("sidebar.contextDuplicate")}</span>
       </button>
       <button type="button" role="menuitem" className="danger" onClick={onDelete}>
         <span className="sidebar-context-menu-icon">×</span>
@@ -444,7 +451,7 @@ export function Sidebar(props: SidebarProps) {
     event.preventDefault();
     event.stopPropagation();
     const menuWidth = 192;
-    const menuHeight = 132;
+    const menuHeight = 168;
     setPageContextMenu({
       page,
       left: Math.min(Math.max(event.clientX, 8), window.innerWidth - menuWidth - 8),
@@ -468,6 +475,11 @@ export function Sidebar(props: SidebarProps) {
       parentKind: "page",
       path: [...parentPath, childTitle]
     });
+  }
+
+  async function duplicateContextPage(page: PageMeta) {
+    setPageContextMenu(null);
+    await actions.duplicatePage(page.id);
   }
 
   return (
@@ -762,6 +774,7 @@ export function Sidebar(props: SidebarProps) {
             actions.selectPage(page.id);
           }}
           onCreateChild={() => createContextChildPage(pageContextMenu.page)}
+          onDuplicate={() => void duplicateContextPage(pageContextMenu.page)}
           onDelete={() => void deleteContextPage(pageContextMenu.page)}
         />
       )}

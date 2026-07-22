@@ -11,6 +11,7 @@ export async function createStartupWorkspaceFixture(options = {}) {
   const pageCount = Math.max(1, Math.floor(options.pageCount ?? 80));
   const databaseCount = Math.max(0, Math.floor(options.databaseCount ?? 3));
   const rowsPerDatabase = Math.max(0, Math.floor(options.rowsPerDatabase ?? 160));
+  const extraDatabaseFields = Array.isArray(options.extraDatabaseFields) ? options.extraDatabaseFields : [];
   const root = await mkdtemp(join(tmpdir(), `lotion-first-launch-${safeName}-`));
   const now = "2026-06-12T12:00:00.000Z";
   const pagesFolder = databaseFolderName(PAGES_DATABASE_ID, "pages");
@@ -56,7 +57,15 @@ export async function createStartupWorkspaceFixture(options = {}) {
         bodyPath: workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(id, title)),
         tags: index % 2 === 0 ? "startup" : "background"
       });
-    })
+    }),
+    ...databaseIds.flatMap((databaseId, databaseIndex) => (
+      Array.from({ length: rowsPerDatabase }, (_unused, rowIndex) => rowPageRecord({
+        databaseId,
+        databaseName: `Startup Records ${databaseIndex + 1}`,
+        rowIndex,
+        now
+      }))
+    ))
   ]);
   await writeFile(join(root, targetBodyPath), startupTargetMarkdown(targetTitle, databaseIds), "utf8");
   for (let index = 0; index < otherPageIds.length; index += 1) {
@@ -73,6 +82,7 @@ export async function createStartupWorkspaceFixture(options = {}) {
   for (let index = 0; index < databaseIds.length; index += 1) {
     await writeStartupDatabase(root, {
       databaseId: databaseIds[index],
+      extraFields: extraDatabaseFields,
       name: `Startup Records ${index + 1}`,
       now,
       rows: rowsPerDatabase
@@ -113,7 +123,7 @@ function startupTargetMarkdown(title, databaseIds) {
   return `${lines.join("\n")}\n`;
 }
 
-async function writeStartupDatabase(root, { databaseId, name, now, rows }) {
+async function writeStartupDatabase(root, { databaseId, extraFields, name, now, rows }) {
   const folder = databaseFolderName(databaseId, name);
   const dir = join(root, "databases", "user", folder);
   await mkdir(join(dir, "pages"), { recursive: true });
@@ -131,21 +141,26 @@ async function writeStartupDatabase(root, { databaseId, name, now, rows }) {
       { id: "title", name: "Name", type: "text" },
       { id: "status", name: "Status", type: "select", options: [{ id: "todo", name: "Todo", color: "gray" }, { id: "done", name: "Done", color: "green" }] },
       { id: "score", name: "Score", type: "number" },
-      { id: "notes", name: "Notes", type: "text" }
+      { id: "notes", name: "Notes", type: "text" },
+      ...extraFields.map(({ values: _values, ...field }) => field)
     ]
   });
-  await writeJson(join(dir, "views", `${DEFAULT_VIEW_ID}.json`), defaultView(databaseId, ["title", "notes", "status", "score"]));
+  await writeJson(
+    join(dir, "views", `${DEFAULT_VIEW_ID}.json`),
+    defaultView(databaseId, ["title", "notes", "status", "score", ...extraFields.map((field) => field.id)])
+  );
   await writeCsv(
     join(dir, "data.csv"),
-    ["id", "created_time", "updated_time", "title", "status", "score", "notes"],
+    ["id", "created_time", "updated_time", "title", "status", "score", "notes", ...extraFields.map((field) => field.id)],
     Array.from({ length: rows }, (_unused, index) => ({
-      id: `row_startup_${index + 1}`,
+      id: startupRowId(databaseId, index),
       created_time: now,
       updated_time: now,
       title: `${name} row ${index + 1}`,
       status: index % 3 === 0 ? "Done" : "Todo",
       score: String(index + 1),
-      notes: `Startup database note ${index + 1} with enough text to make column loading non-trivial.`
+      notes: `Startup database note ${index + 1} with enough text to make column loading non-trivial.`,
+      ...Object.fromEntries(extraFields.map((field) => [field.id, String(field.values?.[index] ?? "")]))
     }))
   );
 }
@@ -194,6 +209,37 @@ function pageRecord({ id, title, now, icon, path, bodyPath, tags = "" }) {
     row_id: id,
     page_file: ""
   };
+}
+
+function rowPageRecord({ databaseId, databaseName, rowIndex, now }) {
+  const id = startupRowId(databaseId, rowIndex);
+  const title = `${databaseName} row ${rowIndex + 1}`;
+  const databaseFolder = databaseFolderName(databaseId, databaseName);
+  const pageFile = pageMarkdownFileName(id, title);
+  return {
+    id,
+    created_time: now,
+    updated_time: now,
+    title,
+    kind: "row_page",
+    body_path: workspacePath("databases", "user", databaseFolder, "pages", pageFile),
+    icon: "",
+    cover: "",
+    cover_offset: "",
+    path: serializePathValue([databaseName, title]),
+    parent_id: JSON.stringify([{ entityId: databaseId, kind: "database" }]),
+    tags: "",
+    date: "",
+    url: "",
+    full_width: "",
+    database_id: databaseId,
+    row_id: id,
+    page_file: pageFile
+  };
+}
+
+function startupRowId(databaseId, rowIndex) {
+  return `row_startup_${databaseId}_${rowIndex + 1}`;
 }
 
 function pagesSchema(now) {

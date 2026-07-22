@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion pencil L mark</title>
+  <desc id="desc">A geometric L mark drawn by a pencil with a visible cap, body, and lead.</desc>
+
+  <g fill="currentColor">
+    <path d="M142 72 L242 56 L250 106 L150 122 Z"/>
+    <path d="M154 134 L254 118 L280 280 L180 296 Z"/>
+    <path fill-rule="evenodd" d="M180 296 L280 280 L228 414 Z M198 302 L260 292 L232 370 Z"/>
+    <path d="M228 414 L246 394 H404 L382 430 H244 Z"/>
+  </g>
+</svg>

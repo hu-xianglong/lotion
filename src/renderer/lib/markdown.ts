@@ -67,10 +67,10 @@ function renderBasicMarkdown(markdown: string): string {
     // Inline replacements run after the line-level wrapping. Order matters:
     // image `![alt](url)` is matched before link `[text](url)` to avoid the
     // link rule eating image syntax.
-    .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (_match, alt, url, title) =>
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^)]*?)&quot;)?\)/g, (_match, alt, url, title) =>
       `<img class="md-image" src="${url}" alt="${alt}"${title ? ` title="${title}"` : ""} />`
     )
-    .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (_match, text, url, title) =>
+    .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;([^)]*?)&quot;)?\)/g, (_match, text, url, title) =>
       `<a class="md-link" href="${url}" target="_blank" rel="noopener noreferrer"${title ? ` title="${title}"` : ""}>${text}</a>`
     )
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")

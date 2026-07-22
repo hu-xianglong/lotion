@@ -499,6 +499,22 @@ export interface UpdateFieldInput {
   timeFormat?: TimeDisplayFormat;
 }
 
+export type SystemTimeFieldId = "created_time" | "updated_time";
+
+export interface CopyFieldToSystemTimeInput {
+  databaseId: ID;
+  sourceFieldId: ID;
+  targetFieldId: SystemTimeFieldId;
+}
+
+export interface CopyFieldToSystemTimeResult {
+  bundle: DatabaseBundle;
+  copiedRows: number;
+  unchangedRows: number;
+  skippedEmptyRows: number;
+  skippedInvalidRows: number;
+}
+
 export interface UpdateCellInput {
   databaseId: ID;
   rowId: ID;

@@ -18,7 +18,7 @@ import type {
   NotionLinkResolver
 } from "./notion-html-converter.js";
 import type { AppConfigService } from "./app-config-service.js";
-import { normalizeDateValue } from "../../shared/date-values.js";
+import { normalizeDateValue, parseDateTimeValue } from "../../shared/date-values.js";
 import { formatEmojiIcon } from "../../shared/entity-icons.js";
 import { orderFieldIdsByContentRichness } from "../../shared/field-order.js";
 import { workspaceAttachmentPath } from "../../shared/attachments.js";
@@ -2536,6 +2536,9 @@ async function emitWorkspace(
     /** Workspace-relative path or remote URL for the page cover image. */
     cover?: string;
     coverOffset?: number;
+    /** Original Notion timestamps when the export exposes them. */
+    createdTime?: string;
+    updatedTime?: string;
   }
   interface RowPlan {
     rowId: string;
@@ -2824,6 +2827,8 @@ async function emitWorkspace(
     let icon: string | undefined;
     let cover: string | undefined;
     let coverOffset: number | undefined;
+    let createdTime: string | undefined;
+    let updatedTime: string | undefined;
     let title = entry.title || "Untitled";
     let rawHtmlForDedupe: string | undefined;
     if (isHtmlSource(entry.sourcePath)) {
@@ -2861,6 +2866,9 @@ async function emitWorkspace(
       const parsedCover = resolveParsedCover(parsed, dirname(entry.sourcePath));
       cover = parsedCover.cover;
       coverOffset = parsedCover.coverOffset;
+      const importedTimes = notionSystemTimes(parsed.properties, parsed.propertyTypes);
+      createdTime = importedTimes.createdTime;
+      updatedTime = importedTimes.updatedTime;
       const directDatabaseHash = databaseIdByHash.has(hash) ? hash : undefined;
       const csvWrapperTargetHash = htmlWrapperTargetDbHash(headerRead.sampleHtml, entry.sourcePath);
       const metadataTargetHash = directDatabaseHash ?? csvWrapperTargetHash;
@@ -2975,7 +2983,9 @@ async function emitWorkspace(
       sourcePath: entry.sourcePath,
       icon,
       cover,
-      coverOffset
+      coverOffset,
+      createdTime,
+      updatedTime
     });
   }
   if (skippedDuplicateStandalonePages > 0) {
@@ -3387,7 +3397,8 @@ async function emitWorkspace(
         const normalizedValue = normalizeImportedCellValue(fieldType, rawValue);
         record[fieldId] = normalizedValue;
         const systemTimeFieldId = systemTimeFieldByHeader.get(header);
-        if (systemTimeFieldId && normalizedValue) record[systemTimeFieldId] = normalizedValue;
+        const importedSystemTime = systemTimeFieldId ? normalizeImportedSystemTime(rawValue) : "";
+        if (systemTimeFieldId && importedSystemTime) record[systemTimeFieldId] = importedSystemTime;
       }
       records.push(record);
       rowPlans.push({
@@ -3459,7 +3470,10 @@ async function emitWorkspace(
           const normalizedValue = normalizeImportedCellValue(fieldType, parsed.properties[header] ?? "");
           record[fieldId] = normalizedValue;
           const systemTimeFieldId = systemTimeFieldByHeader.get(header);
-          if (systemTimeFieldId && normalizedValue) record[systemTimeFieldId] = normalizedValue;
+          const importedSystemTime = systemTimeFieldId
+            ? normalizeImportedSystemTime(parsed.properties[header] ?? "")
+            : "";
+          if (systemTimeFieldId && importedSystemTime) record[systemTimeFieldId] = importedSystemTime;
         }
       }
       records.push(record);
@@ -3620,10 +3634,18 @@ async function emitWorkspace(
       userFieldIds.push(ORIGINAL_NOTION_HTML_FIELD_ID);
     }
     const fieldIdByName = new Map<string, string>();
+    const systemTimeFieldByName = new Map<string, "created_time" | "updated_time">();
     for (const fieldName of rawFieldNames.slice(1)) {
       const fieldId = uniqueFieldId(fieldName, fields);
-      fields.push({ id: fieldId, name: fieldName, type: "text" });
+      const systemTimeFieldId = notionSystemTimeField(fieldName, undefined);
+      const fieldType = systemTimeFieldId === "created_time"
+        ? "created_time"
+        : systemTimeFieldId === "updated_time"
+          ? "updated_time"
+          : "text";
+      fields.push({ id: fieldId, name: fieldName, type: fieldType });
       fieldIdByName.set(fieldName, fieldId);
+      if (systemTimeFieldId) systemTimeFieldByName.set(fieldName, systemTimeFieldId);
       userFieldIds.push(fieldId);
     }
 
@@ -3656,7 +3678,12 @@ async function emitWorkspace(
         [ORIGINAL_NOTION_HTML_FIELD_ID]: originalHtmlAttachmentForSource(row.sourcePath)
       };
       for (const [fieldName, fieldId] of fieldIdByName) {
-        record[fieldId] = values[fieldName] ?? "";
+        const rawValue = values[fieldName] ?? "";
+        const fieldType = fields.find((field) => field.id === fieldId)?.type;
+        record[fieldId] = normalizeImportedCellValue(fieldType, rawValue);
+        const systemTimeFieldId = systemTimeFieldByName.get(fieldName);
+        const importedSystemTime = systemTimeFieldId ? normalizeImportedSystemTime(rawValue) : "";
+        if (systemTimeFieldId && importedSystemTime) record[systemTimeFieldId] = importedSystemTime;
       }
       records.push(record);
       rowPlans.push({
@@ -3854,7 +3881,8 @@ async function emitWorkspace(
 
   rewriteRecordNotionLinks(dbPlans, rewrites);
   const entityTargetMap = buildImportEntityTargetMap(pagePlans, dbPlans, dbPathFor);
-  const entityPathIndex = buildImportEntityPathIndex(pagePlans, dbPlans);
+  const entityPathIndex = buildImportEntityPathIndex(pagePlans, dbPlans, sources);
+  canonicalizeImportEntityPagePaths(entityPathIndex, pagePlans);
 
   // Pass C: write everything. For HTML sources, this is where the
   // body→markdown conversion actually happens — `parseNotionHtml` is
@@ -4037,13 +4065,18 @@ async function emitWorkspace(
       continue;
     }
     const plan = result.plan;
-    const pagePathSegments = normalizePathSegments(plan.path, plan.title.trim() || "Untitled");
-    const parent = importEntityParent(entityPathIndex, pagePathSegments, plan.id);
+    const rawPagePathSegments = normalizePathSegments(plan.path, plan.title.trim() || "Untitled");
+    const parent = importEntityParent(entityPathIndex, rawPagePathSegments, plan.id);
+    const pagePathSegments = canonicalImportEntityPath(
+      rawPagePathSegments,
+      plan.title.trim() || "Untitled",
+      parent
+    );
     pageIds.push(plan.id);
     pageRecords.push({
       id: plan.id,
-      created_time: now,
-      updated_time: now,
+      created_time: plan.createdTime ?? now,
+      updated_time: plan.updatedTime ?? now,
       title: plan.title.trim() || "Untitled",
       kind: "row_page",
       body_path: pageBodyPath(plan.id, plan.title),
@@ -4062,8 +4095,8 @@ async function emitWorkspace(
       id: plan.id,
       kind: "page",
       title: plan.title.trim() || "Untitled",
-      created_time: now,
-      updated_time: now,
+      created_time: plan.createdTime ?? now,
+      updated_time: plan.updatedTime ?? now,
       icon: plan.icon,
       path: pagePathSegments,
       parentId: parent?.id,
@@ -4635,7 +4668,7 @@ function exportRelativeRewriteKey(sourcePath: string): string {
   const normalized = normalizeAbs(sourcePath).replace(/\\/g, "/");
   const parts = normalized.split("/");
   for (let index = parts.length - 1; index >= 0; index -= 1) {
-    if (/^Export-[0-9a-f-]+$/i.test(parts[index] ?? "")) {
+    if (EXPORT_DIR_RE.test(parts[index] ?? "")) {
       return `notion-path:${parts.slice(index + 1).join("/")}`;
     }
   }
@@ -4652,13 +4685,15 @@ function notionFileHash(pathOrHref: string): string | null {
  *
  *   .../Export-<uuid>-Part-N/Export-<uuid>/<logical path>
  *   .../Export-<uuid> 2/<logical path>
+ *   .../Export-md-<uuid>/<logical path>
+ *   .../Export-html-<uuid>/<logical path>
  *
  * Big exports put CSVs in Part-1 and row HTMLs in Part-2 — the same
  * Notion row lives under different physical paths in different parts,
  * but the logical path after `Export-<uuid>/` is identical. We key
  * row-folder lookups on the logical path so they match across parts.
  */
-const EXPORT_DIR_RE = /^Export-[0-9a-f-]+(?:-Part-\d+|\s+\d+)?$/i;
+const EXPORT_DIR_RE = /^Export-(?:(?:md|html)-)?[0-9a-f-]+(?:-Part-\d+|\s+\d+)?$/i;
 function logicalPath(absOrRel: string): string {
   const abs = resolve(absOrRel);
   const segs = abs.split(sep);
@@ -4736,35 +4771,96 @@ function normalizePathSegments(path: string[] | undefined, fallbackName: string)
 interface ImportEntityPathTarget {
   id: string;
   kind: EntityKind;
+  canonicalPath: string[];
+}
+
+interface ImportEntityParentMatch extends ImportEntityPathTarget {
+  matchedPathLength: number;
 }
 
 function buildImportEntityPathIndex(
-  pagePlans: Array<{ id: string; title: string; path?: string[] }>,
+  pagePlans: Array<{ id: string; title: string; path?: string[]; sourcePath: string }>,
   dbPlans: Array<{
     id: string;
     name: string;
     path?: string[];
-    rowPlans: Array<{ rowId: string; title: string }>;
-  }>
+    csvPath?: string;
+    rowPlans: Array<{ rowId: string; title: string; sourcePath?: string }>;
+  }>,
+  sourceRoots: string[]
 ): Map<string, ImportEntityPathTarget[]> {
   const index = new Map<string, ImportEntityPathTarget[]>();
   for (const page of pagePlans) {
-    registerImportEntityPath(index, normalizePathSegments(page.path, page.title || "Untitled"), {
+    const canonicalPath = normalizePathSegments(page.path, page.title || "Untitled");
+    const target: ImportEntityPathTarget = {
       id: page.id,
-      kind: "page"
-    });
+      kind: "page",
+      canonicalPath
+    };
+    registerImportEntityPath(index, canonicalPath, target);
+    registerImportEntityPathAlias(index, notionPagePath(page.sourcePath, sourceRoots), target);
   }
   for (const dbPlan of dbPlans) {
     const dbPath = normalizePathSegments(dbPlan.path, dbPlan.name || "Untitled");
-    registerImportEntityPath(index, dbPath, { id: dbPlan.id, kind: "database" });
+    const dbTarget: ImportEntityPathTarget = {
+      id: dbPlan.id,
+      kind: "database",
+      canonicalPath: dbPath
+    };
+    registerImportEntityPath(index, dbPath, dbTarget);
+    if (dbPlan.csvPath) {
+      registerImportEntityPathAlias(index, notionDatabasePath(dbPlan.csvPath, sourceRoots), dbTarget);
+    }
     for (const rowPlan of dbPlan.rowPlans) {
-      registerImportEntityPath(index, [...dbPath, rowPlan.title || "Untitled"], {
+      const rowPath = [...dbPath, rowPlan.title || "Untitled"];
+      const rowTarget: ImportEntityPathTarget = {
         id: rowPlan.rowId,
-        kind: "row"
-      });
+        kind: "row",
+        canonicalPath: rowPath
+      };
+      registerImportEntityPath(index, rowPath, rowTarget);
+      if (rowPlan.sourcePath) {
+        registerImportEntityPathAlias(index, notionPagePath(rowPlan.sourcePath, sourceRoots), rowTarget);
+      }
     }
   }
   return index;
+}
+
+function canonicalizeImportEntityPagePaths(
+  index: Map<string, ImportEntityPathTarget[]>,
+  pagePlans: Array<{ id: string; title: string; path?: string[] }>
+): void {
+  const pageTargets = new Map<string, ImportEntityPathTarget>();
+  for (const targets of index.values()) {
+    for (const target of targets) {
+      if (target.kind === "page") pageTargets.set(target.id, target);
+    }
+  }
+
+  for (let iteration = 0; iteration < pagePlans.length; iteration += 1) {
+    let changed = false;
+    for (const page of pagePlans) {
+      const title = page.title.trim() || "Untitled";
+      const rawPath = normalizePathSegments(page.path, title);
+      const parent = importEntityParent(index, rawPath, page.id);
+      const canonicalPath = canonicalImportEntityPath(rawPath, title, parent);
+      const target = pageTargets.get(page.id);
+      if (!target || importEntityPathKey(target.canonicalPath) === importEntityPathKey(canonicalPath)) continue;
+      target.canonicalPath = canonicalPath;
+      changed = true;
+    }
+    if (!changed) return;
+  }
+}
+
+function registerImportEntityPathAlias(
+  index: Map<string, ImportEntityPathTarget[]>,
+  path: string[],
+  target: ImportEntityPathTarget
+): void {
+  if (path.length === 0 || importEntityPathKey(path) === importEntityPathKey(target.canonicalPath)) return;
+  registerImportEntityPath(index, path, target);
 }
 
 function registerImportEntityPath(
@@ -4782,13 +4878,22 @@ function importEntityParent(
   index: Map<string, ImportEntityPathTarget[]>,
   path: string[],
   selfId: string
-): ImportEntityPathTarget | undefined {
+): ImportEntityParentMatch | undefined {
   for (let length = path.length - 1; length > 0; length -= 1) {
     const candidates = (index.get(importEntityPathKey(path.slice(0, length))) ?? [])
       .filter((candidate) => candidate.id !== selfId);
-    if (candidates.length === 1) return candidates[0];
+    if (candidates.length === 1) return { ...candidates[0], matchedPathLength: length };
   }
   return undefined;
+}
+
+function canonicalImportEntityPath(
+  path: string[],
+  title: string,
+  parent: ImportEntityParentMatch | undefined
+): string[] {
+  if (!parent || parent.matchedPathLength !== path.length - 1) return path;
+  return [...parent.canonicalPath, title];
 }
 
 function importEntityPathKey(path: string[]): string {
@@ -4904,12 +5009,31 @@ function notionTypeToLotion(notionType: string | undefined): string {
 function notionSystemTimeField(header: string, notionType: string | undefined): "created_time" | "updated_time" | null {
   if (notionType === "created_time") return "created_time";
   if (notionType === "last_edited_time") return "updated_time";
-  if (notionType) return null;
 
   const normalized = header.trim().toLowerCase();
   if (normalized === "created time") return "created_time";
   if (normalized === "last edited time") return "updated_time";
+  if (notionType) return null;
   return null;
+}
+
+function notionSystemTimes(
+  properties: Record<string, string>,
+  notionTypeByHeader: Record<string, string>
+): { createdTime?: string; updatedTime?: string } {
+  const headers = Object.keys(properties);
+  const selected = chooseSystemTimeHeaders(headers, new Map(Object.entries(notionTypeByHeader)));
+  const createdTime = normalizeImportedSystemTime(properties[selected.get("created_time") ?? ""] ?? "");
+  const updatedTime = normalizeImportedSystemTime(properties[selected.get("updated_time") ?? ""] ?? "");
+  return {
+    createdTime: createdTime || undefined,
+    updatedTime: updatedTime || undefined
+  };
+}
+
+function normalizeImportedSystemTime(value: string): string {
+  const parsed = parseDateTimeValue(value);
+  return parsed ? parsed.toISOString() : "";
 }
 
 function chooseSystemTimeHeaders(
@@ -4931,6 +5055,10 @@ function preferredSystemTimeHeader(headers: string[], systemFieldId: "created_ti
 }
 
 function inferNotionTypeFromCsv(header: string, records: Array<Record<string, string>>): string | undefined {
+  const systemTimeFieldId = notionSystemTimeField(header, undefined);
+  if (systemTimeFieldId === "created_time") return "created_time";
+  if (systemTimeFieldId === "updated_time") return "last_edited_time";
+
   const values = records
     .map((record) => (record[header] ?? "").trim())
     .filter(Boolean);
@@ -5334,6 +5462,9 @@ function normalizeImportedCellValue(fieldType: string | undefined, value: string
   if (fieldType === "url") return normalizeUrlCellValue(value);
   if (fieldType === "number") return normalizeNumberCellValue(value);
   if (fieldType === "checkbox") return normalizeCheckboxCellValue(value);
+  if (fieldType === "created_time" || fieldType === "updated_time") {
+    return normalizeImportedSystemTime(value) || value.trim();
+  }
   if (fieldType !== "date") return value;
   return normalizeDateValue(value) || value;
 }

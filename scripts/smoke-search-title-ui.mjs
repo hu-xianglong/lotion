@@ -1405,7 +1405,7 @@ async function assertFavoriteCurrentPageCommand(page, createdPage, viewport) {
   await assertSearchLayout(page, `builtin favorite current page ${viewport.name}`, { expectResults: true, expectFilters: true });
   const rendered = await collectSearchRows(page);
   const favoriteRow = assertCommandRow(rendered, {
-    title: "收藏/取消收藏当前页面",
+    title: "收藏/取消收藏当前内容",
     previewIncludes: ["Lotion", "内置", "lotion.toggle-favorite"]
   });
   await favoriteHit.click();

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion pen and smear mark</title>
+  <desc id="desc">A geometric L formed by a pencil and a soft lotion-like smear.</desc>
+  <g fill="currentColor">
+    <path d="M142 72 L242 56 L250 106 L150 122 Z"/>
+    <path d="M154 134 L254 118 L280 280 L180 296 Z"/>
+    <path fill-rule="evenodd" d="M180 296 L280 280 L228 414 Z M198 302 L260 292 L232 370 Z"/>
+    <path d="M228 414 C264 380 320 372 374 386 C404 394 424 408 416 422 C406 440 358 434 316 426 C280 420 250 424 228 414 Z"/>
+    <circle cx="410" cy="370" r="12"/>
+  </g>
+</svg>

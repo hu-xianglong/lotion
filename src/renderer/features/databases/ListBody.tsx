@@ -2,14 +2,16 @@ import type { DatabaseRecord, FieldSchema } from "../../../shared/types";
 import { formatDateForField, isDateLikeFieldType } from "../../../shared/date-values";
 import { FieldTypeIcon } from "../../components/FieldTypeIcon";
 import { EntityIcon } from "../../components/EntityIcon";
+import { resolveRowIcon } from "../../../shared/row-icons";
 
 interface ListBodyProps {
   records: DatabaseRecord[];
   fields: FieldSchema[];
+  databaseIcon?: string;
   onOpenRow: (rowId: string) => void;
 }
 
-export function ListBody({ records, fields, onOpenRow }: ListBodyProps) {
+export function ListBody({ records, fields, databaseIcon, onOpenRow }: ListBodyProps) {
   const propertyFields = fields
     .filter((field) => !field.hidden && field.id !== "id" && field.id !== "title")
     .slice(0, 4);
@@ -26,7 +28,7 @@ export function ListBody({ records, fields, onOpenRow }: ListBodyProps) {
           onClick={() => onOpenRow(String(record.id))}
         >
           <span className="list-view-row-main">
-            <EntityIcon kind="row_page" icon={String(record.row_icon ?? "") || undefined} />
+            <EntityIcon kind="row_page" icon={resolveRowIcon(record, databaseIcon)} />
             <span className="list-view-title">{String(record.title ?? "").trim() || "Untitled"}</span>
           </span>
           {propertyFields.length > 0 && (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DatabaseBundle, DatabaseRecord, DatabaseSummary, DateDisplayFormat, FieldSchema, FieldType, RelationFieldConfig, RollupAggregation, RollupFieldConfig, SelectOption, TimeDisplayFormat } from "../../../shared/types";
+import type { CopyFieldToSystemTimeResult, DatabaseBundle, DatabaseRecord, DatabaseSummary, DateDisplayFormat, FieldSchema, FieldType, RelationFieldConfig, RollupAggregation, RollupFieldConfig, SelectOption, SystemTimeFieldId, TimeDisplayFormat } from "../../../shared/types";
 import { defaultDateFormatForField, defaultTimeFormatForField, isDateLikeFieldType } from "../../../shared/date-values";
 import { evaluateFormula, formulaColumnLabel } from "../../../shared/formula";
 import { useI18n } from "../../lib/i18n";
@@ -16,12 +16,13 @@ interface FieldSettingsDialogProps {
   wrap?: boolean;
   onToggleWrap?: () => void | Promise<void>;
   onHide?: () => void | Promise<void>;
+  onCopyToSystemTime?: (targetFieldId: SystemTimeFieldId) => Promise<CopyFieldToSystemTimeResult>;
   onClose: () => void;
   onSave: (input: { name: string; type: FieldType; options?: SelectOption[]; formula?: string; relation?: RelationFieldConfig; rollup?: RollupFieldConfig; dateFormat?: DateDisplayFormat; timeFormat?: TimeDisplayFormat }) => Promise<void>;
 }
 
-export function FieldSettingsDialog({ field, fields = [], records = [], databases = [], loadDatabase, wrap = false, onToggleWrap, onHide, onClose, onSave }: FieldSettingsDialogProps) {
-  const { t } = useI18n();
+export function FieldSettingsDialog({ field, fields = [], records = [], databases = [], loadDatabase, wrap = false, onToggleWrap, onHide, onCopyToSystemTime, onClose, onSave }: FieldSettingsDialogProps) {
+  const { locale, t } = useI18n();
   const [name, setName] = useState(field.name);
   const [type, setType] = useState<FieldType>(field.type);
   const [options, setOptions] = useState<SelectOption[]>(field.options || defaultOptions());
@@ -37,6 +38,8 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
   const [dateFormat, setDateFormat] = useState<DateDisplayFormat>(field.dateFormat ?? defaultDateFormatForField(field.type));
   const [timeFormat, setTimeFormat] = useState<TimeDisplayFormat>(field.timeFormat ?? defaultTimeFormatForField(field.type));
   const [isSaving, setIsSaving] = useState(false);
+  const [copyingTimeTarget, setCopyingTimeTarget] = useState<SystemTimeFieldId>();
+  const [copyTimeMessage, setCopyTimeMessage] = useState("");
   const providers = pluginHost.fields.list();
   const providerTypes = new Set(providers.map((provider) => provider.type));
   const rollupRelationFields = fields.filter((candidate) => candidate.type === "entity_ref" && !candidate.hidden);
@@ -56,6 +59,8 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
     setRollupAggregation(field.rollup?.aggregation || "count");
     setDateFormat(field.dateFormat ?? defaultDateFormatForField(field.type));
     setTimeFormat(field.timeFormat ?? defaultTimeFormatForField(field.type));
+    setCopyingTimeTarget(undefined);
+    setCopyTimeMessage("");
   }, [field]);
 
   useEffect(() => {
@@ -151,6 +156,31 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
     setFormulaPreview({ row: 1, value: "" });
   }
 
+  async function copyToSystemTime(targetFieldId: SystemTimeFieldId) {
+    if (!onCopyToSystemTime || copyingTimeTarget) return;
+    const targetLabel = targetFieldId === "created_time"
+      ? (locale === "zh" ? "创建时间" : "Created time")
+      : (locale === "zh" ? "最后更新时间" : "Last updated time");
+    const confirmed = window.confirm(locale === "zh"
+      ? `将“${field.name}”中的有效日期复制到“${targetLabel}”？现有系统时间会被覆盖。`
+      : `Copy valid dates from “${field.name}” to ${targetLabel}? Existing system timestamps will be overwritten.`);
+    if (!confirmed) return;
+    setCopyingTimeTarget(targetFieldId);
+    setCopyTimeMessage("");
+    try {
+      const result = await onCopyToSystemTime(targetFieldId);
+      setCopyTimeMessage(locale === "zh"
+        ? `已复制 ${result.copiedRows} 行；${result.unchangedRows} 行无需修改；跳过 ${result.skippedEmptyRows} 个空值和 ${result.skippedInvalidRows} 个非法值。`
+        : `Copied ${result.copiedRows} rows; ${result.unchangedRows} unchanged; skipped ${result.skippedEmptyRows} empty and ${result.skippedInvalidRows} invalid values.`);
+    } catch (error) {
+      setCopyTimeMessage(locale === "zh"
+        ? `复制失败：${error instanceof Error ? error.message : String(error)}`
+        : `Copy failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCopyingTimeTarget(undefined);
+    }
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="field-dialog" role="dialog" aria-modal="true" aria-label="Field settings" onMouseDown={(event) => event.stopPropagation()}>
@@ -206,6 +236,35 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
                 <option value="h24">{t("field.timeFormat.h24")}</option>
               </select>
             </label>
+            {onCopyToSystemTime && isDateLikeFieldType(field.type) && (
+              <div className="field-time-copy-row">
+                <strong>{t("field.copyTimeValues")}</strong>
+                <div className="field-time-copy-actions">
+                  {field.id !== "created_time" && (
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={!!copyingTimeTarget}
+                      onClick={() => void copyToSystemTime("created_time")}
+                    >
+                      {copyingTimeTarget === "created_time" ? t("field.copyingTimeValues") : t("field.copyToCreatedTime")}
+                    </button>
+                  )}
+                  {field.id !== "updated_time" && (
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={!!copyingTimeTarget}
+                      onClick={() => void copyToSystemTime("updated_time")}
+                    >
+                      {copyingTimeTarget === "updated_time" ? t("field.copyingTimeValues") : t("field.copyToUpdatedTime")}
+                    </button>
+                  )}
+                </div>
+                <p className="helper-text">{t("field.copyTimeHelper")}</p>
+                {copyTimeMessage && <output className="field-time-copy-result">{copyTimeMessage}</output>}
+              </div>
+            )}
           </>
         )}
 

@@ -11,12 +11,27 @@ import {
   buildReleaseManifest,
   collectBuildOutputs,
   collectUiSmokeArtifacts,
-  createTestRelease
+  createTestRelease,
+  verifyReleaseAppStructure
 } from "../scripts/lib/test-release.mjs";
 import {
   DEFAULT_PRODUCTION_VISUAL_FILTER,
   DEFAULT_PRODUCTION_VISUAL_VIEWPORTS
 } from "../scripts/lib/ui-suite-artifacts.mjs";
+import { mergeScriptCoverage } from "../scripts/lib/v8-coverage.mjs";
+
+test("V8 coverage merge keeps distinct anonymous functions by source range", () => {
+  const coverage = (firstCount, secondCount) => ({
+    functions: [
+      { functionName: "", ranges: [{ startOffset: 0, endOffset: 10, count: firstCount }] },
+      { functionName: "", ranges: [{ startOffset: 20, endOffset: 30, count: secondCount }] }
+    ]
+  });
+  const merged = mergeScriptCoverage(coverage(1, 0), coverage(0, 2));
+  assert.equal(merged.functions.length, 2);
+  assert.equal(merged.functions[0].ranges[0].count, 1);
+  assert.equal(merged.functions[1].ranges[0].count, 2);
+});
 
 test("test release manifest records source, gate, platform, and artifact metadata", () => {
   const manifest = buildReleaseManifest({
@@ -35,6 +50,7 @@ test("test release manifest records source, gate, platform, and artifact metadat
     gateResults: [{ command: "npm run test:fast", status: "passed", durationMs: 10, exitCode: 0, mode: "executed" }],
     gitInfo: { branch: "main", dirty: false, recentCommits: ["abc123 test"], sha: "abcdef123456", shortSha: "abcdef1", statusPorcelain: "" },
     now: new Date("2026-06-16T12:00:00.000Z"),
+    packagedAppVerification: { status: "passed", apiMethodCount: 80 },
     prechecked: false,
     releaseDir: "/repo/artifacts/test-releases/lotion-test-2026-06-16-abcdef1",
     root: "/repo",
@@ -51,6 +67,7 @@ test("test release manifest records source, gate, platform, and artifact metadat
   assert.equal(manifest.test.gates[0].command, "npm run test:fast");
   assert.equal(manifest.build.status, "app-snapshot-packaged");
   assert.equal(manifest.build.packagedApp.path, "Lotion Test Release.app");
+  assert.equal(manifest.build.verification.status, "passed");
   assert.equal(manifest.uiArtifacts.count, 1);
   assert.equal(manifest.node.platform, process.platform);
 });
@@ -58,6 +75,8 @@ test("test release manifest records source, gate, platform, and artifact metadat
 test("default test release gates include the production visual quality gate", () => {
   assert.deepEqual(DEFAULT_TEST_RELEASE_GATES.map((gate) => gate.label), [
     "npm run test:fast",
+    "npm run typecheck",
+    "npm run test:coverage",
     "npm run test:ui-regression",
     "npm run test:production-visual",
     "npm run build",
@@ -196,7 +215,8 @@ test("prechecked test release packages an openable app snapshot when build artif
       outputRoot,
       platformName: "darwin",
       prechecked: true,
-      root
+      root,
+      verifyPackagedAppSnapshot: false
     });
     const manifest = JSON.parse(await readFile(join(release.releaseDir, "release-manifest.json"), "utf8"));
     const buildOutputs = JSON.parse(await readFile(join(release.releaseDir, "build-outputs.json"), "utf8"));
@@ -216,10 +236,19 @@ test("prechecked test release packages an openable app snapshot when build artif
     assert.equal(existsSync(join(release.releaseDir, "open-lotion-test-release.sh")), true);
     assert.equal(existsSync(join(release.releaseDir, "Lotion Test Release.app", "Contents", "MacOS", "Lotion Test Release")), true);
     assert.equal(existsSync(join(release.releaseDir, "user-data")), true);
+    const structure = await verifyReleaseAppStructure({
+      packagedApp: buildOutputs.packagedApp,
+      releaseDir: release.releaseDir
+    });
+    assert.equal(structure.sourceOutputs.length, 3);
     assert.ok(checksums.some((entry) => entry.path === "app-snapshot/package.json"));
     assert.ok(checksums.some((entry) => entry.path === "open-lotion-test-release.sh"));
     assert.ok(checksums.some((entry) => entry.path === "Lotion Test Release.app/Contents/Info.plist"));
     assert.match(readme, /openable test app artifact/);
+    assert.match(
+      await readFile(join(release.releaseDir, "open-lotion-test-release.sh"), "utf8"),
+      /LOTION_RELEASE_CDP_PORT/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

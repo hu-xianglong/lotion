@@ -39,6 +39,52 @@ export async function readCsvFile(path: string): Promise<DatabaseRecord[]> {
   return result;
 }
 
+export async function readCsvFileByFieldValues(
+  path: string,
+  fieldId: string,
+  values: string[]
+): Promise<DatabaseRecord[]> {
+  if (values.length === 0) return [];
+  const tStart = performance.now();
+  let content = "";
+  try {
+    content = await fileService.readText(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return [];
+    throw error;
+  }
+  const tRead = performance.now();
+  const wanted = new Set(values);
+  const found = new Map<string, DatabaseRecord>();
+  let headers: string[] | undefined;
+  let fieldIndex = -1;
+  const scannedRows = visitCsvRows(content, (row, rowIndex) => {
+    if (rowIndex === 0) {
+      headers = row;
+      fieldIndex = row.indexOf(fieldId);
+      if (fieldIndex < 0) throw new Error(`CSV field not found: ${fieldId} (${path})`);
+      return true;
+    }
+    const value = row[fieldIndex] ?? "";
+    if (!wanted.has(value)) return true;
+    const record: DatabaseRecord = {};
+    for (let index = 0; index < (headers?.length ?? 0); index += 1) {
+      record[headers![index]] = parseCell(row[index] ?? "");
+    }
+    found.set(value, record);
+    return found.size < wanted.size;
+  });
+  const tEnd = performance.now();
+  const result = values.map((value) => found.get(value)).filter((record): record is DatabaseRecord => Boolean(record));
+  safeLog(
+    `[lotion main] csv select path=${path.split("/").slice(-3).join("/")} ` +
+    `bytes=${content.length} wanted=${wanted.size} found=${result.length} scanned=${scannedRows} ` +
+    `read=${(tRead - tStart).toFixed(1)}ms select=${(tEnd - tRead).toFixed(1)}ms total=${(tEnd - tStart).toFixed(1)}ms`
+  );
+  return result;
+}
+
 export async function writeCsvFile(path: string, headers: string[], records: DatabaseRecord[]): Promise<void> {
   const rows = [
     headers,
@@ -116,6 +162,41 @@ function parseSimpleCsv(content: string): string[][] {
     const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
     return normalized.split(",");
   });
+}
+
+function visitCsvRows(content: string, visit: (row: string[], rowIndex: number) => boolean): number {
+  if (!content) return 0;
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  let rowIndex = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+    if (char === "\"" && inQuotes && next === "\"") {
+      cell += "\"";
+      index += 1;
+    } else if (char === "\"") {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n" && !inQuotes) {
+      row.push(cell);
+      if (!visit(row, rowIndex)) return rowIndex;
+      rowIndex += 1;
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+  if (cell || row.length > 0) {
+    row.push(cell);
+    visit(row, rowIndex);
+    rowIndex += 1;
+  }
+  return Math.max(0, rowIndex - 1);
 }
 
 function escapeCsvCell(value: string): string {

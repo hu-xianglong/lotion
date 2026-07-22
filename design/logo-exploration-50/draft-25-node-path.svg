@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion logo draft 25: node-path</title>
+  <desc id="desc">Black and white logo exploration in the linked-forms family.</desc>
+  <path fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" d="M152 104 V360 Q152 408 200 408 H392"/><circle fill="currentColor" cx="152" cy="104" r="56"/><circle fill="currentColor" cx="152" cy="296" r="56"/><circle fill="currentColor" cx="392" cy="408" r="56"/>
+</svg>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion logo draft 40: layered-chevrons</title>
+  <desc id="desc">Black and white logo exploration in the layers-history family.</desc>
+  <path fill="currentColor" d="M104 64 H232 V296 L200 328 L168 296 V128 H104 Z"/><path fill="currentColor" opacity=".65" d="M184 344 L232 296 L280 344 H424 V392 H184 Z"/><path fill="currentColor" opacity=".35" d="M216 408 L264 360 L312 408 H424 V456 H216 Z"/>
+</svg>

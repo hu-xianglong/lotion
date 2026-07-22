@@ -43,9 +43,11 @@ import { classifyLink, databaseIdFromWorkspaceLink, pageIdFromWorkspacePath, try
 import {
   clearFloatingToc,
   linkIconResolver,
+  linkTitleResolver,
   markdownDecorationsEnabledFacet,
   lotionViewRegistry,
   markdownDecorations,
+  refreshLinkMetadataEffect,
   showEmbedSourceFacet
 } from "./markdown-decorations";
 import { useLotionViewBridge } from "./useLotionViewBridge";
@@ -298,6 +300,18 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
           // receives page/database summaries, so fall back to the page glyph.
           return undefined;
         }),
+        linkTitleResolver.of((url) => {
+          const path = url.replace(/^\.\//, "");
+          const pageId = pageIdFromWorkspacePath(path);
+          if (pageId) {
+            return pagesRef.current?.find((page) => page.id === pageId)?.title;
+          }
+          const databaseId = databaseIdFromWorkspaceLink(path);
+          if (databaseId) {
+            return databasesRef.current?.find((database) => database.id === databaseId)?.name;
+          }
+          return undefined;
+        }),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -401,6 +415,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
       ]
     });
   }, [rawMarkdown]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: refreshLinkMetadataEffect.of(undefined) });
+  }, [databases, pages]);
 
   // External value updates (page switch, programmatic edits) → replace the
   // doc. Skip when the editor already reflects this value so we don't tear

@@ -66,7 +66,7 @@ failing the default lane.
 For docs-only changes, `git diff --check` is usually enough unless the docs
 changed fixture instructions or code snippets that should be verified.
 
-## Commit Coverage Hook
+## Commit Quality Gate
 
 Install the tracked Git hooks once per clone:
 
@@ -74,15 +74,30 @@ Install the tracked Git hooks once per clone:
 npm run hooks:install
 ```
 
-The pre-commit hook runs:
+The pre-commit hook runs the shared fast quality gate:
 
 ```bash
-npm run test:coverage
+npm run gate:commit
 ```
 
-This blocks commits when the package runtime coverage gate falls below its
-configured threshold. The default threshold is 80% and can be overridden for
-local experiments with `LOTION_PACKAGE_COVERAGE_THRESHOLD`.
+It blocks the commit unless type checking, the fast regression suite, package
+runtime coverage, and `git diff --check` all pass. Main/shared, bundled plugin,
+and Renderer core line coverage are each required to reach 90% by default.
+Local experiments can override them with
+`LOTION_PACKAGE_COVERAGE_THRESHOLD`, `LOTION_PLUGIN_COVERAGE_THRESHOLD`, and
+`LOTION_RENDERER_COVERAGE_THRESHOLD`.
+
+The Renderer core gate is available independently:
+
+```bash
+npm run test:coverage:renderer
+```
+
+It measures `src/renderer/lib`, `src/renderer/state`, and the pure routing,
+database-template, and option-color helpers. Interaction-heavy React and
+Electron code is not represented as a misleading single line percentage. It
+is blocked by `test:ui-regression`, which requires the selected workflows,
+configured viewports, screenshot contracts, and clean renderer error logs.
 
 For the customer API entry point only, run:
 
@@ -90,9 +105,23 @@ For the customer API entry point only, run:
 npm run test:coverage:customer-api
 ```
 
-That narrower gate uses `LOTION_CUSTOMER_API_COVERAGE_THRESHOLD`.
+That narrower gate also defaults to 90% and uses
+`LOTION_CUSTOMER_API_COVERAGE_THRESHOLD` for local overrides.
 
 ## Local Test Releases
+
+The production-shaped gate is:
+
+```bash
+npm run release:gate
+```
+
+It requires a clean worktree, runs the shared release stages, packages an
+isolated app snapshot, verifies every copied build output against its SHA-256,
+cold-starts the packaged app, and checks the complete renderer preload API
+contract. The same command runs in `.github/workflows/quality.yml` for pull
+requests and pushes to `main`. A local diagnostic run against intentional
+uncommitted changes can use `npm run release:gate -- --allow-dirty`.
 
 After a clean gate run, create a local tester handoff artifact with:
 
@@ -100,10 +129,11 @@ After a clean gate run, create a local tester handoff artifact with:
 npm run release:test
 ```
 
-This command runs `npm run test:fast`, `npm run test:ui-regression`,
-`npm run test:production-visual`, `npm run build`, and `git diff --check`
-before it writes any release directory. If one of those gates fails, no
-successful release artifact is generated.
+This compatibility command uses the same release library and gate definitions
+as `release:gate`, but permits a dirty tree for exploratory tester handoffs.
+The release lane runs `test:fast`, type checking, package/plugin/Renderer-core coverage, UI
+regression, production visual checks, the production build, and
+`git diff --check` before it writes an artifact.
 
 When CI or a local queue item has already run the same gates, use the faster
 prechecked path:
@@ -122,6 +152,9 @@ When the latest UI suite artifact includes a production visual quality gate
 result, `ui-artifacts.json` also links the gate JSON directly with its status,
 filter, viewport set, and artifact-index path so tester handoffs can audit the
 visual gate without browsing nested smoke folders.
+When an app snapshot is available, `packaged-app-verification.json` records the
+cold-start result, renderer URL, API method count, and verified source-output
+count. A release is not successful when this verification fails.
 
 ## Commit-Bound Local App
 

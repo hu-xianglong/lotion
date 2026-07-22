@@ -1,11 +1,12 @@
 import { join, resolve } from "node:path";
 import { DATABASE_STATS_DATABASE_ID, ENTITIES_DATABASE_ID, isSystemDatabaseId, PAGES_DATABASE_ID, WORKSPACES_DATABASE_ID } from "../../shared/constants.js";
 import type { ID } from "../../shared/types.js";
-import { databaseFolderName, databaseStableFolderId, pageMarkdownFileName } from "../../shared/workspace-paths.js";
+import { databaseFolderName, databaseStableFolderId, idFromDatabaseFolderName, pageMarkdownFileName } from "../../shared/workspace-paths.js";
 import { fileService } from "../services/file-service.js";
 
 export class WorkspacePaths {
   readonly root: string;
+  private readonly databaseFolderIndexes = new Map<string, Map<string, string>>();
 
   constructor(root: string) {
     this.root = resolve(root);
@@ -37,9 +38,13 @@ export class WorkspacePaths {
 
   databaseDir(id: ID, name?: string): string {
     const normalizedBaseDir = isSystemDatabaseId(id) ? this.systemDatabasesDir() : this.userDatabasesDir();
-    const existing = resolveDatabaseFolder(normalizedBaseDir, id);
+    const stableId = databaseStableFolderId(id);
+    const folders = this.databaseFolderIndex(normalizedBaseDir);
+    const existing = folders.get(stableId);
     if (existing) return join(normalizedBaseDir, existing);
-    return join(normalizedBaseDir, databaseFolderName(id, name ?? defaultDatabaseName(id)));
+    const fallback = databaseFolderName(id, name ?? defaultDatabaseName(id));
+    folders.set(stableId, fallback);
+    return join(normalizedBaseDir, fallback);
   }
 
   schema(id: ID, name?: string): string {
@@ -81,16 +86,21 @@ export class WorkspacePaths {
   templatePage(databaseId: ID, fileName: string, databaseName?: string): string {
     return join(this.templatePagesDir(databaseId, databaseName), fileName);
   }
-}
 
-function resolveDatabaseFolder(baseDir: string, id: ID): string | undefined {
-  const stableId = databaseStableFolderId(id);
-  if (!fileService.exists(baseDir)) return undefined;
-  for (const entry of fileService.readDirSync(baseDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name === stableId || entry.name.endsWith(`--${stableId}`)) return entry.name;
+  private databaseFolderIndex(baseDir: string): Map<string, string> {
+    const cached = this.databaseFolderIndexes.get(baseDir);
+    if (cached) return cached;
+    const index = new Map<string, string>();
+    if (fileService.exists(baseDir)) {
+      for (const entry of fileService.readDirSync(baseDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const stableId = databaseStableFolderId(idFromDatabaseFolderName(entry.name));
+        if (stableId) index.set(stableId, entry.name);
+      }
+    }
+    this.databaseFolderIndexes.set(baseDir, index);
+    return index;
   }
-  return undefined;
 }
 
 function defaultDatabaseName(id: ID): string | undefined {

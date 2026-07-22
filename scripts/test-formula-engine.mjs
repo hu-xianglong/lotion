@@ -202,6 +202,54 @@ assert.equal(
   "#ERROR!"
 );
 
+const formulaField = { id: "result", name: "Result", type: "formula" };
+const edgeFields = [
+  { id: "name", name: "Name", type: "text" },
+  { id: "value", name: "Value", type: "number" },
+  { id: "date", name: "Date", type: "date" },
+  formulaField
+];
+const edgeRows = [
+  { name: "Alpha", value: 10, date: "2026-07-01" },
+  { name: "Alpine", value: "", date: "2026-07-02T23:30:00Z" },
+  { name: "Beta", value: 30, date: "invalid" },
+  { name: "Gamma", value: true, date: "2026-07-04" }
+];
+const edgeFormula = (formula, rowIndex = 0, records = edgeRows, fieldList = edgeFields) =>
+  evaluateFormula({ ...formulaField, formula }, records[rowIndex] ?? {}, fieldList, records, rowIndex);
+
+assert.equal(applyFormulasToRecords(edgeRows, edgeFields.slice(0, 3)), edgeRows);
+assert.equal(edgeFormula("=unknown + 1"), "#ERROR!");
+assert.equal(edgeFormula('="quoted ""value"""'), 'quoted "value"');
+assert.equal(edgeFormula("=Z99"), "");
+assert.equal(edgeFormula('=SUM(VALUES("missing"))'), 0);
+assert.equal(edgeFormula('=LOOKUP("Alpha","missing","value")'), "#NAME?");
+assert.equal(edgeFormula('=LOOKUP("Missing","name","value")'), "#N/A");
+assert.equal(edgeFormula('=MOVING_AVERAGE("missing",2,1)', 2), "#NAME?");
+assert.equal(edgeFormula('=MOVING_AVERAGE("value",0,1)', 2), "#VALUE!");
+assert.equal(edgeFormula('=MOVING_AVERAGE("value",3,1)', 1), "");
+assert.equal(edgeFormula('=MOVING_AVERAGE("value",2,1)', 3), "");
+assert.equal(edgeFormula('=AVERAGE_LAST_DAYS("missing","date",7,2)', 3), "#NAME?");
+assert.equal(edgeFormula('=AVERAGE_LAST_DAYS("value","date",0,2)', 3), "#VALUE!");
+assert.equal(edgeFormula('=AVERAGE_LAST_DAYS("value","date",7,2)', 2), "#VALUE!");
+assert.equal(edgeFormula('=AVERAGE_LAST_DAYS("value","date",7,2)', 0), "");
+assert.equal(edgeFormula('=AVERAGE_LAST_DAYS("value","date",3,2)', 3), 10);
+assert.equal(edgeFormula('=MOVING_AVERAGE("value",1,"bad")', 1), "#VALUE!");
+assert.equal(edgeFormula('=MOVING_AVERAGE("value",1)', 1), 10);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],"A*")'), 10);
+assert.equal(edgeFormula('=IFERROR(AVERAGEIFS([value],[name],"<>A*"),"")'), 30);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],"<Gamma")'), 20);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],"<=Beta")'), 20);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],">Beta")'), "#VALUE!");
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],">=Beta")'), 30);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[value],"<>10")'), 30);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[date],">"&[@date]-2,[date],"<="&[@date])', 1), 10);
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],"Alpha",[date])'), "#VALUE!");
+assert.equal(edgeFormula('=AVERAGEIFS([value])'), "#VALUE!");
+assert.equal(edgeFormula('=AVERAGEIFS([value],[name],"No match")'), "#VALUE!");
+assert.equal(edgeFormula('=FIELD("")'), "#NAME?");
+assert.equal(edgeFormula("=CASE invalid END"), "#ERROR!");
+
 await assertDemoFormulaCsv("db_formula_lab", { minRows: 8, minFormulaFields: 6 });
 await assertDemoFormulaCsv("db_weight_tracker", { minRows: 14, minFormulaFields: 1 });
 await assertDemoFormulaCsv("db_tasks", { minRows: 4, minFormulaFields: 1 });

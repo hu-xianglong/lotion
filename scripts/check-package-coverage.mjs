@@ -13,7 +13,7 @@ import {
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const coverageDir = await mkdtemp(join(tmpdir(), "lotion-package-coverage-"));
-const threshold = Number(process.env.LOTION_PACKAGE_COVERAGE_THRESHOLD ?? "80");
+const threshold = Number(process.env.LOTION_PACKAGE_COVERAGE_THRESHOLD ?? "90");
 
 try {
   await run(npmCommand(), ["run", "test:fast"], {
@@ -50,12 +50,18 @@ try {
       `${String(item.covered).padStart(4)}/${String(item.total).padEnd(4)} ${item.label}`
     );
   }
+  if (process.env.LOTION_COVERAGE_DETAILS === "1") {
+    for (const item of combinedSummary.sort((a, b) => a.label.localeCompare(b.label))) {
+      if (item.uncoveredLines.length === 0) continue;
+      console.log(`UNCOVERED ${item.label}: ${formatLineRanges(item.uncoveredLines)}`);
+    }
+  }
 
   assert.ok(
     overall.percent >= threshold,
     `Package runtime coverage ${overall.percent.toFixed(1)}% is below ${threshold}%`
   );
-  const pluginThreshold = Number(process.env.LOTION_PLUGIN_COVERAGE_THRESHOLD ?? "80");
+  const pluginThreshold = Number(process.env.LOTION_PLUGIN_COVERAGE_THRESHOLD ?? "90");
   assert.ok(
     pluginOverall.percent >= pluginThreshold,
     `Builtin plugin runtime coverage ${pluginOverall.percent.toFixed(1)}% is below ${pluginThreshold}%`
@@ -97,6 +103,23 @@ async function pluginCoverageTargets() {
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function formatLineRanges(lines) {
+  const ranges = [];
+  let start = lines[0];
+  let previous = lines[0];
+  for (const line of lines.slice(1)) {
+    if (line === previous + 1) {
+      previous = line;
+      continue;
+    }
+    ranges.push(start === previous ? String(start) : `${start}-${previous}`);
+    start = line;
+    previous = line;
+  }
+  ranges.push(start === previous ? String(start) : `${start}-${previous}`);
+  return ranges.join(",");
 }
 
 async function hasSourceForDistFile(file) {

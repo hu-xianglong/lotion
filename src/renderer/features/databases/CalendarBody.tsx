@@ -2,11 +2,13 @@ import { useMemo, useState } from "react";
 import type { DatabaseRecord, FieldSchema, TableView } from "../../../shared/types";
 import { parseDateValue } from "../../../shared/date-values";
 import { EntityIcon } from "../../components/EntityIcon";
+import { resolveRowIcon } from "../../../shared/row-icons";
 
 interface CalendarBodyProps {
   records: DatabaseRecord[];
   fields: FieldSchema[];
   view: TableView;
+  databaseIcon?: string;
   onOpenRow: (rowId: string) => void;
 }
 
@@ -23,7 +25,7 @@ const WEEKDAYS_ZH = ["日", "一", "二", "三", "四", "五", "六"];
  * slash-separated, or month-name strings. Anything that fails to parse
  * is silently dropped.
  */
-export function CalendarBody({ records, fields, view, onOpenRow }: CalendarBodyProps) {
+export function CalendarBody({ records, fields, view, databaseIcon, onOpenRow }: CalendarBodyProps) {
   // Default to today's month when first mounted. The user can step
   // through months with the toolbar arrows.
   const [cursor, setCursor] = useState(() => {
@@ -135,7 +137,7 @@ export function CalendarBody({ records, fields, view, onOpenRow }: CalendarBodyP
                   onClick={() => onOpenRow(String(record.id))}
                   title={String(record.title ?? "")}
                 >
-                  <EntityIcon kind="row_page" icon={String(record.row_icon ?? "") || undefined} size={12} />
+                  <EntityIcon kind="row_page" icon={resolveRowIcon(record, databaseIcon)} size={12} />
                   <span>{String(record.title ?? "") || "Untitled"}</span>
                 </button>
               ))}

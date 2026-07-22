@@ -8496,6 +8496,69 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   margin: 5px 0;
 }
 
+.field-context-menu {
+  position: fixed;
+  z-index: 1200;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-3);
+  background: var(--paper);
+  box-shadow: var(--shadow-2);
+}
+
+.field-context-menu-title {
+  overflow: hidden;
+  padding: 5px 9px 7px;
+  color: var(--ink-4);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-context-menu button {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--ink-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.field-context-menu button:hover:not(:disabled),
+.field-context-menu button:focus-visible {
+  background: var(--vellum);
+  outline: none;
+}
+
+.field-context-menu button:disabled {
+  color: var(--ink-5);
+  cursor: default;
+}
+
+.field-context-menu-divider {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--rule);
+}
+
+.field-context-menu-result {
+  display: block;
+  margin: 6px 4px 2px;
+  padding: 8px;
+  border-radius: var(--r-2);
+  background: var(--vellum);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .title-input {
   min-width: 0;
   flex: 1;
@@ -10377,6 +10440,37 @@ td input:focus {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+}
+
+.field-time-copy-row {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid var(--rule);
+  padding-top: 14px;
+}
+
+.field-time-copy-row > strong {
+  color: var(--ink-1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.field-time-copy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field-time-copy-actions button {
+  min-width: 0;
+}
+
+.field-time-copy-result {
+  display: block;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .field-wrap-row {

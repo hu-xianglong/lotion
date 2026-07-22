@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 
-const { parseNotionHtml } = await import(
+const {
+  hasNotionPageBodyContent,
+  notionHtmlBodyTextFingerprint,
+  parseNotionHtml,
+  parseNotionHtmlBody,
+  parseNotionHtmlMetadata
+} = await import(
   new URL("../dist-electron/main/services/notion-html-converter.js", import.meta.url)
 );
 const { normalizeDateValue } = await import(
@@ -287,5 +293,125 @@ assert.equal(
   "May 12, 2026 9:35 PM",
   "Date fields should show an explicit imported time when the time format is enabled"
 );
+
+const emptyParsed = parseNotionHtml("<main>Not a Notion page</main>");
+assert.equal(emptyParsed.title, "");
+assert.equal(emptyParsed.bodyMarkdown, "");
+assert.deepEqual(emptyParsed.collectionViews, []);
+
+const noHeaderPage = `<article class="page"><div class="page-body"><p>Fallback body</p></div></article>`;
+assert.equal(parseNotionHtml(noHeaderPage).bodyMarkdown.trim(), "Fallback body");
+assert.equal(parseNotionHtml(`<article class="page"><h1 class="page-title">No body</h1></article>`).title, "No body");
+assert.equal(parseNotionHtmlMetadata(noHeaderPage).bodyMarkdown, "");
+
+assert.equal(hasNotionPageBodyContent("<article class=\"page\"></article>"), false);
+assert.equal(hasNotionPageBodyContent(page("")), false);
+assert.equal(hasNotionPageBodyContent(page("<!-- note --><script>x</script><style>x</style><br>&nbsp;&#160;&#xA0;")), false);
+assert.equal(hasNotionPageBodyContent(page("<svg></svg>")), true);
+assert.equal(hasNotionPageBodyContent(page("<p>Visible text</p>")), true);
+assert.equal(notionHtmlBodyTextFingerprint("<article class=\"page\"></article>"), "");
+assert.equal(
+  notionHtmlBodyTextFingerprint(page("<p>A&nbsp;&amp;&lt;&gt;&quot;&apos;&#x41;&#65;&#x110000;</p><script>hidden</script>")),
+  'A &<>"\'AA&#x110000;'
+);
+
+const richHeaderHtml = `<!doctype html><html><body><article class="page sans"><header>
+  <img class="page-cover-image" src="cover.jpg" style="object-position:center 140%"/>
+  <div class="page-header-icon"><img class="icon" src="icon.png"/><span class="icon">🧴</span></div>
+  <h1 class="page-title">Rich metadata</h1>
+  <table class="properties"><tbody>
+    <tr class="property-row property-row-multi_select"><th>Tags</th><td><span class="selected-value select-value-color-red">One</span><span class="selected-value select-value-color-default">Two</span></td></tr>
+    <tr class="property-row property-row-status"><th>Status</th><td><span class="status-value select-value-color-blue">Doing</span></td></tr>
+    <tr class="property-row property-row-text"><th>Plain</th><td>Text</td></tr>
+    <tr class="property-row property-row-relation"><th>Broken</th><td><a href="bad%ZZ"><img class="notion-static-icon" src="x"/>Linked</a></td></tr>
+    <tr class="property-row property-row-relation"><th>Empty href</th><td><a href="">Fallback</a></td></tr>
+    <tr class="property-row"><th></th><td>Ignored</td></tr>
+  </tbody></table>
+  </header><div class="page-body"></div></article></body></html>`;
+const richMetadata = parseNotionHtmlMetadata(richHeaderHtml, {
+  resolveLink: (target) => target === "bad%ZZ" ? "resolved path).md" : null
+});
+assert.equal(richMetadata.title, "Rich metadata");
+assert.equal(richMetadata.iconSrc, "icon.png");
+assert.equal(richMetadata.iconEmoji, "🧴");
+assert.equal(richMetadata.coverSrc, "cover.jpg");
+assert.equal(richMetadata.coverOffset, 100);
+assert.equal(richMetadata.properties.Tags, "One;Two");
+assert.equal(richMetadata.properties.Status, "Doing");
+assert.equal(richMetadata.properties.Broken, "[Linked](resolved%20path%29.md)");
+assert.deepEqual(richMetadata.propertyOptions.Tags, [
+  { name: "One", color: "red" },
+  { name: "Two", color: "gray" }
+]);
+
+const metadataSeed = { ...richMetadata, bodyMarkdown: "stale", collectionViews: [] };
+assert.equal(parseNotionHtmlBody("<article></article>", metadataSeed).bodyMarkdown, "");
+assert.equal(parseNotionHtmlBody("<div>wrong root</div>", metadataSeed).bodyMarkdown, "");
+
+const kitchenSinkMarkdown = parseBody(`
+  <a class="pdf-relative-link-path">noise</a>
+  <p><a href="row.html"><img class="icon" src="row-icon.png"/>Row</a></p>
+  <p><img src="https://www.notion.so/icons/checkmark.svg"/></p>
+  <script>bad()</script><style>.bad{}</style><link rel="stylesheet" href="bad.css"/>
+  <div class="equation"></div>
+  <figure><div class="source"><a href="https://example.com/not-an-embed">source</a></div></figure>
+  <p><a href="image.png"><img src="image.png"/> caption</a></p>
+  <div class="indented"></div>
+  <ul class="to-do-list"><li>Unchecked task</li></ul>
+  <ul class="toggle"> text <li><details><summary>Nested</summary><p>Body</p></details></li></ul>
+  <div class="indented"><p>Indented text</p></div>
+  <div class="column-list"><div class="column"><p>Column text</p></div></div>
+  <div style="display:contents"><p>Unwrapped</p></div>
+  <table class="simple-table"><tbody></tbody></table>
+  <table class="simple-table"><tr><td>Head</td></tr><tr><td>Value</td></tr></table>
+  <ul><li><p>Compact item</p></li></ul>
+`);
+assert.match(kitchenSinkMarkdown, /Unchecked task/);
+assert.match(kitchenSinkMarkdown, /Nested/);
+assert.match(kitchenSinkMarkdown, /Column text/);
+assert.doesNotMatch(kitchenSinkMarkdown, /bad\(\)|checkmark\.svg|pdf-relative/);
+
+const duplicateCollection = `<div class="collection-content" id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee">
+  <h4 class="collection-title">Nested &amp; view</h4>
+  <div class="collection-content-wrapper" id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee">
+    <table class="collection-content"><thead><tr><th><img class="icon" src="x"/>Name</th><th></th></tr></thead>
+    <tbody><tr><td>No id</td></tr><tr id="ffffffff-1111-2222-3333-444444444444"><td><a href="Bad%ZZ/Row ffffffff111122223333444444444444.html">Row &lt;A&gt;</a></td><td>&quot;ok&quot;</td></tr></tbody></table>
+  </div>
+</div>`;
+const duplicateParsed = parseNotionHtml(page(duplicateCollection), {
+  resolveCollection: (_hash, _title, context) => {
+    assert.equal(context.rowHashes.includes("ffffffff111122223333444444444444"), true);
+    return "./system/databases/Nested--db_nested/data.csv/";
+  }
+});
+assert.equal(duplicateParsed.collectionViews.length, 1);
+assert.equal(duplicateParsed.collectionViews[0].rows.length, 1);
+assert.equal(duplicateParsed.collectionViews[0].rows[0].title, "Row <A>");
+assert.match(duplicateParsed.bodyMarkdown, /LOTIONVIEW/);
+
+const headerlessCollection = parseNotionHtml(
+  `<article class="page"><div class="page-body">
+    <div class="collection-content" id="12121212-3434-5656-7878-909090909090">
+      <table><thead><tr><th><span class="icon">X</span>Name</th></tr></thead>
+      <tbody><tr id="abababab-cdcd-efef-0101-232323232323"><td class="cell-title"><a href="Row%20ababababcdcdefef0101232323232323.html">Row</a></td></tr></tbody></table>
+    </div>
+  </div></article>`,
+  {
+    resolveCollection: (hash, title, context) => {
+      assert.equal(hash, "12121212343456567878909090909090");
+      assert.equal(title, "Embedded database");
+      assert.deepEqual(context.rowHashes, ["ababababcdcdefef0101232323232323"]);
+      return "databases/Headerless--db_headerless/data.csv";
+    }
+  }
+);
+assert.equal(headerlessCollection.isCollectionWrapperOnly, true);
+assert.equal(headerlessCollection.collectionViews[0].fieldNames[0], "Name");
+assert.equal(headerlessCollection.bodyMarkdown.includes("Headerless--db"), true);
+
+const unresolvedHeaderlessCollection = parseNotionHtml(
+  `<article class="page"><div class="page-body"><table class="collection-content" id="34343434-5656-7878-9090-abababababab"><thead><tr><th><span class="cell-title">Fallback title</span></th></tr></thead><tbody></tbody></table></div></article>`
+);
+assert.match(unresolvedHeaderlessCollection.bodyMarkdown, /Fallback title \(database not found\)/);
 
 console.log("Notion HTML converter regression tests passed.");

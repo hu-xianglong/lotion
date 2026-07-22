@@ -1533,8 +1533,8 @@ function metadataFieldScore(entity: EntityIndexEntry, pattern: string): number {
 
 function rowIconFromCells(cells: string[], db: DbIndex): string | undefined {
   const index = db.fieldIds.indexOf("row_icon");
-  if (index < 0) return undefined;
-  return String(cells[index] ?? "").trim() || undefined;
+  const rowIcon = index < 0 ? "" : String(cells[index] ?? "").trim();
+  return rowIcon || db.icon;
 }
 
 function csvFieldValue(cells: string[], db: DbIndex, fieldId: string): string {

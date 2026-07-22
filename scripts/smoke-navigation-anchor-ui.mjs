@@ -199,16 +199,20 @@ async function clickVisibleAnchorLine(page) {
     });
     return middle || false;
   }, null, { timeout: 8_000 }).then((handle) => handle.jsonValue());
-  const line = page.locator('[data-testid="markdown-editor"] .cm-line').filter({ hasText: lineText }).first();
-  await line.click({ position: { x: 80, y: 12 }, timeout: 8_000 });
-  await page.waitForFunction(
-    ({ expectedText }) => (
-      document.querySelector('[data-testid="markdown-editor"] .cm-activeLine')?.textContent?.includes(expectedText) ||
-      document.querySelector('[data-testid="markdown-editor"] .cm-editor.cm-focused') !== null
-    ),
-    { expectedText: lineText },
-    { timeout: 5_000 }
-  );
+  let clicked = false;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const line = page.locator('[data-testid="markdown-editor"] .cm-line').filter({ hasText: lineText }).first();
+    await line.click({ force: true, position: { x: 80, y: 12 }, timeout: 2_000 }).catch(() => undefined);
+    clicked = await page.waitForFunction(
+      ({ expectedText }) => document.querySelector('[data-testid="markdown-editor"] .cm-activeLine')
+        ?.textContent?.includes(expectedText) ?? false,
+      { expectedText: lineText },
+      { timeout: 1_500 }
+    ).then(() => true).catch(() => false);
+    if (clicked) break;
+    await page.waitForTimeout(100);
+  }
+  if (!clicked) throw new Error(`Could not activate virtualized anchor line: ${lineText}`);
   await nextAnimationFrame(page);
   await nextAnimationFrame(page);
   return lineText;

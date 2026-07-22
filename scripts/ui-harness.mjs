@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 
+import { startRendererCoverage } from "./lib/renderer-coverage.mjs";
 import { currentNonSmokeWorkspacePath } from "./smoke-workspace-utils.mjs";
 
 export const DEFAULT_UI_VIEWPORTS = [
@@ -25,6 +26,9 @@ export async function withLotionUIHarness(name, run, options = {}) {
   let previousWorkspacePath = "";
   let devProcess;
   let runResult = null;
+  let rendererCoverage = null;
+  let rendererCoverageFile = "";
+  let rendererCoverageWritten = false;
 
   try {
     await mkdir(artifactRoot, { recursive: true });
@@ -60,6 +64,8 @@ export async function withLotionUIHarness(name, run, options = {}) {
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 15_000 });
     previousWorkspacePath = await currentNonSmokeWorkspacePath(page);
+    rendererCoverageFile = rendererCoveragePath(name, options);
+    if (rendererCoverageFile) rendererCoverage = await startRendererCoverage(page);
 
     const context = {
       artifactRoot,
@@ -87,6 +93,10 @@ export async function withLotionUIHarness(name, run, options = {}) {
     };
 
     runResult = await run(context);
+    if (rendererCoverage) {
+      await rendererCoverage.writeTo(rendererCoverageFile);
+      rendererCoverageWritten = true;
+    }
     if (options.failOnConsoleErrors !== false) {
       const consoleIssues = consoleIssuesFromEvents(consoleEvents, consoleMessages);
       if (consoleIssues.length > 0) {
@@ -106,6 +116,10 @@ export async function withLotionUIHarness(name, run, options = {}) {
     });
     return runResult;
   } catch (error) {
+    if (rendererCoverage && !rendererCoverageWritten) {
+      await rendererCoverage.writeTo(rendererCoverageFile).catch(() => undefined);
+      rendererCoverageWritten = true;
+    }
     if (page) {
       await captureFailureArtifacts({
         artifactRoot,
@@ -145,6 +159,14 @@ export async function withLotionUIHarness(name, run, options = {}) {
     await browser?.close().catch(() => undefined);
     await stopDevProcess(devProcess);
   }
+}
+
+function rendererCoveragePath(name, options) {
+  if (options.collectRendererCoverage === false) return "";
+  const explicitFile = (process.env.LOTION_RENDERER_COVERAGE_FILE || "").trim();
+  if (explicitFile) return explicitFile;
+  const outputDir = (process.env.LOTION_RENDERER_COVERAGE_DIR || "").trim();
+  return outputDir ? join(outputDir, `${safeName(name)}-${process.pid}.json`) : "";
 }
 
 export function selectedViewports() {

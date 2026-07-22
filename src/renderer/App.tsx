@@ -804,6 +804,29 @@ function AppContent() {
     return page;
   }
 
+  async function duplicatePage(id: string): Promise<PageDocument> {
+    await flushPendingMarkdownSaves();
+    const page = await window.lotion.pages.duplicate(id);
+    pageDocCacheRef.current.set(page.meta.id, page);
+    const item: ActiveItem = { type: "page", id: page.meta.id };
+    recordHistory(item);
+    setState((current) => ({
+      ...current,
+      pages: [
+        page.meta,
+        ...current.pages.filter((candidate) => candidate.id !== page.meta.id)
+      ],
+      activeItem: item,
+      activePage: page,
+      activeDatabaseId: undefined,
+      activeRowPage: undefined,
+      tabs: replaceActiveTabItem(current, item)
+    }));
+    await recordRecent({ type: "page", id: page.meta.id });
+    await refreshLists();
+    return page;
+  }
+
   function createDatabase() {
     // Surface the template picker instead of creating an empty DB
     // immediately. The picker resolves to a CreateDatabaseInput via
@@ -1113,6 +1136,7 @@ function AppContent() {
   async function renamePage(title: string) {
     if (!state.activePage || title === state.activePage.meta.title) return;
     const page = await window.lotion.pages.rename(state.activePage.meta.id, title);
+    pageDocCacheRef.current.set(page.meta.id, page);
     await refreshLists();
     setState((current) => ({ ...current, activePage: page }));
   }
@@ -1141,7 +1165,7 @@ function AppContent() {
     setNavigationAnchor(pendingAnchor);
     recordHistory(item);
     if (options.recordRecent !== false) {
-      void recordRecent({ type: "row_page", databaseId, rowId, title: doc.title, icon: rowIconFromRecord(doc.record) });
+      void recordRecent({ type: "row_page", databaseId, rowId, title: doc.title, icon: doc.meta.icon });
     }
     openLog("rowPage.ready", {
       databaseId,
@@ -1209,7 +1233,7 @@ function AppContent() {
         databaseId,
         rowId: doc.rowId,
         title: doc.title,
-        icon: rowIconFromRecord(doc.record)
+        icon: doc.meta.icon
       });
     }
     openLog("rowPageByFile.ready", {
@@ -1531,6 +1555,7 @@ function AppContent() {
         onSetFullWidth={(fullWidth) => updatePageProperties(activePageMeta.id, { fullWidth })}
         onSetSmallText={(smallText) => updatePageProperties(activePageMeta.id, { smallText })}
         onOpenInNewWindow={() => openItemInNewWindow({ type: "page", id: activePageMeta.id })}
+        onDuplicate={async () => { await duplicatePage(activePageMeta.id); }}
         onOpenEntity={openEntity}
         initialViewState={pageViewStatesRef.current.get(viewStateKey)}
         navigationAnchorPos={activeNavigationAnchor?.pos}
@@ -1604,7 +1629,7 @@ function AppContent() {
           </button>
           <span className="row-page-breadcrumb-sep">/</span>
           <span className="row-page-breadcrumb-current" title={String(activeRow.title ?? "")}>
-            <EntityIcon kind="row_page" icon={rowIcon || undefined} size={14} />
+            <EntityIcon kind="row_page" icon={rowIcon || rowMeta?.icon} size={14} />
             <span>{String(activeRow.title ?? "") || t("rowPage.untitled")}</span>
           </span>
         </div>
@@ -1665,6 +1690,7 @@ function AppContent() {
     openRowPage,
     openRowPageByFile,
     createPage,
+    duplicatePage,
     createDatabase,
     deletePage,
     toggleFavoriteCurrent,
@@ -1819,10 +1845,6 @@ function rowPageActiveItem(databaseId: string, rowId: string, title: string): Ex
   return cleanTitle
     ? { type: "row_page", databaseId, rowId, title: cleanTitle }
     : { type: "row_page", databaseId, rowId };
-}
-
-function rowIconFromRecord(record: DatabaseRecord): string | undefined {
-  return String(record.row_icon ?? "").trim() || undefined;
 }
 
 function historyItemLabel(

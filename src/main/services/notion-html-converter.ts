@@ -445,20 +445,23 @@ function parseBodyElement(
   // `<thead><tr>...</tr></thead>` and convert its `<td>` cells to
   // `<th>` so turndown emits a real markdown table.
   for (const table of body.querySelectorAll("table.simple-table")) {
-    const tbody = table.querySelector("tbody");
-    const rows = (tbody ?? table).querySelectorAll("tr");
-    if (rows.length === 0) continue;
+      const tbody = table.querySelector("tbody");
+      const rows = (tbody ?? table).querySelectorAll("tr");
+      if (rows.length === 0) {
+        table.remove();
+        continue;
+      }
     const headerRow = rows[0];
     // Replace `<td>` with `<th>` inside the header row.
     let headerHtml = headerRow.outerHTML.replace(/<td(\s|>)/g, "<th$1").replace(/<\/td>/g, "</th>");
     // Remove the original header row from tbody, wrap in thead.
     headerRow.remove();
     const thead = `<thead>${headerHtml}</thead>`;
-    if (tbody) {
-      tbody.insertAdjacentHTML?.("beforebegin", thead);
-    } else {
-      table.set_content(thead + table.innerHTML);
-    }
+      if (tbody) {
+        tbody.insertAdjacentHTML?.("beforebegin", thead);
+      } else {
+        table.set_content(`${thead}<tbody>${table.innerHTML}</tbody>`);
+      }
   }
   // After unwrapping `display:contents` divs, list items may now have a
   // bare `<p>` wrapping the text. Turndown emits a blank line for each

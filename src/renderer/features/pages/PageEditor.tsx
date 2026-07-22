@@ -17,7 +17,7 @@ import { CodeMirrorMarkdownEditor, type CodeMirrorMarkdownEditorHandle, type Mar
 import { EntityIcon } from "../../components/EntityIcon";
 import { CoverArea } from "./CoverArea";
 import { PageLayout } from "./PageLayout";
-import { ArrowUpRight, CaseSensitive, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus } from "lucide-react";
+import { ArrowUpRight, CaseSensitive, Copy, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus } from "lucide-react";
 import { useDatabaseCache } from "../../context/database-cache";
 import { ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { pluginHost } from "../../plugin-host";
@@ -52,6 +52,7 @@ interface PageEditorProps {
   onSetFullWidth?: (fullWidth: boolean) => void | Promise<void>;
   onSetSmallText?: (smallText: boolean) => void | Promise<void>;
   onOpenInNewWindow?: () => void;
+  onDuplicate?: () => void | Promise<void>;
   onOpenEntity?: (ref: EntityRef) => void;
   viewStateKey?: string;
   initialViewState?: PageEditorViewState;
@@ -95,6 +96,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   onSetFullWidth,
   onSetSmallText,
   onOpenInNewWindow,
+  onDuplicate,
   onOpenEntity,
   viewStateKey,
   initialViewState,
@@ -120,6 +122,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const [smallText, setSmallText] = useState(!!page.meta.smallText);
   const [fullWidthSaving, setFullWidthSaving] = useState(false);
   const [smallTextSaving, setSmallTextSaving] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [emptyPromptDismissed, setEmptyPromptDismissed] = useState(false);
   const [emptyPromptIndex, setEmptyPromptIndex] = useState(() => emptyTemplates?.length ?? 0);
   const [backlinks, setBacklinks] = useState<EntityBacklink[]>([]);
@@ -330,6 +333,19 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
       console.error("Failed to persist small text setting", error);
     } finally {
       setSmallTextSaving(false);
+    }
+  }
+
+  async function duplicateCurrentPage() {
+    if (!onDuplicate || duplicating) return;
+    setDuplicating(true);
+    try {
+      await onDuplicate();
+      setMenuOpen(false);
+    } catch (error) {
+      console.error("Failed to duplicate page", error);
+    } finally {
+      setDuplicating(false);
     }
   }
 
@@ -616,6 +632,21 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
                   </span>
                   <span>{t("page.openInNewWindow")}</span>
                 </button>
+                {onDuplicate && (
+                  <button
+                    type="button"
+                    className="page-menu-item"
+                    role="menuitem"
+                    aria-busy={duplicating}
+                    disabled={duplicating}
+                    onClick={() => void duplicateCurrentPage()}
+                  >
+                    <span className="page-menu-icon" aria-hidden="true">
+                      <Copy size={15} strokeWidth={1.9} />
+                    </span>
+                    <span>{t("page.duplicate")}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   className="page-menu-item"

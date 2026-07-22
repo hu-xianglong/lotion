@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
+import { createServer } from "node:net";
 import {
   access,
   chmod,
@@ -16,14 +17,9 @@ import {
 import { arch, platform, release as osRelease } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { RELEASE_QUALITY_GATES } from "./quality-gates.mjs";
 
-export const DEFAULT_TEST_RELEASE_GATES = [
-  { label: "npm run test:fast", command: npmCommand(), args: ["run", "test:fast"] },
-  { label: "npm run test:ui-regression", command: npmCommand(), args: ["run", "test:ui-regression"] },
-  { label: "npm run test:production-visual", command: npmCommand(), args: ["run", "test:production-visual"] },
-  { label: "npm run build", command: npmCommand(), args: ["run", "build"] },
-  { label: "git diff --check", command: "git", args: ["diff", "--check"] }
-];
+export const DEFAULT_TEST_RELEASE_GATES = RELEASE_QUALITY_GATES;
 
 export class TestReleaseGateError extends Error {
   constructor(message, gateResults = []) {
@@ -67,6 +63,17 @@ export async function createTestRelease(options = {}) {
       root
     });
   }
+  let packagedAppVerification = null;
+  if (buildOutputs.packagedApp) {
+    packagedAppVerification = options.verifyPackagedAppSnapshot === false
+      ? { status: "skipped" }
+      : await verifyReleaseAppSnapshot({
+        packagedApp: buildOutputs.packagedApp,
+        releaseDir,
+        root
+      });
+    buildOutputs = { ...buildOutputs, verification: packagedAppVerification };
+  }
   const releaseNotes = await buildReleaseNotes({ gitInfo, root });
   const manifest = buildReleaseManifest({
     appInfo,
@@ -75,6 +82,7 @@ export async function createTestRelease(options = {}) {
     gitInfo,
     now,
     prechecked,
+    packagedAppVerification,
     releaseDir,
     root,
     uiArtifacts
@@ -143,7 +151,7 @@ export async function runReleaseGates({ cwd, gates = DEFAULT_TEST_RELEASE_GATES,
   return results;
 }
 
-export function buildReleaseManifest({ appInfo, buildOutputs, gateResults, gitInfo, now, prechecked, releaseDir, root, uiArtifacts }) {
+export function buildReleaseManifest({ appInfo, buildOutputs, gateResults, gitInfo, now, packagedAppVerification = null, prechecked, releaseDir, root, uiArtifacts }) {
   const releasePath = relative(root, releaseDir).replaceAll("\\", "/");
   return {
     artifactKind: "lotion-test-release",
@@ -151,7 +159,8 @@ export function buildReleaseManifest({ appInfo, buildOutputs, gateResults, gitIn
     build: {
       status: buildOutputs.status,
       outputCount: buildOutputs.outputs.length,
-      packagedApp: buildOutputs.packagedApp || null
+      packagedApp: buildOutputs.packagedApp || null,
+      verification: packagedAppVerification
     },
     createdAt: now.toISOString(),
     git: gitInfo,
@@ -384,6 +393,9 @@ USER_DATA="\${LOTION_RELEASE_USER_DATA:-$RELEASE_DIR/user-data}"
 ELECTRON="\${LOTION_RELEASE_ELECTRON:-$DEFAULT_ELECTRON}"
 
 cd "$APP_DIR"
+if [ -n "\${LOTION_RELEASE_CDP_PORT:-}" ]; then
+  exec "$ELECTRON" --remote-debugging-address=127.0.0.1 --remote-debugging-port="$LOTION_RELEASE_CDP_PORT" --user-data-dir="$USER_DATA" "$APP_DIR"
+fi
 exec "$ELECTRON" --user-data-dir="$USER_DATA" "$APP_DIR"
 `
   );
@@ -410,6 +422,201 @@ exec "$ELECTRON" --user-data-dir="$USER_DATA" "$APP_DIR"
   }
 
   return result;
+}
+
+export async function verifyReleaseAppSnapshot({
+  packagedApp,
+  releaseDir,
+  root,
+  timeoutMs = 30_000
+}) {
+  const reportPath = join(releaseDir, "packaged-app-verification.json");
+  const structure = await verifyReleaseAppStructure({ packagedApp, releaseDir });
+  const port = await allocateLoopbackPort();
+  const launcherPath = join(releaseDir, packagedApp.launcherPath);
+  const userDataPath = join(releaseDir, packagedApp.userDataPath);
+  const output = { stdout: "", stderr: "" };
+  let exitState = null;
+  let browser;
+  const child = spawn(launcherPath, [], {
+    cwd: releaseDir,
+    env: {
+      ...process.env,
+      LOTION_RELEASE_CDP_PORT: String(port),
+      LOTION_RELEASE_USER_DATA: userDataPath
+    },
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  child.stdout?.on("data", (chunk) => {
+    output.stdout = appendProcessOutput(output.stdout, chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    output.stderr = appendProcessOutput(output.stderr, chunk);
+  });
+  child.once("exit", (code, signal) => {
+    exitState = { code, signal };
+  });
+
+  try {
+    await waitForDevTools(port, timeoutMs, () => exitState);
+    const { chromium } = await import("playwright-core");
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    const page = await waitForPackagedRendererPage(browser, timeoutMs);
+    await page.waitForFunction(() => Boolean(window.lotion), null, { timeout: timeoutMs });
+    const contractModuleUrl = `${pathToFileURL(join(releaseDir, packagedApp.snapshotPath, "dist-electron", "shared", "customer-api-contract.js")).href}?release=${Date.now()}`;
+    const { LOTION_RENDERER_API_CONTRACT } = await import(contractModuleUrl);
+    const renderer = await page.evaluate((contract) => {
+      const missing = [];
+      for (const group of contract) {
+        for (const method of group.methods) {
+          if (typeof window.lotion?.[group.group]?.[method] !== "function") {
+            missing.push(`${group.group}.${method}`);
+          }
+        }
+      }
+      return {
+        bodyTextLength: document.body.innerText.length,
+        methodCount: contract.reduce((total, group) => total + group.methods.length, 0),
+        missing,
+        title: document.title,
+        url: location.href
+      };
+    }, LOTION_RENDERER_API_CONTRACT);
+    if (renderer.title !== "Lotion") {
+      throw new Error(`Packaged renderer title mismatch: ${renderer.title}`);
+    }
+    if (!renderer.url.startsWith("file:")) {
+      throw new Error(`Packaged renderer did not load from the app snapshot: ${renderer.url}`);
+    }
+    if (renderer.missing.length > 0) {
+      throw new Error(`Packaged preload API is incomplete: ${renderer.missing.join(", ")}`);
+    }
+    if (renderer.bodyTextLength <= 0) {
+      throw new Error("Packaged renderer produced an empty document body.");
+    }
+    const report = {
+      apiMethodCount: renderer.methodCount,
+      appPath: packagedApp.path,
+      launcherPath: packagedApp.launcherPath,
+      rendererTitle: renderer.title,
+      rendererUrl: renderer.url,
+      sourceOutputCount: structure.sourceOutputs.length,
+      status: "passed"
+    };
+    await writeJson(reportPath, report);
+    return report;
+  } catch (error) {
+    await writeJson(reportPath, {
+      error: error?.message || String(error),
+      exitState,
+      status: "failed",
+      stderr: output.stderr,
+      stdout: output.stdout,
+      structure
+    }).catch(() => undefined);
+    throw new TestReleaseGateError(`Packaged app verification failed: ${error?.message || String(error)}`);
+  } finally {
+    await browser?.close().catch(() => undefined);
+    await stopChildProcess(child, () => exitState);
+  }
+}
+
+export async function verifyReleaseAppStructure({ packagedApp, releaseDir }) {
+  const snapshotDir = join(releaseDir, packagedApp.snapshotPath);
+  const launcherPath = join(releaseDir, packagedApp.launcherPath);
+  const snapshotInfoPath = join(snapshotDir, "snapshot-info.json");
+  const snapshotInfo = JSON.parse(await readFile(snapshotInfoPath, "utf8"));
+  const launcherInfo = await stat(launcherPath);
+  if (!launcherInfo.isFile() || (launcherInfo.mode & 0o111) === 0) {
+    throw new Error(`Packaged app launcher is not executable: ${launcherPath}`);
+  }
+  if (packagedApp.type === "mac-app") {
+    const appInfo = await stat(join(releaseDir, packagedApp.path, "Contents", "Info.plist"));
+    if (!appInfo.isFile()) throw new Error(`Packaged macOS app is missing Info.plist: ${packagedApp.path}`);
+  }
+  const sourceOutputs = [];
+  for (const expected of snapshotInfo.sourceBuildOutputs || []) {
+    const file = join(snapshotDir, expected.path);
+    const info = await stat(file);
+    const sha256 = await sha256File(file);
+    if (info.size !== expected.bytes || sha256 !== expected.sha256) {
+      throw new Error(`Packaged build output differs from the tested source output: ${expected.path}`);
+    }
+    sourceOutputs.push({ bytes: info.size, path: expected.path, sha256 });
+  }
+  if (sourceOutputs.length === 0) {
+    throw new Error("Packaged app snapshot does not record any tested build outputs.");
+  }
+  return {
+    launcherPath: packagedApp.launcherPath,
+    snapshotPath: packagedApp.snapshotPath,
+    sourceOutputs
+  };
+}
+
+async function waitForPackagedRendererPage(browser, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const context of browser.contexts()) {
+      const page = context.pages().find((candidate) => candidate.url().startsWith("file:"));
+      if (page) return page;
+    }
+    await delay(100);
+  }
+  throw new Error("Packaged app did not expose a file-backed renderer page.");
+}
+
+async function waitForDevTools(port, timeoutMs, getExitState) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    const exitState = getExitState();
+    if (exitState) {
+      throw new Error(`Packaged app exited before startup completed: ${JSON.stringify(exitState)}`);
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (response.ok) return;
+      lastError = new Error(`DevTools returned HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(100);
+  }
+  throw new Error(`Packaged app DevTools endpoint did not start: ${lastError?.message || "timeout"}`);
+}
+
+async function allocateLoopbackPort() {
+  const server = createServer();
+  await new Promise((resolvePromise, rejectPromise) => {
+    server.once("error", rejectPromise);
+    server.listen(0, "127.0.0.1", resolvePromise);
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  await new Promise((resolvePromise) => server.close(resolvePromise));
+  if (!port) throw new Error("Unable to allocate a packaged-app verification port.");
+  return port;
+}
+
+async function stopChildProcess(child, getExitState) {
+  if (getExitState()) return;
+  child.kill("SIGTERM");
+  const stopped = await Promise.race([
+    new Promise((resolvePromise) => child.once("exit", () => resolvePromise(true))),
+    delay(3_000).then(() => false)
+  ]);
+  if (!stopped) child.kill("SIGKILL");
+}
+
+function appendProcessOutput(current, chunk, limit = 20_000) {
+  const next = `${current}${chunk.toString()}`;
+  return next.length <= limit ? next : next.slice(next.length - limit);
+}
+
+function delay(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 export async function collectAppInfo(root) {
@@ -562,6 +769,7 @@ function buildReleaseReadme(manifest) {
     ...appLines,
     "- `ui-artifacts.json`: recent UI smoke artifact manifests for tester inspection.",
     "- `checksums.json`: SHA-256 checksums for generated release files.",
+    "- `packaged-app-verification.json`: cold-start, renderer, API-contract, and build-hash verification evidence when an app snapshot is available.",
     "- `RELEASE_NOTES.md`: short source and queue summary.",
     "",
     "## Source",
@@ -655,10 +863,6 @@ function trimForManifest(value) {
 
 function formatCommand(command, args = []) {
   return [command, ...args].join(" ");
-}
-
-function npmCommand() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 function safeTimestamp(date) {

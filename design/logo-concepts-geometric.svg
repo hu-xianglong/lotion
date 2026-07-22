@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="560" viewBox="0 0 1600 560" role="img" aria-labelledby="title desc">
+  <title id="title">Lotion geometric logo concepts</title>
+  <desc id="desc">Four monochrome geometric logo directions: Mobius loop, linked files, local orbit, and continuous L.</desc>
+  <rect width="1600" height="560" fill="#f7f7f4"/>
+
+  <g fill="none" stroke="#20221f" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 01: Mobius loop / continuous history -->
+    <g transform="translate(42 72)">
+      <path d="M52 174 C52 88 151 78 207 174 C263 270 362 260 362 174 C362 88 263 78 207 174 C151 270 52 260 52 174" stroke-width="31"/>
+      <path d="M180 132 C194 147 203 161 216 182" stroke="#f7f7f4" stroke-width="47"/>
+      <path d="M180 132 C194 147 203 161 216 182" stroke-width="31"/>
+    </g>
+
+    <!-- 02: two durable file formats linked together -->
+    <g transform="translate(446 72) rotate(-7 207 174)">
+      <rect x="71" y="91" width="177" height="166" rx="43" stroke-width="31"/>
+      <rect x="166" y="91" width="177" height="166" rx="43" stroke-width="31"/>
+      <path d="M190 91 V257" stroke="#f7f7f4" stroke-width="47"/>
+      <path d="M190 91 V257" stroke-width="31"/>
+    </g>
+
+    <!-- 03: local data held inside an open orbit -->
+    <g transform="translate(850 72)">
+      <path d="M291 104 C347 159 345 246 288 299 C224 359 120 340 79 261 C42 189 69 102 140 68" stroke-width="31"/>
+      <path d="M140 68 L113 64 M140 68 L130 94" stroke-width="31"/>
+      <rect x="153" y="125" width="112" height="112" rx="22" stroke-width="31"/>
+    </g>
+
+    <!-- 04: a single ribbon reduced to an L -->
+    <g transform="translate(1254 72)">
+      <path d="M126 67 V239 C126 270 143 286 174 286 H337" stroke-width="45"/>
+      <path d="M126 67 L158 99" stroke="#f7f7f4" stroke-width="13"/>
+      <path d="M305 254 L337 286" stroke="#f7f7f4" stroke-width="13"/>
+    </g>
+  </g>
+
+  <g fill="#20221f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <g transform="translate(42 454)">
+      <text font-size="15" font-weight="700">01</text>
+      <text x="40" font-size="15" font-weight="700">LOOP</text>
+      <text y="30" font-size="14" fill="#73786f">Infinite history</text>
+    </g>
+    <g transform="translate(446 454)">
+      <text font-size="15" font-weight="700">02</text>
+      <text x="40" font-size="15" font-weight="700">LINK</text>
+      <text y="30" font-size="14" fill="#73786f">Markdown + CSV</text>
+    </g>
+    <g transform="translate(850 454)">
+      <text font-size="15" font-weight="700">03</text>
+      <text x="40" font-size="15" font-weight="700">LOCAL</text>
+      <text y="30" font-size="14" fill="#73786f">Files stay with you</text>
+    </g>
+    <g transform="translate(1254 454)">
+      <text font-size="15" font-weight="700">04</text>
+      <text x="40" font-size="15" font-weight="700">RIBBON L</text>
+      <text y="30" font-size="14" fill="#73786f">The Lotion initial</text>
+    </g>
+  </g>
+</svg>

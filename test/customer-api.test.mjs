@@ -10,6 +10,8 @@ import {
   LOTION_PACKAGE_API_CONTRACT,
   LOTION_RENDERER_API_CONTRACT,
   LotionApiMetricsRecorder,
+  instrumentApiSurface,
+  ipcMethodIdFromChannel,
   publicFunctionShape
 } from "lotion/customer-api-contract";
 import { Plugin } from "lotion/plugin-api";
@@ -55,9 +57,11 @@ test("package exports expose public customer and plugin APIs", () => {
   );
 });
 
-test("shared customer API contract matches package and renderer public surfaces", () => {
+test("shared customer API contract matches package and renderer public surfaces", async () => {
   const api = createLotionCustomerApi({ appConfig: createMemoryConfig() });
   assert.deepEqual(publicFunctionShape(api), flattenApiContract(LOTION_PACKAGE_API_CONTRACT));
+  assert.deepEqual(publicFunctionShape(null), []);
+  assert.deepEqual(publicFunctionShape({ ignored: null, scalar: 1 }), []);
 
   const rendererMethods = flattenApiContract(LOTION_RENDERER_API_CONTRACT);
   assert.equal(rendererMethods.includes("metrics.list"), true);
@@ -69,6 +73,59 @@ test("shared customer API contract matches package and renderer public surfaces"
   const eventOnlyMethods = new Set(["debug.openLog", "notion.onProgress"]);
   const missingIpcMappings = rendererMethods.filter((methodId) => !eventOnlyMethods.has(methodId) && !ipcMethods.has(methodId));
   assert.deepEqual(missingIpcMappings, []);
+  assert.equal(ipcMethodIdFromChannel("custom:action"), "custom.action");
+
+  const partiallyImplemented = instrumentApiSurface(
+    { pages: { list: async () => [] }, scalar: true },
+    {
+      contract: [
+        { group: "missing", methods: ["run"] },
+        { group: "scalar", methods: ["run"] },
+        { group: "pages", methods: ["list", "missing"] }
+      ],
+      recorder: new LotionApiMetricsRecorder(),
+      surface: "package"
+    }
+  );
+  assert.deepEqual(await partiallyImplemented.pages.list(), []);
+});
+
+test("customer API metrics enforce retention and classify non-Error failures", async () => {
+  const recorder = new LotionApiMetricsRecorder({ maxEntries: 2 });
+  recorder.record({ surface: "package", methodId: "first", durationMs: -1, ok: true });
+  recorder.record({ surface: "package", methodId: "second", durationMs: 1, ok: true });
+  recorder.record({ surface: "package", methodId: "third", durationMs: 2, ok: true });
+  assert.deepEqual(recorder.list().map((entry) => entry.methodId), ["second", "third"]);
+  assert.equal(recorder.list({ limit: Number.NaN }).length, 2);
+
+  await assert.rejects(
+    () => recorder.measure(
+      { surface: "package", methodId: "coded" },
+      async () => { throw { code: " CUSTOM_CODE " }; }
+    ),
+    (error) => error.code.trim() === "CUSTOM_CODE"
+  );
+  try {
+    await recorder.measure(
+      { surface: "package", methodId: "string" },
+      async () => { throw "string failure"; }
+    );
+  } catch (error) {
+    assert.equal(error, "string failure");
+  }
+  assert.equal(recorder.list().some((entry) => entry.errorKind === "CUSTOM_CODE"), true);
+  assert.equal(recorder.list().some((entry) => entry.errorKind === "string"), true);
+});
+
+test("customer API default config supports an ephemeral workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-customer-api-default-config-"));
+  const api = createLotionCustomerApi();
+  try {
+    const manifest = await api.workspace.createAt(root, { name: "Default Config Space" });
+    assert.equal(manifest.name, "Default Config Space");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("customer API metrics records success and errors without payload bodies", async () => {
@@ -200,6 +257,11 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
     assert.equal(page.meta.parentId, undefined);
     assert.equal(page.meta.parentKind, undefined);
     assert.deepEqual(page.meta.path, [page.meta.title]);
+    const duplicatedPage = await api.pages.duplicate(page.meta.id);
+    assert.equal(duplicatedPage.meta.title, "API Page Renamed (Copy)");
+    assert.equal(duplicatedPage.markdown, page.markdown);
+    assert.deepEqual(duplicatedPage.meta.tags, page.meta.tags);
+    await api.pages.delete(duplicatedPage.meta.id);
     await api.pages.delete(parentPage.meta.id);
     assert.deepEqual((await api.pages.list()).map((item) => item.id), [page.meta.id]);
     await api.workspace.reorderPages([page.meta.id]);
@@ -249,6 +311,23 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
     assert.equal(bundle.views.some((view) => view.fieldOrder.includes(priorityField.id)), false);
     bundle = await api.databases.deleteField(databaseId, "title");
     assert.equal(bundle.schema.fields.some((field) => field.id === "title"), true);
+    bundle = await api.databases.addField(databaseId, { name: "Imported date", type: "date" });
+    const importedDateField = bundle.schema.fields.find((field) => field.name === "Imported date");
+    assert.ok(importedDateField);
+    bundle = await api.databases.updateCell({
+      databaseId,
+      rowId: acmeRowId,
+      fieldId: importedDateField.id,
+      value: "2026-07-08"
+    });
+    const copiedTime = await api.databases.copyFieldToSystemTime({
+      databaseId,
+      sourceFieldId: importedDateField.id,
+      targetFieldId: "created_time"
+    });
+    assert.equal(copiedTime.copiedRows, 1);
+    assert.match(String(copiedTime.bundle.records.find((record) => record.id === acmeRowId)?.created_time), /^2026-07-08T/);
+    bundle = copiedTime.bundle;
     bundle = await api.databases.updateMeta({ databaseId, tags: ["customer-api"] });
     assert.deepEqual(bundle.schema.tags, ["customer-api"]);
 

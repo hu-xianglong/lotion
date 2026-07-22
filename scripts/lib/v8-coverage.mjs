@@ -79,11 +79,11 @@ export async function fileExists(path) {
   }
 }
 
-function mergeScriptCoverage(a, b) {
+export function mergeScriptCoverage(a, b) {
   if (!a) return b;
   const functions = [...(a.functions ?? [])];
   for (const incoming of b.functions ?? []) {
-    const index = functions.findIndex((fn) => fn.functionName === incoming.functionName);
+    const index = functions.findIndex((fn) => sameFunctionCoverage(fn, incoming));
     if (index < 0) {
       functions.push(incoming);
       continue;
@@ -100,6 +100,14 @@ function mergeScriptCoverage(a, b) {
   return { ...a, functions };
 }
 
+function sameFunctionCoverage(left, right) {
+  const leftRoot = left.ranges?.[0];
+  const rightRoot = right.ranges?.[0];
+  return left.functionName === right.functionName &&
+    leftRoot?.startOffset === rightRoot?.startOffset &&
+    leftRoot?.endOffset === rightRoot?.endOffset;
+}
+
 function lineCoverage(root, path, source, scriptCoverage) {
   const executable = executableLines(source);
   const lineStarts = computeLineStarts(source);
@@ -111,15 +119,18 @@ function lineCoverage(root, path, source, scriptCoverage) {
   }
 
   let covered = 0;
+  const uncoveredLines = [];
   for (const line of executable) {
     if (isLineCovered(source, lineStarts, line, ranges)) covered += 1;
+    else uncoveredLines.push(line);
   }
 
   return {
     label: relative(root, path),
     covered,
     total: executable.length,
-    percent: executable.length === 0 ? 100 : (covered / executable.length) * 100
+    percent: executable.length === 0 ? 100 : (covered / executable.length) * 100,
+    uncoveredLines
   };
 }
 

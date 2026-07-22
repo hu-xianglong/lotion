@@ -6,6 +6,7 @@ import type {
   PageMeta,
   RowPageDocument
 } from "../../shared/types.js";
+import { resolveRowIcon } from "../../shared/row-icons.js";
 import { writeTextFile } from "../storage/json-file.js";
 import type { DatabaseService } from "./database-service.js";
 import { pageBodyPath, PagesDatabaseService } from "./pages-database-service.js";
@@ -201,6 +202,9 @@ export class RowPagesService {
         title,
         created_time: String(record.created_time ?? "") || existing?.created_time || now,
         updated_time: String(record.updated_time ?? "") || existing?.updated_time || now,
+        // Persist only row-owned metadata. Database icon inheritance is a
+        // display fallback in rowPageMeta so changing a database icon updates
+        // iconless rows instead of leaving a stale copied value here.
         icon: String(record.row_icon ?? "").trim() || existing?.icon || undefined,
         path: existing?.path ?? (schema ? [...schemaPath(schema), title] : undefined),
         parentId: existing?.parentId ?? schema?.id ?? databaseId,
@@ -267,7 +271,7 @@ export class RowPagesService {
     const stored = rowId ? await this.pageRecords.getMeta(rowId) : null;
     const created = String(record.created_time ?? "").trim() || stored?.created_time || new Date().toISOString();
     const updated = String(record.updated_time ?? "").trim() || stored?.updated_time || created;
-    const icon = String(record.row_icon ?? "").trim() || stored?.icon;
+    const icon = resolveRowIcon(record, schema.icon, stored?.icon);
     const cover = String(record.cover ?? "").trim() || stored?.cover;
     const coverOffset = Number(record.cover_offset ?? stored?.coverOffset ?? 50);
     const fullWidth = parseBooleanCell(record.page_full_width) ?? stored?.fullWidth;

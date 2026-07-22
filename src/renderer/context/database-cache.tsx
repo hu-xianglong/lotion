@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   AddFieldInput,
+  CopyFieldToSystemTimeInput,
+  CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
   CreateViewInput,
   DatabaseBundle,
@@ -45,6 +47,7 @@ export interface DatabaseCache {
   updateMeta(input: UpdateDatabaseMetaInput): Promise<DatabaseBundle>;
   updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
   updateField(input: UpdateFieldInput): Promise<DatabaseBundle>;
+  copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult>;
   addField(databaseId: string, input: AddFieldInput): Promise<DatabaseBundle>;
   addRow(databaseId: string, templateId?: string): Promise<DatabaseBundle>;
   deleteRow(input: DeleteRowInput): Promise<DatabaseBundle>;
@@ -154,6 +157,12 @@ export function DatabaseCacheProvider({ children }: { children: ReactNode }) {
     const next = await window.lotion.databases.updateField(input);
     write(input.databaseId, next);
     return next;
+  }, [write]);
+
+  const copyFieldToSystemTime = useCallback(async (input: CopyFieldToSystemTimeInput) => {
+    const result = await window.lotion.databases.copyFieldToSystemTime(input);
+    write(input.databaseId, result.bundle);
+    return result;
   }, [write]);
 
   const addField = useCallback(async (databaseId: string, input: AddFieldInput) => {
@@ -292,6 +301,7 @@ export function DatabaseCacheProvider({ children }: { children: ReactNode }) {
     updateMeta,
     updateCell,
     updateField,
+    copyFieldToSystemTime,
     addField,
     addRow,
     deleteRow,
@@ -307,7 +317,7 @@ export function DatabaseCacheProvider({ children }: { children: ReactNode }) {
     updateRowPage,
     setRowPageFullWidth,
     setRowPageSmallText
-  }), [bundles, loadBundle, invalidate, createDatabase, updateMeta, updateCell, updateField, addField, addRow, deleteRow, saveTemplate, deleteTemplate, createView, duplicateView, updateView, deleteView, setDefaultView, openRowPage, openRowPageByFile, updateRowPage, setRowPageFullWidth, setRowPageSmallText]);
+  }), [bundles, loadBundle, invalidate, createDatabase, updateMeta, updateCell, updateField, copyFieldToSystemTime, addField, addRow, deleteRow, saveTemplate, deleteTemplate, createView, duplicateView, updateView, deleteView, setDefaultView, openRowPage, openRowPageByFile, updateRowPage, setRowPageFullWidth, setRowPageSmallText]);
 
   return <DatabaseCacheValueProvider value={value}>{children}</DatabaseCacheValueProvider>;
 }

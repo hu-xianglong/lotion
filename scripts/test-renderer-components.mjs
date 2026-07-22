@@ -1,32 +1,18 @@
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import * as esbuild from "esbuild";
+import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
-const tempDir = await mkdtemp(join(tmpdir(), "lotion-renderer-components-"));
-const bundlePath = join(tempDir, "renderer-component-entry.cjs");
-const require = createRequire(import.meta.url);
+const tempDir = await mkdtemp(join(root, ".lotion-renderer-components-"));
+const entryPath = join(tempDir, "renderer-component-entry.tsx");
 
 try {
-  await esbuild.build({
-    stdin: {
-      contents: rendererComponentEntry(),
-      sourcefile: "renderer-component-entry.tsx",
-      resolveDir: root,
-      loader: "tsx"
-    },
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    outfile: bundlePath,
-    logLevel: "silent",
-    jsx: "automatic"
-  });
+  const entrySource = rendererComponentEntry().replaceAll('"./src/', '"../src/');
+  await writeFile(entryPath, entrySource, "utf8");
 
   const {
+    dateSortContract,
     renderAdvancedSearchProgressCard,
     renderAdvancedSearchPanelInitial,
     renderAppShellCollapsed,
@@ -39,6 +25,7 @@ try {
     renderGitSyncPanelStatusScenarios,
     renderLLMChatVisualContract,
     renderKanbanProviderVisual,
+    renderDateFieldSettingsDialog,
     renderEditableFieldSettingsDialog,
     renderFormulaFieldSettingsDialog,
     renderDatabaseProperties,
@@ -123,8 +110,9 @@ try {
     renderSlashMenuContentZh,
     renderSlashMenuContentEmpty,
     renderSlashMenuContentEmptyZh,
+    rendererUtilityContract,
     renderWidgetMarkdownFormatting
-  } = require(bundlePath);
+  } = await import(pathToFileURL(entryPath).href);
   testAdvancedSearchProgressCard(renderAdvancedSearchProgressCard());
   testAdvancedSearchPanelInitial(renderAdvancedSearchPanelInitial());
   testGitHubBackupPanelInitial(renderGitHubBackupPanelInitial());
@@ -151,6 +139,7 @@ try {
   testMixedMarkdownProperty(renderMixedMarkdownProperty());
   testWorkspaceLinkRoutingContract(workspaceLinkRoutingContract());
   testEditableFieldSettingsDialog(renderEditableFieldSettingsDialog());
+  testDateFieldSettingsDialog(renderDateFieldSettingsDialog());
   testFormulaFieldSettingsDialog(renderFormulaFieldSettingsDialog());
   testSystemFieldSettingsDialog(renderSystemFieldSettingsDialog());
   testSelectFieldSettingsDialog(renderSelectFieldSettingsDialog());
@@ -222,9 +211,36 @@ try {
   testDatabaseTableGridEmbedded(renderDatabaseTableGridEmbedded());
   testDatabaseTableGridStandalone(renderDatabaseTableGridStandalone());
   testDatabaseTableGridHiddenRows(renderDatabaseTableGridHiddenRows());
+  testDateSortContract(dateSortContract());
+  testRendererUtilityContract(rendererUtilityContract());
   console.log("Renderer component regression tests passed.");
 } finally {
   await rm(tempDir, { recursive: true, force: true });
+}
+
+function testDateSortContract(contract) {
+  assert.deepEqual(contract.asc, ["old", "middle", "new", "blank"], "date ascending should compare timestamps across years");
+  assert.deepEqual(contract.desc, ["new", "middle", "old", "blank"], "date descending should compare timestamps across years");
+}
+
+function testRendererUtilityContract(contract) {
+  assert.deepEqual(contract.markdown.map((part) => part.type), ["html", "view", "html", "iframe", "html", "iframe"]);
+  assert.match(contract.markdown[0].html, /<h1>Title<\/h1>/);
+  assert.match(contract.markdown[0].html, /type="checkbox" disabled checked/);
+  assert.match(contract.markdown[0].html, /class="md-image"/);
+  assert.match(contract.markdown[0].html, /class="md-link"/);
+  assert.equal(contract.markdown[1].databaseId, "db_tasks");
+  assert.equal(contract.markdown[1].viewId, "view_default");
+  assert.equal(contract.markdown[3].height, 480);
+  assert.equal(contract.markdown[5].height, 360);
+  assert.deepEqual(contract.templateNames, ["Untitled", "Tasks", "Reading List", "Journal"]);
+  assert.equal(contract.settings.initial, "fallback");
+  assert.deepEqual(contract.settings.saved, { enabled: true });
+  assert.equal(contract.settings.deleted, "removed");
+  assert.deepEqual(contract.settings.invalid, {});
+  assert.deepEqual(contract.settings.array, {});
+  assert.equal(contract.settings.valid, true);
+  assert.equal(contract.settings.copyIsIsolated, true);
 }
 
 function testRowPageProperties(html) {
@@ -438,6 +454,13 @@ function testEditableFieldSettingsDialog(html) {
   assert.doesNotMatch(html, /System field values are managed by Lotion/, "editable fields should not show system helper");
 }
 
+function testDateFieldSettingsDialog(html) {
+  assert.match(html, /System timestamps/, "date field settings should expose system timestamp utilities");
+  assert.match(html, />Copy to Created time<\/button>/, "date fields should copy values to Created time");
+  assert.match(html, />Copy to Last updated time<\/button>/, "date fields should copy values to Last updated time");
+  assert.match(html, /Empty or invalid values keep their existing system timestamp/, "copy action should explain its non-destructive skip behavior");
+}
+
 function testFormulaFieldSettingsDialog(html) {
   assert.match(html, /Formula columns/, "formula settings should explain storage column references");
   assert.match(html, /Column letters and row numbers follow CSV storage order/, "formula settings should explain stable source coordinates");
@@ -478,7 +501,7 @@ function testUrlCell(html) {
 function testTitleCell(html) {
   assert.match(html, /class="title-cell-with-icon"/, "title cells should render the icon/editor/open wrapper");
   assert.match(html, /class="entity-icon entity-icon-emoji"/, "title cells should render row icons");
-  assert.match(html, />📝</, "title cells should preserve emoji row icons");
+  assert.match(html, />🧴</, "title cells without a row icon should inherit the database icon");
   assert.match(html, /value="Visible Title"/, "title cells should render the editable title value");
   assert.match(html, /class="title-cell-open"/, "title cells should expose row-page open affordance");
   assert.match(html, /aria-label="Open"/, "title open affordance should be accessible");
@@ -617,7 +640,7 @@ function testGlobalSearchPanelContentResults(html) {
   assert.match(html, /Lotion · 内置 · lotion\.toggle-raw-markdown/, "toggle raw markdown command preview should include Lotion source and id");
   assert.match(html, /切换嵌入源码显示/, "toggle embed source command title should render");
   assert.match(html, /Lotion · 内置 · lotion\.toggle-embed-source/, "toggle embed source command preview should include Lotion source and id");
-  assert.match(html, /收藏\/取消收藏当前页面/, "favorite command title should render");
+  assert.match(html, /收藏\/取消收藏当前内容/, "favorite command title should render");
   assert.match(html, /Lotion · 内置 · lotion\.toggle-favorite/, "favorite command preview should include Lotion source and id");
   assert.match(html, /切换当前页面全宽/, "full-width command title should render");
   assert.match(html, /Lotion · 内置 · lotion\.toggle-full-width/, "full-width command preview should include Lotion source and id");
@@ -833,9 +856,10 @@ function testSidebarPageContextMenu(html) {
   assert.match(html, /class="sidebar-context-menu"/, "sidebar page context menu should render");
   assert.match(html, /role="menu"/, "sidebar page context menu should expose menu semantics");
   assert.match(html, /aria-label="Project Plan"/, "sidebar page context menu should name the target page");
-  assert.equal(count(html, 'role="menuitem"'), 3, "sidebar page context menu should render open, child-create, and delete actions");
+  assert.equal(count(html, 'role="menuitem"'), 4, "sidebar page context menu should render open, child-create, duplicate, and delete actions");
   assert.match(html, />Open</, "sidebar page context menu should render the open action");
   assert.match(html, />New child page</, "sidebar page context menu should render the child-page creation action");
+  assert.match(html, />Duplicate</, "sidebar page context menu should render the duplicate action");
   assert.match(html, />Delete</, "sidebar page context menu should render the delete action");
 }
 
@@ -1397,6 +1421,7 @@ function testListBody(html) {
   assert.match(html, /Alpha task/, "list view should render record titles");
   assert.match(html, /Untitled/, "list view should fall back to Untitled for blank titles");
   assert.match(html, />🧾</, "list view should render row icons");
+  assert.match(html, />🧴</, "list view rows without an icon should inherit the database icon");
   assert.match(html, /Status/, "visible select property label should render");
   assert.match(html, /Doing/, "visible select property value should render");
   assert.match(html, /Due/, "visible date property label should render");
@@ -1412,7 +1437,8 @@ function testGalleryBody(html) {
   assert.equal(count(html, 'class="gallery-card"'), 2, "gallery should render one card per record");
   assert.match(html, /Alpha task/, "gallery should render card titles");
   assert.match(html, /Untitled/, "gallery should fall back to Untitled for blank titles");
-  assert.match(html, />🖼️</, "gallery should render row icons");
+  assert.match(html, />🧾</, "gallery should render explicit row icons");
+  assert.match(html, />🧴</, "gallery rows without an icon should inherit the database icon");
   assert.match(html, /src="attachment:\/\/covers\/alpha\.png"/, "gallery should render configured cover images");
   assert.match(html, /object-position:50% 30%/, "gallery should preserve cover offsets");
   assert.match(html, /gallery-card-cover-placeholder/, "gallery should render placeholders for missing covers");
@@ -1437,6 +1463,7 @@ function testCalendarBody(html) {
   assert.equal(count(html, 'class="calendar-weekday"'), 7, "calendar should render weekday headings");
   assert.match(html, /Calendar task/, "calendar should render rows in the current month");
   assert.match(html, />📅</, "calendar row chips should render row icons");
+  assert.match(html, />🧴</, "calendar rows without an icon should inherit the database icon");
   assert.doesNotMatch(html, /Outside month task/, "calendar should omit rows outside the current month");
 }
 
@@ -1815,6 +1842,10 @@ function rendererComponentEntry() {
     import { GlobalSearchPanelContent } from "./src/renderer/features/search/GlobalSearchPanel.tsx";
     import { StartupLoadingScreen } from "./src/renderer/App.tsx";
     import { I18nValueProvider } from "./src/renderer/lib/i18n.ts";
+    import { parseMarkdown } from "./src/renderer/lib/markdown.ts";
+    import { getViewRecords } from "./src/renderer/lib/view-query.ts";
+    import { TEMPLATES } from "./src/renderer/features/databases/templates.ts";
+    import { BrowserPluginSettings } from "./src/renderer/plugin-host/browser-settings.ts";
     import { AuditResult, NotionAuditPanel } from "./src/builtin-plugins/notion-import/NotionAuditPanel.tsx";
     import { ImportSummary, NotionImportDialog, NotionImportPanel } from "./src/builtin-plugins/notion-import/NotionImportDialog.tsx";
     import { NotionImportSettings } from "./src/builtin-plugins/notion-import/index.tsx";
@@ -1826,6 +1857,93 @@ function rendererComponentEntry() {
       manifest as defaultFieldTypesManifest
     } from "./src/builtin-plugins/field-types-default/index.tsx";
     import { installKanbanView } from "./src/builtin-plugins/view-kanban/index.ts";
+
+    export function dateSortContract() {
+      const bundle = {
+        schema: {
+          id: "db_date_sort",
+          name: "Date sort",
+          fields: [
+            { id: "id", name: "ID", type: "id" },
+            { id: "created_time", name: "Created time", type: "created_time" }
+          ]
+        },
+        records: [
+          { id: "middle", created_time: "December 31, 2025 11:00 PM" },
+          { id: "new", created_time: "January 1, 2026 12:00 AM" },
+          { id: "blank", created_time: "" },
+          { id: "old", created_time: "September 30, 2024 8:00 AM" }
+        ],
+        views: []
+      };
+      const view = {
+        id: "view_date_sort",
+        databaseId: bundle.schema.id,
+        name: "Date sort",
+        type: "table",
+        visibleFieldIds: ["created_time"],
+        fieldOrder: ["created_time"],
+        filters: [],
+        sorts: []
+      };
+      return {
+        asc: getViewRecords(bundle, { ...view, sorts: [{ fieldId: "created_time", direction: "asc" }] }).map((row) => row.id),
+        desc: getViewRecords(bundle, { ...view, sorts: [{ fieldId: "created_time", direction: "desc" }] }).map((row) => row.id)
+      };
+    }
+
+    export function rendererUtilityContract() {
+      const markdown = parseMarkdown([
+        "# Title",
+        "## Subtitle",
+        "### Detail",
+        "- [ ] Pending",
+        "- [x] Done",
+        "- Item",
+        "**Bold** and \`code\` & <unsafe>",
+        "![Alt](image.png \"Image title\") [Link](https://example.com \"Link title\")",
+        "\`\`\`lotion-view",
+        "ignored line",
+        "database: db_tasks",
+        "\`\`\`",
+        "Between blocks",
+        "\`\`\`lotion-iframe",
+        "url: https://example.com/embed",
+        "height: 480",
+        "title: Example embed",
+        "\`\`\`",
+        "\`\`\`lotion-iframe",
+        "url: https://example.com/default-height",
+        "height: invalid",
+        "\`\`\`"
+      ].join("\n"));
+      const templateNames = TEMPLATES.map((template) => template.buildInput().name);
+      const settings = withRendererWindow(() => {
+        const value = new BrowserPluginSettings("coverage");
+        const initial = value.get("missing", "fallback");
+        void value.set("saved", { enabled: true });
+        const saved = value.get("saved");
+        const copy = value.all();
+        copy.saved = { enabled: false };
+        const copyIsIsolated = value.get("saved")?.enabled === true;
+        void value.delete("saved");
+        const deleted = value.get("saved", "removed");
+        return {
+          initial,
+          saved,
+          deleted,
+          copyIsIsolated,
+          invalid: new BrowserPluginSettings("invalid").all(),
+          array: new BrowserPluginSettings("array").all(),
+          valid: new BrowserPluginSettings("valid").get("enabled")
+        };
+      }, [
+        ["lotion.plugin.invalid.settings", "{invalid"],
+        ["lotion.plugin.array.settings", "[]"],
+        ["lotion.plugin.valid.settings", JSON.stringify({ enabled: true })]
+      ]);
+      return { markdown, templateNames, settings };
+    }
 
     export function renderStartupLoadingScreen() {
       return renderToStaticMarkup(
@@ -2590,6 +2708,24 @@ function rendererComponentEntry() {
       );
     }
 
+    export function renderDateFieldSettingsDialog() {
+      return renderWithDefaultFieldTypes(
+        React.createElement(FieldSettingsDialog, {
+          field: { id: "journal_date", name: "Journal date", type: "date" },
+          records: [{ id: "row_1", journal_date: "2026-07-08" }],
+          onCopyToSystemTime: async () => ({
+            bundle: { schema: {}, records: [], views: [] },
+            copiedRows: 1,
+            unchangedRows: 0,
+            skippedEmptyRows: 0,
+            skippedInvalidRows: 0
+          }),
+          onClose: () => {},
+          onSave: async () => {}
+        })
+      );
+    }
+
     export function renderFormulaFieldSettingsDialog() {
       const fields = [
         { id: "id", name: "ID", type: "id", system: true },
@@ -2660,8 +2796,9 @@ function rendererComponentEntry() {
           field: { id: "title", name: "Name", type: "text" },
           value: "Visible Title",
           wrap: false,
-          record: { id: "row_title", title: "Visible Title", row_icon: "emoji:📝" },
+          record: { id: "row_title", title: "Visible Title" },
           databaseId: "db_cells",
+          databaseIcon: "emoji:🧴",
           onChange: () => {},
           onOptionColorChange: () => {},
           onOptionsChange: () => {},
@@ -3176,6 +3313,7 @@ function rendererComponentEntry() {
             top: 24,
             onOpen: () => {},
             onCreateChild: () => {},
+            onDuplicate: () => {},
             onDelete: () => {}
           })
         )
@@ -3779,6 +3917,7 @@ function rendererComponentEntry() {
         React.createElement(ListBody, {
           fields: makeAlternateViewFields(),
           records: makeAlternateViewRecords(),
+          databaseIcon: "emoji:🧴",
           onOpenRow: () => {}
         })
       );
@@ -3790,6 +3929,7 @@ function rendererComponentEntry() {
           fields: makeAlternateViewVisibleFields(),
           records: makeAlternateViewRecords(),
           view: { id: "view_gallery", name: "Gallery", type: "gallery", coverFieldId: "cover_url" },
+          databaseIcon: "emoji:🧴",
           onOpenRow: () => {}
         })
       );
@@ -3821,6 +3961,11 @@ function rendererComponentEntry() {
           id: "row_outside",
           title: "Outside month task",
           due: outsideMonthDate.toISOString().slice(0, 10)
+        },
+        {
+          id: "row_inherited_icon",
+          title: "Inherited icon task",
+          due: currentMonthDate.toISOString().slice(0, 10)
         }
       ];
       return renderToStaticMarkup(
@@ -3828,6 +3973,7 @@ function rendererComponentEntry() {
           fields: makeAlternateViewFields(),
           records,
           view: { id: "view_calendar", name: "Calendar", type: "calendar", dateFieldId: "due" },
+          databaseIcon: "emoji:🧴",
           onOpenRow: () => {}
         })
       );
@@ -4417,7 +4563,7 @@ function rendererComponentEntry() {
           commandHit: {
             command: {
               id: "lotion.toggle-favorite",
-              title: "收藏/取消收藏当前页面",
+              title: "收藏/取消收藏当前内容",
               category: "Lotion",
               run() {}
             },
@@ -5269,7 +5415,6 @@ function rendererComponentEntry() {
         {
           id: "row_beta",
           title: "",
-          row_icon: "emoji:🖼️",
           status: "Done",
           due: "2026-06-13",
           done: false,
@@ -5327,6 +5472,7 @@ function rendererComponentEntry() {
         openRowPage() {},
         openRowPageByFile() {},
         createPage() {},
+        duplicatePage() {},
         createDatabase() {},
         async deletePage() {},
         async toggleFavoriteCurrent() {},
