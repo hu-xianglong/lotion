@@ -399,7 +399,7 @@ function createWorkspaceDefaultView(): TableView {
     type: "table",
     visibleFieldIds,
     fieldOrder: visibleFieldIds,
-    wrapFieldIds: visibleFieldIds,
+    wrapFieldIds: [],
     sorts: [],
     filters: []
   };

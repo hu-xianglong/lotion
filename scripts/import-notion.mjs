@@ -564,7 +564,7 @@ async function emitWorkspace(target, inventory) {
       type: "table",
       visibleFieldIds,
       fieldOrder: visibleFieldIds,
-      wrapFieldIds: visibleFieldIds,
+      wrapFieldIds: [],
       sorts: [],
       filters: []
     };

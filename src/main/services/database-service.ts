@@ -1,5 +1,5 @@
 import { DATABASE_STATS_DATABASE_ID, DEFAULT_VIEW_ID, ENTITIES_DATABASE_ID, PAGES_DATABASE_ID } from "../../shared/constants.js";
-import { orderFieldIdsByContentRichness } from "../../shared/field-order.js";
+import { orderFieldIdsByContentRichness, orderFieldIdsByInformationAmount } from "../../shared/field-order.js";
 import { applyFormulasToRecords } from "../../shared/formula.js";
 import { createId, slugifyId } from "../../shared/ids.js";
 import { applyRollupsToRecords } from "../../shared/rollup.js";
@@ -1291,7 +1291,7 @@ function normalizePathSegments(path: string[] | undefined, fallbackName: string)
 }
 
 function createDefaultTableView(schema: DatabaseSchema, records: readonly DatabaseRecord[], name = "All"): TableView {
-  const visibleFieldIds = orderViewFieldIdsByContentRichness(records, defaultVisibleFieldIds(schema.fields));
+  const visibleFieldIds = orderDefaultViewFieldIds(records, defaultVisibleFieldIds(schema.fields));
   return {
     id: DEFAULT_VIEW_ID,
     databaseId: schema.id,
@@ -1299,7 +1299,7 @@ function createDefaultTableView(schema: DatabaseSchema, records: readonly Databa
     type: "table",
     visibleFieldIds,
     fieldOrder: visibleFieldIds,
-    wrapFieldIds: visibleFieldIds,
+    wrapFieldIds: [],
     sorts: [],
     filters: []
   };
@@ -1345,7 +1345,7 @@ function createCreatedTimeSortView(
     type: "table",
     visibleFieldIds,
     fieldOrder: visibleFieldIds,
-    wrapFieldIds: visibleFieldIds,
+    wrapFieldIds: [],
     sorts: [{ fieldId: "created_time", direction }],
     filters: []
   };
@@ -1477,6 +1477,13 @@ function defaultVisibleFieldIds(fields: FieldSchema[]): string[] {
 
 function orderViewFieldIdsByContentRichness(records: readonly DatabaseRecord[], fieldIds: readonly string[]): string[] {
   return orderFieldIdsByContentRichness(records, fieldIds, {
+    pinnedFirst: ["title"],
+    pinnedLast: [ORIGINAL_NOTION_HTML_FIELD_ID, ORIGINAL_NOTION_CSV_FIELD_ID]
+  });
+}
+
+function orderDefaultViewFieldIds(records: readonly DatabaseRecord[], fieldIds: readonly string[]): string[] {
+  return orderFieldIdsByInformationAmount(records, fieldIds, {
     pinnedFirst: ["title"],
     pinnedLast: [ORIGINAL_NOTION_HTML_FIELD_ID, ORIGINAL_NOTION_CSV_FIELD_ID]
   });

@@ -3500,7 +3500,7 @@ async function emitWorkspace(
       type: "table",
       visibleFieldIds,
       fieldOrder: visibleFieldIds,
-      wrapFieldIds: visibleFieldIds,
+      wrapFieldIds: [],
       sorts: [],
       filters: []
     };
@@ -3603,7 +3603,7 @@ async function emitWorkspace(
         type: "table",
         visibleFieldIds,
         fieldOrder: visibleFieldIds,
-        wrapFieldIds: visibleFieldIds,
+        wrapFieldIds: [],
         sorts: [],
         filters: []
       },
@@ -3715,7 +3715,7 @@ async function emitWorkspace(
         type: "table",
         visibleFieldIds,
         fieldOrder: visibleFieldIds,
-        wrapFieldIds: visibleFieldIds,
+        wrapFieldIds: [],
         sorts: [],
         filters: []
       },

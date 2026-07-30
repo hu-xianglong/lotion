@@ -60,6 +60,7 @@ import { slugifyTitle } from "../dist-electron/shared/ids.js";
 import { resolveRowIcon } from "../dist-electron/shared/row-icons.js";
 import { isMarkdownBlockDecorationCandidateLine } from "../dist-electron/shared/markdown-live-preview-policy.js";
 import { evaluateFormula } from "../dist-electron/shared/formula.js";
+import { orderFieldIdsByInformationAmount } from "../dist-electron/shared/field-order.js";
 import {
   attachmentCategoryForExtension,
   attachmentCategoryForFilename,
@@ -2176,7 +2177,31 @@ test("database date fields copy valid row values into system timestamps without 
   }
 });
 
-test("database default views order fields by content richness", async () => {
+test("information-amount ordering favors rich, varied content", () => {
+  const fieldIds = ["title", "status", "priority", "status_copy", "notes", "empty", "notion_original_html"];
+  const records = Array.from({ length: 12 }, (_, index) => ({
+    title: `Task ${index + 1}`,
+    status: index % 3 === 0 ? "Done" : "Open",
+    priority: ["Low", "Medium", "High"][index % 3],
+    status_copy: index % 3 === 0 ? "Done" : "Open",
+    notes: `Detailed note ${index + 1}: ${"context ".repeat(index + 1)}`,
+    empty: "",
+    notion_original_html: `attachments/original/task-${index + 1}.html`
+  }));
+
+  const ordered = orderFieldIdsByInformationAmount(records, fieldIds, {
+    pinnedFirst: ["title"],
+    pinnedLast: ["notion_original_html"]
+  });
+
+  assert.equal(ordered[0], "title");
+  assert.equal(ordered[1], "notes");
+  assert.equal(ordered.indexOf("status_copy") > ordered.indexOf("status"), true);
+  assert.equal(ordered.indexOf("empty") > ordered.indexOf("priority"), true);
+  assert.equal(ordered.at(-1), "notion_original_html");
+});
+
+test("database default views order fields by information amount", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-view-richness-"));
   try {
     const config = new AppConfigService(join(root, "config.json"));
@@ -2216,6 +2241,7 @@ test("database default views order fields by content richness", async () => {
 
     const expectedOrder = ["title", "long_notes", "short_code", "empty_note", "notion_original_html"];
     assert.deepEqual(bundle.views[0].fieldOrder, expectedOrder);
+    assert.deepEqual(bundle.views[0].wrapFieldIds, []);
     assertCreatedTimeDefaultViews(bundle, expectedOrder);
 
     const paths = new WorkspacePaths(workspaceRoot);
@@ -2307,6 +2333,8 @@ function assertCreatedTimeDefaultViews(bundle, expectedContentOrder) {
   assert.deepEqual(desc[0].sorts, [{ fieldId: "created_time", direction: "desc" }]);
   assert.deepEqual(asc[0].fieldOrder, withCreatedTimeAfterTitle(expectedContentOrder));
   assert.deepEqual(desc[0].fieldOrder, withCreatedTimeAfterTitle(expectedContentOrder));
+  assert.deepEqual(asc[0].wrapFieldIds, []);
+  assert.deepEqual(desc[0].wrapFieldIds, []);
 }
 
 function withCreatedTimeAfterTitle(fieldOrder) {

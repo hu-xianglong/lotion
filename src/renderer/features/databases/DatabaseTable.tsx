@@ -404,7 +404,7 @@ export const DatabaseTable = memo(function DatabaseTable({
   }
 
   async function toggleColumnWrap(fieldId: string) {
-    const current = resolveWrappedFieldIds(activeView, fields);
+    const current = resolveWrappedFieldIds(activeView);
     const wrapFieldIds = current.has(fieldId)
       ? [...current].filter((id) => id !== fieldId)
       : [...current, fieldId];
@@ -917,8 +917,8 @@ export const DatabaseTable = memo(function DatabaseTable({
   }
 
   const wrapFieldSet = useMemo(
-    () => resolveWrappedFieldIds(activeView, fields),
-    [activeView, fields]
+    () => resolveWrappedFieldIds(activeView),
+    [activeView]
   );
 
   useEffect(() => {
@@ -1857,9 +1857,8 @@ function formatSummaryNumber(value: number, locale: "en" | "zh"): string {
   });
 }
 
-function resolveWrappedFieldIds(view: TableView, fields: FieldSchema[]): Set<string> {
-  if (view.wrapFieldIds) return new Set(view.wrapFieldIds);
-  return new Set(fields.map((field) => field.id));
+function resolveWrappedFieldIds(view: TableView): Set<string> {
+  return new Set(view.wrapFieldIds ?? []);
 }
 
 function offsetToRowIndex(offsets: number[], offset: number): number {
