@@ -179,6 +179,28 @@ npm run build
 npm start
 ```
 
+To create downloadable macOS packages:
+
+```sh
+npm run package:mac
+npm run package:mac:verify
+```
+
+The packages are written to `artifacts/production-release/`. Every push to
+`main` also builds Apple Silicon and Intel downloads in GitHub Actions. Pushing
+a version tag publishes those verified packages as a GitHub Release:
+
+```sh
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+Without Apple Developer credentials the workflow uses an ad-hoc signature, so
+macOS may require **Open Anyway** on first launch. Add the `MACOS_CSC_LINK`,
+`MACOS_CSC_KEY_PASSWORD`, `MACOS_APPLE_ID`, `MACOS_APP_SPECIFIC_PASSWORD`, and
+`MACOS_TEAM_ID` repository secrets to enable Developer ID signing and
+notarization automatically.
+
 ## Import from Notion
 
 For the best migration fidelity, export the same Notion workspace twice. The
