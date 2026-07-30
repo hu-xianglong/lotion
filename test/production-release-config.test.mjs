@@ -28,3 +28,15 @@ test("release workflow builds both Mac architectures and publishes version tags"
   assert.match(workflow, /branches:\s*\n\s*- main/);
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
 });
+
+test("package verification only requires native modules published for the target architecture", async () => {
+  const verifier = await readFile(
+    new URL("../scripts/verify-packaged-macos-app.mjs", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(verifier, /lancedb-darwin-\$\{arch\}/);
+  assert.match(verifier, /optionalDependencies/);
+  assert.match(verifier, /if \(expectsNativeModules\)/);
+  assert.match(verifier, /Packaged Lotion exited during startup/);
+});

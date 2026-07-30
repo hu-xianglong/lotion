@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseArgs, promisify } from "node:util";
@@ -74,7 +74,17 @@ const ripgrepBinaries = await collectFiles(
   `${appAsar}.unpacked`,
   (path) => path.includes("@vscode/ripgrep-") && basename(path) === "rg"
 );
-assert.ok(nativeModules.length > 0, "Packaged app is missing unpacked native modules");
+const lanceDbPackage = JSON.parse(
+  await readFile(join(root, "node_modules", "@lancedb", "lancedb", "package.json"), "utf8")
+);
+const lanceDbNativePackage = `@lancedb/lancedb-darwin-${arch}`;
+const expectsNativeModules = Boolean(lanceDbPackage.optionalDependencies?.[lanceDbNativePackage]);
+if (expectsNativeModules) {
+  assert.ok(
+    nativeModules.length > 0,
+    `Packaged app is missing the declared ${lanceDbNativePackage} native module`
+  );
+}
 assert.ok(ripgrepBinaries.length > 0, "Packaged app is missing the ripgrep executable");
 
 const userData = await mkdtemp(join(tmpdir(), "lotion-packaged-smoke-"));
@@ -123,4 +133,6 @@ try {
 
 console.log(`Verified ${zipName} and ${dmgName}`);
 console.log(`Architecture: ${arch}`);
-console.log(`Native modules: ${nativeModules.length}`);
+console.log(
+  `Native modules: ${nativeModules.length}${expectsNativeModules ? "" : ` (${lanceDbNativePackage} is not published by LanceDB)`}`
+);
