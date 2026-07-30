@@ -1,3 +1,22 @@
+const signingEnvironmentVariables = [
+  "CSC_LINK",
+  "CSC_NAME",
+  "CSC_KEY_PASSWORD",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
+  "APPLE_API_KEY",
+  "APPLE_API_KEY_ID",
+  "APPLE_API_ISSUER",
+  "APPLE_KEYCHAIN_PROFILE"
+];
+
+for (const name of signingEnvironmentVariables) {
+  if (!process.env[name]?.trim()) {
+    delete process.env[name];
+  }
+}
+
 const hasDeveloperId = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
 const hasNotarizationCredentials = Boolean(
   (process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID)

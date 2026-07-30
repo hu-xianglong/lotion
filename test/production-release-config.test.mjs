@@ -11,6 +11,7 @@ test("production package includes both macOS download formats and native runtime
   assert.ok(builderConfig.asarUnpack.includes("**/*.node"));
   assert.ok(builderConfig.asarUnpack.some((pattern) => pattern.includes("@vscode/ripgrep-")));
   assert.match(builderConfig.artifactName, /\$\{arch\}/);
+  assert.equal("CSC_LINK" in process.env, false, "blank signing credentials must not reach electron-builder");
 });
 
 test("release workflow builds both Mac architectures and publishes version tags", async () => {
@@ -22,6 +23,8 @@ test("release workflow builds both Mac architectures and publishes version tags"
   assert.match(workflow, /npm run package:mac/);
   assert.match(workflow, /npm run package:mac:verify/);
   assert.match(workflow, /gh release create/);
+  assert.match(workflow, /actions\/checkout@v6/);
+  assert.match(workflow, /actions\/upload-artifact@v7/);
   assert.match(workflow, /branches:\s*\n\s*- main/);
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
 });
