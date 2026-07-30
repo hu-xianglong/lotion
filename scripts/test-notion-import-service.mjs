@@ -39,6 +39,7 @@ const EMPTY_NESTED_PAGE_HASH = "12121212111122223333444455556666";
 const MD_ICON_PAGE_HASH = "34343434111122223333444455556666";
 const MD_DB_WRAPPER_PAGE_HASH = "56565656111122223333444455556666";
 const MD_FIELDS_DB_HASH = "67676767111122223333444455556666";
+const LOCALIZED_TIMES_DB_HASH = "68686868111122223333444455556666";
 const BOM_MATCH_DB_HASH = "71550a25341f451885c8fec1bbe367fe";
 const BOM_MATCH_ALEX_ROW_HASH = "7d1c6100c5e54182aa5e5dadcfba8e2c";
 const BOM_MATCH_EMPTY_ROW_HASH = "03ddb12f9bf54717a10ce65bf60f2d8a";
@@ -368,6 +369,14 @@ try {
     ].join("\n"),
     "utf8"
   );
+  await writeFile(
+    join(source, `Localized Times ${LOCALIZED_TIMES_DB_HASH}.csv`),
+    [
+      "Name,创建时间,最后修改时间",
+      "本地化时间行,\"2026年5月27日 08:15\",\"2026年5月28日 18:45\""
+    ].join("\n"),
+    "utf8"
+  );
   await mkdir(join(source, "Duplicate Title"), { recursive: true });
   await mkdir(join(source, "Relations"), { recursive: true });
   await writeFile(
@@ -588,6 +597,8 @@ try {
   assert.ok(duplicateTitleFolder, "Expected imported duplicate-title regression database");
   const markdownFieldsFolder = userDbs.find((entry) => entry.isDirectory() && entry.name.startsWith("Markdown_Fields--db_"));
   assert.ok(markdownFieldsFolder, "Expected imported CSV-only Markdown Fields database");
+  const localizedTimesFolder = userDbs.find((entry) => entry.isDirectory() && entry.name.startsWith("Localized_Times--db_"));
+  assert.ok(localizedTimesFolder, "Expected imported localized timestamp database");
 
   const tasksDbPath = join(target, "databases", "user", tasksFolder.name);
   const tasksSchemaPath = join(tasksDbPath, "schema.json");
@@ -710,6 +721,15 @@ try {
     "Context: this is ordinary page content\n\nThis line must also remain.",
     "Unknown colon-prefixed prose should remain when it does not contain a recognized database property"
   );
+  const localizedTimesDbPath = join(target, "databases", "user", localizedTimesFolder.name);
+  const localizedTimesSchema = JSON.parse(await readFile(join(localizedTimesDbPath, "schema.json"), "utf8"));
+  const localizedCreatedField = localizedTimesSchema.fields.find((field) => field.name === "创建时间");
+  const localizedUpdatedField = localizedTimesSchema.fields.find((field) => field.name === "最后修改时间");
+  assert.equal(localizedCreatedField?.type, "created_time", "Localized Notion created time should retain its timestamp type");
+  assert.equal(localizedUpdatedField?.type, "updated_time", "Localized Notion updated time should retain its timestamp type");
+  const [localizedTimeRow] = rowsAsObjects(await readFile(join(localizedTimesDbPath, "data.csv"), "utf8"));
+  assert.equal(localizedTimeRow?.created_time, "2026年5月27日 08:15", "Localized created time should populate Lotion created_time");
+  assert.equal(localizedTimeRow?.updated_time, "2026年5月28日 18:45", "Localized updated time should populate Lotion updated_time");
 
   const tasksRows = rowsAsObjects(await readFile(join(tasksDbPath, "data.csv"), "utf8"));
   assert.equal(tasksRows.length, 2, "Blank CSV rows should be omitted when skipEmptyRowsAndPages is enabled");

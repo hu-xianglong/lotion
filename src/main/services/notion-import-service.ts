@@ -3133,7 +3133,10 @@ async function emitWorkspace(
       if (inferredType) effectiveNotionTypeByHeader.set(header, inferredType);
     }
 
-    const systemTimeHeaderByFieldId = chooseSystemTimeHeaders(notionOtherHeaders, effectiveNotionTypeByHeader);
+    // Only HTML property types are authoritative here. CSV inference turns
+    // timestamp-looking values into a generic `date`; passing those inferred
+    // types would mask canonical CSV-only fields such as `Created time`.
+    const systemTimeHeaderByFieldId = chooseSystemTimeHeaders(notionOtherHeaders, notionTypeByHeader);
     const systemTimeFieldByHeader = new Map(
       Array.from(systemTimeHeaderByFieldId.entries()).map(([fieldId, header]) => [header, fieldId])
     );
@@ -3169,7 +3172,7 @@ async function emitWorkspace(
       const safeName = header;
       const fieldId = uniqueFieldId(safeName, fields);
       const notionType = effectiveNotionTypeByHeader.get(header);
-      const lotionType = notionTypeToLotion(notionType);
+      const lotionType = systemTimeFieldByHeader.get(header) ?? notionTypeToLotion(notionType);
       fields.push({
         id: fieldId,
         name: safeName,
@@ -3397,8 +3400,7 @@ async function emitWorkspace(
         const normalizedValue = normalizeImportedCellValue(fieldType, rawValue);
         record[fieldId] = normalizedValue;
         const systemTimeFieldId = systemTimeFieldByHeader.get(header);
-        const importedSystemTime = systemTimeFieldId ? normalizeImportedSystemTime(rawValue) : "";
-        if (systemTimeFieldId && importedSystemTime) record[systemTimeFieldId] = importedSystemTime;
+        if (systemTimeFieldId && normalizedValue) record[systemTimeFieldId] = normalizedValue;
       }
       records.push(record);
       rowPlans.push({
@@ -3470,10 +3472,7 @@ async function emitWorkspace(
           const normalizedValue = normalizeImportedCellValue(fieldType, parsed.properties[header] ?? "");
           record[fieldId] = normalizedValue;
           const systemTimeFieldId = systemTimeFieldByHeader.get(header);
-          const importedSystemTime = systemTimeFieldId
-            ? normalizeImportedSystemTime(parsed.properties[header] ?? "")
-            : "";
-          if (systemTimeFieldId && importedSystemTime) record[systemTimeFieldId] = importedSystemTime;
+          if (systemTimeFieldId && normalizedValue) record[systemTimeFieldId] = normalizedValue;
         }
       }
       records.push(record);
@@ -3680,10 +3679,10 @@ async function emitWorkspace(
       for (const [fieldName, fieldId] of fieldIdByName) {
         const rawValue = values[fieldName] ?? "";
         const fieldType = fields.find((field) => field.id === fieldId)?.type;
-        record[fieldId] = normalizeImportedCellValue(fieldType, rawValue);
+        const normalizedValue = normalizeImportedCellValue(fieldType, rawValue);
+        record[fieldId] = normalizedValue;
         const systemTimeFieldId = systemTimeFieldByName.get(fieldName);
-        const importedSystemTime = systemTimeFieldId ? normalizeImportedSystemTime(rawValue) : "";
-        if (systemTimeFieldId && importedSystemTime) record[systemTimeFieldId] = importedSystemTime;
+        if (systemTimeFieldId && normalizedValue) record[systemTimeFieldId] = normalizedValue;
       }
       records.push(record);
       rowPlans.push({
@@ -5009,11 +5008,24 @@ function notionTypeToLotion(notionType: string | undefined): string {
 function notionSystemTimeField(header: string, notionType: string | undefined): "created_time" | "updated_time" | null {
   if (notionType === "created_time") return "created_time";
   if (notionType === "last_edited_time") return "updated_time";
+  if (notionType) return null;
 
   const normalized = header.trim().toLowerCase();
-  if (normalized === "created time") return "created_time";
-  if (normalized === "last edited time") return "updated_time";
-  if (notionType) return null;
+  if (["created time", "创建时间", "建立時間"].includes(normalized)) return "created_time";
+  if (
+    [
+      "last edited time",
+      "updated time",
+      "update time",
+      "最后编辑时间",
+      "最后修改时间",
+      "最後編輯時間",
+      "更新时间",
+      "更新時間"
+    ].includes(normalized)
+  ) {
+    return "updated_time";
+  }
   return null;
 }
 

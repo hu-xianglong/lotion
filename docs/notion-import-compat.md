@@ -75,7 +75,7 @@ Source: 用户实测 export（149 DB / 53 顶层页 / 5400+ 子页 / 40990 个 .
 | Date / datetime            | —    | `date` 字段，尽量规范化可解析日期              | ✅   |
 | Checkbox                   | —    | `Yes`/`No` 等显示值规范化为 `true`/`false`     | ✅   |
 | Person / user              | —    | 静态 `person` 字段，保留显示姓名               | ✅   |
-| Last edited / created time | —    | canonical Notion 列映射到系统时间，同时保留原字段值 | ✅   |
+| Last edited / created time | —    | `Created time` → `created_time`；`Last edited time` → `updated_time`，兼容中文列名并保留原字段值 | ✅   |
 | Formula / Rollup           | —    | 计算结果文本                                   | 🟡   |
 | Relation                   | —    | 静态 `entity_ref`，可点击但不做动态同步         | 🟡   |
 | Filtered view（`_all.csv`）| —    | 优先用 `_all.csv` 全行                         | ✅   |
