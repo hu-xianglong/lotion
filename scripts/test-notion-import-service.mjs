@@ -56,6 +56,14 @@ const SHORT_REF_VIEW_HASH_B = "42424242111122223333444455556666";
 const SHORT_REF_PAGE_HASH = "43434343111122223333444455556666";
 const VISION_PARENT_PAGE_HASH = "23232323111122223333444455556666";
 const VISION_TOGGLE_PAGE_HASH = "7783c166b1d448379067ef2502c6c013";
+const EMOJI_DB_HASH = "45454545111122223333444455556666";
+const REMOTE_ICON_DB_HASH = "46464646111122223333444455556666";
+const TASKS_LOOKALIKE_PAGE_HASH = "47474747111122223333444455556666";
+const LINK_ICON_DB_HASH = "48484848111122223333444455556666";
+const LINK_ICON_PAGE_HASH = "49494949111122223333444455556666";
+const CONFLICT_LINK_DB_HASH = "50505050111122223333444455556666";
+const CONFLICT_LINK_PAGE_HASH_A = "51515151111122223333444455556666";
+const CONFLICT_LINK_PAGE_HASH_B = "52525252111122223333444455556666";
 
 function notionPage(title, body, properties = "", headerPrefix = "") {
   return `<!doctype html><html><body><article class="page sans"><header>${headerPrefix}<h1 class="page-title">${title}</h1>${properties}</header><div class="page-body">${body}</div></article></body></html>`;
@@ -138,6 +146,7 @@ const target = join(root, "workspace");
 
 try {
   await mkdir(join(source, "Tasks"), { recursive: true });
+  await writeFile(join(source, "Tasks", "database-icon.png"), "fake database icon", "utf8");
   await writeFile(
     join(source, `Tasks ${DB_HASH}.csv`),
     "Name,URL,Balance,Done,Owner,Notes\nTask One,https://example.com,\"$1,234.50\",Yes,Alex,This imported task has a long explanatory note for ordering\n2023/11/05 Daily,https://slash.example,\"($8,300.00)\",No,Sam,Another substantial note should make this column rich\n,,,,,\n",
@@ -157,12 +166,67 @@ try {
   await writeFile(join(source, "Tasks", `Task One ${ROW_HASH}`, "chart.png"), "fake png", "utf8");
   await writeFile(join(source, "Tasks", `Task One ${ROW_HASH}`, "row-cover.jpg"), "fake row cover", "utf8");
   await writeFile(
-    join(source, `Tasks ${DB_HASH}.html`),
+    join(source, "Tasks", `Tasks ${DB_HASH}.html`),
     notionPage(
       "Tasks",
       `<div class="collection-content" id="${DB_HASH.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5")}"><h4 class="collection-title">Tasks</h4><div class="collection-content-wrapper"><table class="collection-content"><thead><tr><th>Name</th></tr></thead><tbody><tr id="${ROW_HASH.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5")}"><td class="cell-title"><a href="Tasks/Task%20One%20${ROW_HASH}.html">Task One</a></td></tr></tbody></table></div></div>`,
       "",
-      `<img class="page-cover-image" src="https://www.notion.so/images/page-cover/met_klimt_1912.jpg" style="object-position:center 15%"/>`
+      `<div class="page-header-icon"><img class="icon" src="database-icon.png"/></div><img class="page-cover-image" src="https://www.notion.so/images/page-cover/met_klimt_1912.jpg" style="object-position:center 15%"/>`
+    ),
+    "utf8"
+  );
+  await writeFile(
+    join(source, `Tasks ${TASKS_LOOKALIKE_PAGE_HASH}.html`),
+    notionPage(
+      "Tasks",
+      `<div class="collection-content" id="${DB_HASH.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5")}"><h4 class="collection-title">Tasks</h4><div class="collection-content-wrapper"><table class="collection-content"><thead><tr><th>Name</th></tr></thead><tbody></tbody></table></div></div>`,
+      "",
+      `<div class="page-header-icon"><span class="icon">🚫</span></div>`
+    ),
+    "utf8"
+  );
+  await mkdir(join(source, "Emoji Database"), { recursive: true });
+  await writeFile(join(source, `Emoji Database ${EMOJI_DB_HASH}.csv`), "Name\n", "utf8");
+  await writeFile(
+    join(source, "Emoji Database", `Emoji Database ${EMOJI_DB_HASH}.html`),
+    notionPage("Emoji Database", "", "", `<div class="page-header-icon"><span class="icon">📚</span></div>`),
+    "utf8"
+  );
+  await mkdir(join(source, "Remote Icon Database"), { recursive: true });
+  await writeFile(join(source, `Remote Icon Database ${REMOTE_ICON_DB_HASH}.csv`), "Name\n", "utf8");
+  await writeFile(
+    join(source, "Remote Icon Database", `Remote Icon Database ${REMOTE_ICON_DB_HASH}.html`),
+    notionPage(
+      "Remote Icon Database",
+      "",
+      "",
+      `<div class="page-header-icon"><img class="icon" src="https://app.notion.com/icons/database_blue.svg"/></div>`
+    ),
+    "utf8"
+  );
+  await writeFile(join(source, `Linked Icon Database ${LINK_ICON_DB_HASH}.csv`), "Name\n", "utf8");
+  await writeFile(
+    join(source, `Linked Icon Index ${LINK_ICON_PAGE_HASH}.html`),
+    notionPage(
+      "Linked Icon Index",
+      `<figure class="link-to-page"><a href="Linked%20Icon%20Database%20${LINK_ICON_DB_HASH}.html"><span class="icon">🗂️</span>Linked Icon Database</a></figure>`
+    ),
+    "utf8"
+  );
+  await writeFile(join(source, `Conflicting Link Database ${CONFLICT_LINK_DB_HASH}.csv`), "Name\n", "utf8");
+  await writeFile(
+    join(source, `Conflicting Link A ${CONFLICT_LINK_PAGE_HASH_A}.html`),
+    notionPage(
+      "Conflicting Link A",
+      `<figure class="link-to-page"><a href="Conflicting%20Link%20Database%20${CONFLICT_LINK_DB_HASH}.html"><span class="icon">A</span>Conflicting Link Database</a></figure>`
+    ),
+    "utf8"
+  );
+  await writeFile(
+    join(source, `Conflicting Link B ${CONFLICT_LINK_PAGE_HASH_B}.html`),
+    notionPage(
+      "Conflicting Link B",
+      `<figure class="link-to-page"><a href="Conflicting%20Link%20Database%20${CONFLICT_LINK_DB_HASH}.html"><span class="icon">B</span>Conflicting Link Database</a></figure>`
     ),
     "utf8"
   );
@@ -488,6 +552,15 @@ try {
     DB_HASH,
     "Imported database schema should retain the source Notion hash for auditing"
   );
+  assert.match(
+    tasksSchema.icon,
+    /^attachments\/images\/[0-9a-f]+-database-icon\.png$/,
+    "A database wrapper inside its row directory should preserve its local image icon"
+  );
+  assert.ok(
+    existsSync(join(target, tasksSchema.icon)),
+    "The imported local database icon attachment should exist"
+  );
   assert.equal(
     tasksSchema.cover,
     "https://www.notion.so/images/page-cover/met_klimt_1912.jpg",
@@ -497,6 +570,31 @@ try {
     tasksSchema.coverOffset,
     15,
     "Imported database cover offsets should preserve Notion's object-position percentage"
+  );
+  const importedSchemas = await Promise.all(
+    userDbs.filter((entry) => entry.isDirectory()).map(async (entry) =>
+      JSON.parse(await readFile(join(target, "databases", "user", entry.name, "schema.json"), "utf8"))
+    )
+  );
+  assert.equal(
+    importedSchemas.find((schema) => schema.notion_source_hash === EMOJI_DB_HASH)?.icon,
+    "emoji:📚",
+    "Database wrapper emoji icons should import by exact Notion identity"
+  );
+  assert.equal(
+    importedSchemas.find((schema) => schema.notion_source_hash === REMOTE_ICON_DB_HASH)?.icon,
+    "https://app.notion.com/icons/database_blue.svg",
+    "Remote database icons should import by exact Notion identity"
+  );
+  assert.equal(
+    importedSchemas.find((schema) => schema.notion_source_hash === LINK_ICON_DB_HASH)?.icon,
+    "emoji:🗂️",
+    "An exact link-to-page target should recover a database icon when its wrapper is absent"
+  );
+  assert.equal(
+    importedSchemas.find((schema) => schema.notion_source_hash === CONFLICT_LINK_DB_HASH)?.icon,
+    undefined,
+    "Conflicting link-to-page icons should remain unresolved instead of choosing arbitrarily"
   );
   assert.deepEqual(
     tasksView.fieldOrder,

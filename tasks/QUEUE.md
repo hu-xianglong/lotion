@@ -765,6 +765,7 @@ surface.
 | 712 | done | Global date/time default inheritance | `tasks/done/global-date-time-default-inheritance.md` | fixed inherited formats becoming local overrides; focused regression, two-viewport Electron persistence smoke, 79/79 fast suite, typecheck, and build passed |
 | 713 | done | Local-authoritative public main restoration | `tasks/done/local-authoritative-public-main-restoration.md` | restored shared files from local commit 5acfd1d, retained public-only release infrastructure, excluded private assets, and added strict workspace-entry Notion import screenshot coverage |
 | 714 | done | Notion import rounded-corner visual baseline determinism | `tasks/done/notion-import-rounded-corner-visual-baseline-determinism.md` | verified two consecutive strict Electron passes; only the 10×15 live-backdrop corner is excluded and an outside-region pixel still fails |
+| 715 | done | Notion import database icon identity | `tasks/done/notion-import-database-icon-identity.md` | exact wrapper identity and link-target evidence, safe repair restored 10 production icons, 79/79 fast suite, build, and installed-app visual verification passed |
 
 ## Latency Benchmark Coverage
 

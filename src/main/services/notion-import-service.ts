@@ -991,7 +991,15 @@ async function resolveSourceRoots(rootPaths: string | string[]): Promise<string[
 
 // ── inventory pass ────────────────────────────────────────────────────
 
-interface DatabaseEntry { title: string; rawTitle: string; path: string[]; hash: string; csvPath: string }
+interface DatabaseEntry {
+  title: string;
+  rawTitle: string;
+  path: string[];
+  hash: string;
+  csvPath: string;
+  /** HTML/Markdown page whose Notion identity exactly matches this database. */
+  metadataSourcePath?: string;
+}
 interface PageEntry { title: string; hash: string; sourcePath: string }
 interface RowEntry { dbHash: string; title: string; hash: string; sourcePath: string }
 interface AttachmentEntry { sourcePaths: string[]; fileName: string }
@@ -1130,6 +1138,18 @@ async function buildInventory(
           if (ext === ".html" || ext === ".htm") await indexAttachment(fullPath, ext);
           continue;
         }
+        const database = databasesByHash.get(hash);
+        if (database) {
+          const existing = database.metadataSourcePath;
+          // Notion normally places a database's own page inside its row
+          // directory. Identity wins over location: otherwise that wrapper is
+          // indexed as a row and its icon/cover metadata is lost. Prefer HTML
+          // when both export formats are available because it retains covers.
+          if (!existing || ((ext === ".html" || ext === ".htm") && existing.endsWith(".md"))) {
+            database.metadataSourcePath = fullPath;
+          }
+          continue;
+        }
         const dbHash = enclosingDbHash(dir);
         if (dbHash) {
           const key = `${dbHash}::${hash}`;
@@ -1263,9 +1283,14 @@ interface SyntheticEmptyDatabase {
 async function collectLinkToPageHints(
   inventory: Inventory,
   resolveIcon: (iconSrc: string, sourceDir: string) => string | undefined
-): Promise<{ byHash: Map<string, LinkToPageHint>; bySource: Map<string, LinkToPageHint[]> }> {
+): Promise<{
+  byHash: Map<string, LinkToPageHint>;
+  bySource: Map<string, LinkToPageHint[]>;
+  ambiguousIconHashes: Set<string>;
+}> {
   const byHash = new Map<string, LinkToPageHint>();
   const bySource = new Map<string, LinkToPageHint[]>();
+  const ambiguousIconHashes = new Set<string>();
 
   for (const entry of inventory.pagesByHash.values()) {
     if (!entry.sourcePath.endsWith(".html")) continue;
@@ -1297,12 +1322,24 @@ async function collectLinkToPageHints(
       };
       hints.push(hint);
       const existing = byHash.get(hash);
-      if (!existing || (!existing.icon && hint.icon)) byHash.set(hash, hint);
+      if (!existing) {
+        byHash.set(hash, hint);
+      } else if (
+        !ambiguousIconHashes.has(hash) &&
+        existing.icon &&
+        hint.icon &&
+        existing.icon !== hint.icon
+      ) {
+        ambiguousIconHashes.add(hash);
+        byHash.set(hash, { ...existing, icon: undefined });
+      } else if (!ambiguousIconHashes.has(hash) && !existing.icon && hint.icon) {
+        byHash.set(hash, hint);
+      }
     }
     if (hints.length > 0) bySource.set(entry.sourcePath, hints);
   }
 
-  return { byHash, bySource };
+  return { byHash, bySource, ambiguousIconHashes };
 }
 
 function resolveElementIcon(
@@ -2334,9 +2371,15 @@ async function emitWorkspace(
     return attachmentRelByAbsSource.get(abs) ?? resolveAttachmentByBasename(decoded);
   };
 
-  const resolveParsedIcon = (parsed: ParsedNotionHtmlPage, sourceDir: string): string | undefined =>
+  const resolveParsedIcon = (
+    parsed: Pick<ParsedNotionHtmlPage, "iconSrc" | "iconEmoji">,
+    sourceDir: string
+  ): string | undefined =>
     resolveIcon(parsed.iconSrc, sourceDir) ?? formatEmojiIcon(parsed.iconEmoji);
-  const resolveParsedCover = (parsed: ParsedNotionHtmlPage, sourceDir: string): { cover?: string; coverOffset?: number } => ({
+  const resolveParsedCover = (
+    parsed: Pick<ParsedNotionHtmlPage, "coverSrc" | "coverOffset">,
+    sourceDir: string
+  ): { cover?: string; coverOffset?: number } => ({
     cover: resolveIcon(parsed.coverSrc, sourceDir),
     coverOffset: parsed.coverOffset
   });
@@ -2374,6 +2417,11 @@ async function emitWorkspace(
   };
 
   const linkToPageHints = await collectLinkToPageHints(inventory, resolveIcon);
+  for (const hash of keptDbHashes) {
+    if (linkToPageHints.ambiguousIconHashes.has(hash)) continue;
+    const hintedIcon = linkToPageHints.byHash.get(hash)?.icon;
+    if (hintedIcon) dbIconByHash.set(hash, hintedIcon);
+  }
   const inlineDatabases = new Map<string, SyntheticEmptyDatabase>();
 
   // Populated when phantom standalone-DB pages get skipped — links in
@@ -2381,6 +2429,28 @@ async function emitWorkspace(
   // to the database view instead of breaking. Keyed by source abs
   // path → DB hash; pass B turns that into the workspace path.
   const phantomPageRedirects = new Map<string, string>();
+
+  // A database's own exported page has the same Notion identity as its
+  // CSV, even when Notion puts that page inside the database's row folder.
+  // BuildInventory records it separately so its metadata cannot be mistaken
+  // for a row. Exact identity is the authority here; a parent page that merely
+  // embeds the database must not donate its icon or cover.
+  for (const [hash, database] of inventory.databasesByHash) {
+    if (!keptDbHashes.has(hash) || !database.metadataSourcePath) continue;
+    const sourcePath = database.metadataSourcePath;
+    phantomPageRedirects.set(normalizeAbs(sourcePath), hash);
+    if (isHtmlSource(sourcePath)) {
+      const headerRead = await readNotionHtmlHeader(sourcePath);
+      const parsed = parseNotionHtmlMetadata(headerRead.headerHtml);
+      const icon = resolveParsedIcon(parsed, dirname(sourcePath));
+      const cover = resolveParsedCover(parsed, dirname(sourcePath));
+      if (icon) dbIconByHash.set(hash, icon);
+      if (cover.cover) dbCoverByHash.set(hash, { cover: cover.cover, coverOffset: cover.coverOffset });
+    } else {
+      const icon = await resolveMarkdownIcon(sourcePath);
+      if (icon) dbIconByHash.set(hash, icon);
+    }
+  }
 
   let pagePlans: PagePlan[] = [];
   const pageDedupeTargets = new Map<string, string>();
@@ -2453,10 +2523,10 @@ async function emitWorkspace(
         ? hash
         : dbHashByRawTitle.get(entry.title) ?? dbHashByTitle.get(entry.title);
       if (parsed.isCollectionWrapperOnly && targetHashForLink) {
-        if (icon) {
+        if (icon && !dbIconByHash.has(targetHashForLink)) {
           dbIconByHash.set(targetHashForLink, icon);
         }
-        if (cover) {
+        if (cover && !dbCoverByHash.has(targetHashForLink)) {
           dbCoverByHash.set(targetHashForLink, { cover, coverOffset });
         }
         // Cross-page links in other pages (e.g. the "数据库" index
@@ -2502,7 +2572,7 @@ async function emitWorkspace(
         : linkToPageHints.byHash.get(hash)?.icon;
       const targetHashForLink = markdownWrapperTargetDbHash(rawMarkdown, entry.sourcePath);
       if (targetHashForLink) {
-        if (icon) {
+        if (icon && !dbIconByHash.has(targetHashForLink)) {
           dbIconByHash.set(targetHashForLink, icon);
         }
         phantomPageRedirects.set(normalizeAbs(entry.sourcePath), targetHashForLink);

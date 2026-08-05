@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 import { parse } from "node-html-parser";
 
-const execFileAsync = promisify(execFile);
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
 const workspaceArg = args.find((arg) => !arg.startsWith("--"));
@@ -36,28 +33,52 @@ for (const entry of await readdir(databaseRoot, { withFileTypes: true })) {
   schemasByNotionHash.set(hash, { schema, schemaPath, folder: entry.name });
 }
 
-const wrapperPaths = await htmlFilesContainingCsvLinks(originalRoot);
+const wrapperPaths = await recursivelyListHtml(originalRoot);
 const candidates = new Map();
+const candidatePriorities = new Map();
+const ambiguousHashes = new Set();
+let exactIdentityHtmlFiles = 0;
+let exactLinkHints = 0;
 for (const htmlPath of wrapperPaths) {
+  const hash = notionHashFromDocumentPath(htmlPath);
+  if (!hash || !schemasByNotionHash.has(hash)) continue;
+  exactIdentityHtmlFiles += 1;
   const raw = await readFile(htmlPath, "utf8");
   const root = parse(raw, { lowerCaseTagName: true });
-  const body = root.querySelector("div.page-body");
-  const csvLink = body?.querySelectorAll("a").find((link) => {
-    const href = link.getAttribute("href") ?? "";
-    return /\.csv$/i.test(decodeHref(href));
-  });
-  const hash = notionHashFromCsvHref(csvLink?.getAttribute("href") ?? "");
-  if (!hash || !schemasByNotionHash.has(hash)) continue;
-
   const header = root.querySelector("header");
   const iconSrc = header?.querySelector(".page-header-icon img.icon")?.getAttribute("src")?.trim() ?? "";
   const iconEmoji = header?.querySelector(".page-header-icon span.icon")?.text.trim() ?? "";
   if (!iconSrc && !iconEmoji) continue;
   const icon = iconEmoji
-    ? { value: `emoji:${iconEmoji}`, source: htmlPath }
+    ? { value: `emoji:${iconEmoji}`, source: htmlPath, sourceKind: "database-wrapper" }
     : await resolveImageIcon(iconSrc, htmlPath, workspace);
   if (!icon) continue;
-  if (!candidates.has(hash)) candidates.set(hash, icon);
+  addCandidate(hash, icon, 2);
+}
+
+for (const htmlPath of wrapperPaths) {
+  let raw;
+  try {
+    raw = await readFile(htmlPath, "utf8");
+  } catch {
+    continue;
+  }
+  if (!raw.includes("link-to-page")) continue;
+  const root = parse(raw, { lowerCaseTagName: true });
+  for (const figure of root.querySelectorAll("figure.link-to-page")) {
+    const anchor = figure.querySelector("a");
+    const hash = notionHashFromTarget(anchor?.getAttribute("href") ?? "");
+    if (!anchor || !hash || !schemasByNotionHash.has(hash)) continue;
+    const iconSrc = anchor.querySelector("img.icon")?.getAttribute("src")?.trim() ?? "";
+    const iconEmoji = anchor.querySelector("span.icon")?.text.trim() ?? "";
+    if (!iconSrc && !iconEmoji) continue;
+    const icon = iconEmoji
+      ? { value: `emoji:${iconEmoji}`, source: htmlPath, sourceKind: "exact-link-target" }
+      : await resolveImageIcon(iconSrc, htmlPath, workspace, "exact-link-target");
+    if (!icon) continue;
+    exactLinkHints += 1;
+    addCandidate(hash, icon, 1);
+  }
 }
 
 const changes = Array.from(candidates, ([notionHash, icon]) => {
@@ -71,7 +92,8 @@ const changes = Array.from(candidates, ([notionHash, icon]) => {
     icon: icon.value,
     iconSource: icon.source,
     attachmentSource: icon.attachmentSource,
-    attachmentTarget: icon.attachmentTarget
+    attachmentTarget: icon.attachmentTarget,
+    schemaDigestBefore: schemaDigestExcludingIcon(target.schema)
   };
 }).sort((a, b) => a.databaseName.localeCompare(b.databaseName));
 
@@ -80,7 +102,10 @@ const summary = {
   workspace,
   generatedAt: new Date().toISOString(),
   missingDatabaseIcons: schemasByNotionHash.size,
-  htmlWrappersScanned: wrapperPaths.length,
+  htmlFilesScanned: wrapperPaths.length,
+  exactIdentityHtmlFiles,
+  exactLinkHints,
+  ambiguousIcons: ambiguousHashes.size,
   recoverableIcons: changes.length,
   remoteIcons: changes.filter((change) => /^https?:\/\//i.test(change.icon)).length,
   emojiIcons: changes.filter((change) => change.icon.startsWith("emoji:")).length,
@@ -88,7 +113,11 @@ const summary = {
 };
 
 if (!apply) {
-  console.log(JSON.stringify({ summary, sample: changes.slice(0, 20) }, null, 2));
+  console.log(JSON.stringify({
+    summary,
+    sample: changes.slice(0, 20).map(publicChange),
+    ambiguousNotionHashes: Array.from(ambiguousHashes).sort().slice(0, 20)
+  }, null, 2));
   process.exit(0);
 }
 
@@ -115,30 +144,22 @@ for (const change of changes) {
 
   const current = JSON.parse(await readFile(change.schemaPath, "utf8"));
   if (current.icon) continue;
+  if (schemaDigestExcludingIcon(current) !== change.schemaDigestBefore) {
+    throw new Error(`Database schema changed during icon repair: ${change.schemaPath}`);
+  }
   current.icon = change.icon;
   const temporarySchema = `${change.schemaPath}.repair-${process.pid}.tmp`;
   await writeFile(temporarySchema, `${JSON.stringify(current, null, 2)}\n`, "utf8");
   await rename(temporarySchema, change.schemaPath);
+  const verified = JSON.parse(await readFile(change.schemaPath, "utf8"));
+  if (verified.icon !== change.icon || schemaDigestExcludingIcon(verified) !== change.schemaDigestBefore) {
+    throw new Error(`Database icon repair verification failed: ${change.schemaPath}`);
+  }
 }
 
 const reportPath = join(backupRoot, "report.json");
-await writeFile(reportPath, `${JSON.stringify({ summary, changes }, null, 2)}\n`, "utf8");
+await writeFile(reportPath, `${JSON.stringify({ summary, changes: changes.map(publicChange) }, null, 2)}\n`, "utf8");
 console.log(JSON.stringify({ summary, backupRoot, reportPath }, null, 2));
-
-async function htmlFilesContainingCsvLinks(root) {
-  try {
-    const { stdout } = await execFileAsync(
-      "rg",
-      ["--files-with-matches", "--null", String.raw`href=["'][^"']+\.csv["']`, "--glob", "*.html", root],
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }
-    );
-    return stdout.split("\0").filter(Boolean).sort();
-  } catch (error) {
-    if (error?.code === 1) return [];
-    if (error?.code !== "ENOENT") throw error;
-    return recursivelyListHtml(root);
-  }
-}
 
 async function recursivelyListHtml(dir) {
   const files = [];
@@ -150,10 +171,14 @@ async function recursivelyListHtml(dir) {
   return files.sort();
 }
 
-function notionHashFromCsvHref(href) {
-  const decoded = decodeHref(href);
-  const stem = basename(decoded).replace(/\.csv$/i, "").replace(/_all$/i, "");
-  return /([0-9a-f]{32})$/i.exec(stem)?.[1].toLowerCase();
+function notionHashFromDocumentPath(path) {
+  const stem = basename(path).replace(/\.html?$/i, "");
+  return /(?:^|\s)([0-9a-f]{32})$/i.exec(stem)?.[1].toLowerCase();
+}
+
+function notionHashFromTarget(target) {
+  const decoded = decodeHref(target).split(/[?#]/, 1)[0] ?? "";
+  return /([0-9a-f]{32})(?:_all)?(?:\.(?:html?|md|csv))?$/i.exec(decoded.replace(/-/g, ""))?.[1].toLowerCase();
 }
 
 function decodeHref(href) {
@@ -164,8 +189,8 @@ function decodeHref(href) {
   }
 }
 
-async function resolveImageIcon(iconSrc, htmlPath, workspaceRoot) {
-  if (/^https?:\/\//i.test(iconSrc)) return { value: iconSrc, source: htmlPath };
+async function resolveImageIcon(iconSrc, htmlPath, workspaceRoot, sourceKind = "database-wrapper") {
+  if (/^https?:\/\//i.test(iconSrc)) return { value: iconSrc, source: htmlPath, sourceKind };
   if (/^[a-z][a-z0-9+.-]*:/i.test(iconSrc)) return null;
   const decoded = decodeHref(iconSrc);
   if (!decoded) return null;
@@ -183,9 +208,41 @@ async function resolveImageIcon(iconSrc, htmlPath, workspaceRoot) {
   return {
     value: attachmentTarget,
     source: htmlPath,
+    sourceKind,
     attachmentSource: sourcePath,
     attachmentTarget: relative(workspaceRoot, join(workspaceRoot, attachmentTarget)).split("\\").join("/")
   };
+}
+
+function addCandidate(hash, icon, priority) {
+  const currentPriority = candidatePriorities.get(hash) ?? 0;
+  if (priority < currentPriority) return;
+  if (priority > currentPriority) {
+    candidates.set(hash, icon);
+    candidatePriorities.set(hash, priority);
+    ambiguousHashes.delete(hash);
+    return;
+  }
+  if (ambiguousHashes.has(hash)) return;
+  const existing = candidates.get(hash);
+  if (!existing) {
+    candidates.set(hash, icon);
+    candidatePriorities.set(hash, priority);
+  } else if (existing.value !== icon.value) {
+    candidates.delete(hash);
+    ambiguousHashes.add(hash);
+  }
+}
+
+function schemaDigestExcludingIcon(schema) {
+  const clone = { ...schema };
+  delete clone.icon;
+  return createHash("sha256").update(JSON.stringify(clone)).digest("hex");
+}
+
+function publicChange(change) {
+  const { schemaDigestBefore: _schemaDigestBefore, ...visible } = change;
+  return visible;
 }
 
 function safeAttachmentStem(path) {
