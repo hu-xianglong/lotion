@@ -91,6 +91,9 @@ export interface ParsedNotionHtmlPage {
   /** Workspace-relative `src` of the page icon image if Notion shipped
    *  one in the header. Empty when the page has no icon. */
   iconSrc: string;
+  /** Original remote icon URL retained by Notion on the page article.
+   *  Used only when the exported local `iconSrc` cannot be resolved. */
+  iconFallbackSrc: string;
   /** Emoji text from `<span class="icon">…</span>` page headers. Empty
    *  when the icon is an image or unset. */
   iconEmoji: string;
@@ -134,7 +137,7 @@ export interface ParsedNotionHtmlPage {
 
 type ParsedNotionHtmlMetadata = Pick<
   ParsedNotionHtmlPage,
-  "title" | "iconSrc" | "iconEmoji" | "coverSrc" | "coverOffset" | "properties" | "propertyTypes" | "propertyOptions"
+  "title" | "iconSrc" | "iconFallbackSrc" | "iconEmoji" | "coverSrc" | "coverOffset" | "properties" | "propertyTypes" | "propertyOptions"
 >;
 
 /**
@@ -159,7 +162,7 @@ export function parseNotionHtml(html: string, options: ParseNotionHtmlOptions = 
   const headerHtml = extractHeaderHtml(html);
   if (headerHtml) {
     const root = parse(headerHtml, { lowerCaseTagName: true });
-    const metadata = parseHeaderMetadata(root, options.resolveLink);
+    const metadata = parseHeaderMetadata(root, options.resolveLink, notionPageIconAttribute(html));
     const metadataPage = completeParsedNotionHtml(metadata, "", false, []);
     return parseNotionHtmlBody(html, metadataPage, options);
   }
@@ -170,7 +173,7 @@ export function parseNotionHtml(html: string, options: ParseNotionHtmlOptions = 
     return emptyParsedNotionHtml();
   }
 
-  const metadata = parseHeaderMetadata(article, options.resolveLink);
+  const metadata = parseHeaderMetadata(article, options.resolveLink, notionPageIconAttribute(html));
 
   const body = article.querySelector("div.page-body");
   if (!body) {
@@ -184,7 +187,7 @@ export function parseNotionHtmlMetadata(html: string, options: ParseNotionHtmlOp
   const headerHtml = extractHeaderHtml(html);
   if (!headerHtml) return parseNotionHtml(html, { ...options, convertBody: false });
   const root = parse(headerHtml, { lowerCaseTagName: true });
-  const metadata = parseHeaderMetadata(root, options.resolveLink);
+  const metadata = parseHeaderMetadata(root, options.resolveLink, notionPageIconAttribute(html));
   return completeParsedNotionHtml(metadata, "", false, []);
 }
 
@@ -792,6 +795,7 @@ function emptyParsedNotionHtml(): ParsedNotionHtmlPage {
   return {
     title: "",
     iconSrc: "",
+    iconFallbackSrc: "",
     iconEmoji: "",
     coverSrc: "",
     coverOffset: undefined,
@@ -818,7 +822,11 @@ function completeParsedNotionHtml(
   };
 }
 
-function parseHeaderMetadata(root: NhpElement, resolveLink?: NotionLinkResolver): ParsedNotionHtmlMetadata {
+function parseHeaderMetadata(
+  root: NhpElement,
+  resolveLink?: NotionLinkResolver,
+  originalIcon = ""
+): ParsedNotionHtmlMetadata {
   const rootTag = root.tagName?.toLowerCase();
   const header = rootTag === "header"
     ? root
@@ -827,7 +835,9 @@ function parseHeaderMetadata(root: NhpElement, resolveLink?: NotionLinkResolver)
   const title = titleEl ? titleEl.text.trim() : "";
   const iconImg = header.querySelector(".page-header-icon img.icon");
   const iconSrc = iconImg?.getAttribute("src") ?? "";
-  const iconEmoji = header.querySelector(".page-header-icon span.icon")?.text.trim() ?? "";
+  const iconElement = header.querySelector(".page-header-icon span.icon");
+  const iconEmoji = iconElement?.text.trim() || iconElement?.getAttribute("data-emoji")?.trim() || "";
+  const iconFallbackSrc = /^https?:\/\//i.test(originalIcon) ? originalIcon : "";
   const coverImg = header.querySelector("img.page-cover-image, .page-cover-image img");
   const coverSrc = coverImg?.getAttribute("src") ?? "";
   const coverOffset = coverImg ? parseCoverOffset(coverImg.getAttribute("style") ?? "") : undefined;
@@ -847,7 +857,16 @@ function parseHeaderMetadata(root: NhpElement, resolveLink?: NotionLinkResolver)
     if (options.length > 0) propertyOptions[key] = options;
   }
 
-  return { title, iconSrc, iconEmoji, coverSrc, coverOffset, properties, propertyTypes, propertyOptions };
+  return { title, iconSrc, iconFallbackSrc, iconEmoji, coverSrc, coverOffset, properties, propertyTypes, propertyOptions };
+}
+
+function notionPageIconAttribute(html: string): string {
+  const openingTag = /<article\b[^>]*>/i.exec(html)?.[0];
+  if (!openingTag) return "";
+  return parse(openingTag, { lowerCaseTagName: true })
+    .querySelector("article")
+    ?.getAttribute("data-notion-page-icon")
+    ?.trim() ?? "";
 }
 
 function parseCoverOffset(style: string): number | undefined {

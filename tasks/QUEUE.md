@@ -766,6 +766,7 @@ surface.
 | 713 | done | Local-authoritative public main restoration | `tasks/done/local-authoritative-public-main-restoration.md` | restored shared files from local commit 5acfd1d, retained public-only release infrastructure, excluded private assets, and added strict workspace-entry Notion import screenshot coverage |
 | 714 | done | Notion import rounded-corner visual baseline determinism | `tasks/done/notion-import-rounded-corner-visual-baseline-determinism.md` | verified two consecutive strict Electron passes; only the 10×15 live-backdrop corner is excluded and an outside-region pixel still fails |
 | 715 | done | Notion import database icon identity | `tasks/done/notion-import-database-icon-identity.md` | exact wrapper identity and link-target evidence, safe repair restored 10 production icons, 79/79 fast suite, build, and installed-app visual verification passed |
+| 716 | done | Inline database icon provenance and rendering | `tasks/done/inline-database-icon-provenance-and-rendering.md` | restored 3 source-backed icons, rendered custom/default icons in embedded views, added dual-export database-page regression coverage, and verified repair idempotence |
 
 ## Latency Benchmark Coverage
 

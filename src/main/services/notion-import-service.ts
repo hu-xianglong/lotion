@@ -2372,10 +2372,12 @@ async function emitWorkspace(
   };
 
   const resolveParsedIcon = (
-    parsed: Pick<ParsedNotionHtmlPage, "iconSrc" | "iconEmoji">,
+    parsed: Pick<ParsedNotionHtmlPage, "iconSrc" | "iconFallbackSrc" | "iconEmoji">,
     sourceDir: string
   ): string | undefined =>
-    resolveIcon(parsed.iconSrc, sourceDir) ?? formatEmojiIcon(parsed.iconEmoji);
+    resolveIcon(parsed.iconSrc, sourceDir) ??
+    resolveIcon(parsed.iconFallbackSrc, sourceDir) ??
+    formatEmojiIcon(parsed.iconEmoji);
   const resolveParsedCover = (
     parsed: Pick<ParsedNotionHtmlPage, "coverSrc" | "coverOffset">,
     sourceDir: string

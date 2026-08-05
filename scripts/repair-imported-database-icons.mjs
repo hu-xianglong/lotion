@@ -47,11 +47,12 @@ for (const htmlPath of wrapperPaths) {
   const root = parse(raw, { lowerCaseTagName: true });
   const header = root.querySelector("header");
   const iconSrc = header?.querySelector(".page-header-icon img.icon")?.getAttribute("src")?.trim() ?? "";
-  const iconEmoji = header?.querySelector(".page-header-icon span.icon")?.text.trim() ?? "";
-  if (!iconSrc && !iconEmoji) continue;
+  const iconEmoji = notionEmoji(header?.querySelector(".page-header-icon span.icon"));
+  const remoteFallback = notionRemotePageIcon(root);
+  if (!iconSrc && !iconEmoji && !remoteFallback) continue;
   const icon = iconEmoji
     ? { value: `emoji:${iconEmoji}`, source: htmlPath, sourceKind: "database-wrapper" }
-    : await resolveImageIcon(iconSrc, htmlPath, workspace);
+    : await resolveImageIcon(iconSrc, htmlPath, workspace) ?? remoteIcon(remoteFallback, htmlPath, "database-wrapper");
   if (!icon) continue;
   addCandidate(hash, icon, 2);
 }
@@ -70,7 +71,7 @@ for (const htmlPath of wrapperPaths) {
     const hash = notionHashFromTarget(anchor?.getAttribute("href") ?? "");
     if (!anchor || !hash || !schemasByNotionHash.has(hash)) continue;
     const iconSrc = anchor.querySelector("img.icon")?.getAttribute("src")?.trim() ?? "";
-    const iconEmoji = anchor.querySelector("span.icon")?.text.trim() ?? "";
+    const iconEmoji = notionEmoji(anchor.querySelector("span.icon"));
     if (!iconSrc && !iconEmoji) continue;
     const icon = iconEmoji
       ? { value: `emoji:${iconEmoji}`, source: htmlPath, sourceKind: "exact-link-target" }
@@ -187,6 +188,19 @@ function decodeHref(href) {
   } catch {
     return "";
   }
+}
+
+function notionEmoji(element) {
+  return element?.text.trim() || element?.getAttribute("data-emoji")?.trim() || "";
+}
+
+function notionRemotePageIcon(root) {
+  const value = root.querySelector("article")?.getAttribute("data-notion-page-icon")?.trim() ?? "";
+  return /^https?:\/\//i.test(value) ? value : "";
+}
+
+function remoteIcon(value, source, sourceKind) {
+  return value ? { value, source, sourceKind } : null;
 }
 
 async function resolveImageIcon(iconSrc, htmlPath, workspaceRoot, sourceKind = "database-wrapper") {

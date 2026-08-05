@@ -199,6 +199,12 @@ export function EmbeddedDatabaseHeader({
   return (
     <div className="embedded-view-header">
       <div className="embedded-view-titlebar">
+        <EntityIcon
+          kind="database"
+          icon={bundle.schema.icon}
+          size={22}
+          className="embedded-view-database-icon"
+        />
         <div className="embedded-view-title-stack">
           <strong title={resolvedTitle}>{resolvedTitle}</strong>
           <span className="embedded-view-subtitle" title={resolvedSubtitle}>

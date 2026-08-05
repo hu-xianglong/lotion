@@ -40,13 +40,15 @@ try {
 
   await writeHtml(
     join(originalRoot, "Export-A", `Emoji Icon ${EMOJI_HASH}.html`),
-    notionPage("Emoji Icon", `<div class="page-header-icon"><span class="icon">📚</span></div>`)
+    notionPage("Emoji Icon", `<div class="page-header-icon"><span class="icon" data-emoji="📚"></span></div>`)
   );
   await writeHtml(
     join(originalRoot, "Export-A", `Remote Icon ${REMOTE_HASH}.html`),
     notionPage(
       "Remote Icon",
-      `<div class="page-header-icon"><img class="icon" src="https://app.notion.com/icons/database_blue.svg"/></div>`
+      `<div class="page-header-icon"><img class="icon" src="missing-database-icon.svg"/></div>`,
+      "",
+      ` data-notion-page-icon="https://app.notion.com/icons/database_blue.svg"`
     )
   );
   await writeHtml(
@@ -70,7 +72,7 @@ try {
     notionPage(
       "Database Index",
       "",
-      `<figure class="link-to-page"><a href="Linked%20Icon%20${LINK_HASH}.html"><span class="icon">🗂️</span>Linked Icon</a></figure>`
+      `<figure class="link-to-page"><a href="Linked%20Icon%20${LINK_HASH}.html"><span class="icon" data-emoji="🗂️"></span>Linked Icon</a></figure>`
     )
   );
   const dryRun = await runRepair();
@@ -152,8 +154,8 @@ async function writeHtml(path, html) {
   await writeFile(path, html, "utf8");
 }
 
-function notionPage(title, headerContent, body = "") {
-  return `<!doctype html><html><body><article class="page"><header>${headerContent}<h1 class="page-title">${title}</h1></header><div class="page-body">${body}</div></article></body></html>`;
+function notionPage(title, headerContent, body = "", articleAttributes = "") {
+  return `<!doctype html><html><body><article class="page"${articleAttributes}><header>${headerContent}<h1 class="page-title">${title}</h1></header><div class="page-body">${body}</div></article></body></html>`;
 }
 
 async function runRepair(...extraArgs) {

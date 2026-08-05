@@ -48,6 +48,7 @@ const MERGED_EXPORT_UUID = "12345678-1234-1234-1234-123456789abc";
 const MERGED_PAGE_HASH = "99999999aaaabbbbccccdddddddddddd";
 const SPLIT_ROW_DB_HASH = "44444444111122223333444455556666";
 const SPLIT_ROW_HASH = "55555555111122223333444455556666";
+const SPLIT_DATABASE_PAGE_HASH = "56565656111122223333444455556666";
 const LINKED_COLLECTION_VIEW_HASH = "90909090111122223333444455556666";
 const SHORT_REF_DB_HASH_A = "13eb1111222233334444555566662087";
 const SHORT_REF_DB_HASH_B = "299e1111222233334444555566669835";
@@ -65,8 +66,8 @@ const CONFLICT_LINK_DB_HASH = "50505050111122223333444455556666";
 const CONFLICT_LINK_PAGE_HASH_A = "51515151111122223333444455556666";
 const CONFLICT_LINK_PAGE_HASH_B = "52525252111122223333444455556666";
 
-function notionPage(title, body, properties = "", headerPrefix = "") {
-  return `<!doctype html><html><body><article class="page sans"><header>${headerPrefix}<h1 class="page-title">${title}</h1>${properties}</header><div class="page-body">${body}</div></article></body></html>`;
+function notionPage(title, body, properties = "", headerPrefix = "", articleAttributes = "") {
+  return `<!doctype html><html><body><article class="page sans"${articleAttributes}><header>${headerPrefix}<h1 class="page-title">${title}</h1>${properties}</header><div class="page-body">${body}</div></article></body></html>`;
 }
 
 function parseCsv(content) {
@@ -189,7 +190,7 @@ try {
   await writeFile(join(source, `Emoji Database ${EMOJI_DB_HASH}.csv`), "Name\n", "utf8");
   await writeFile(
     join(source, "Emoji Database", `Emoji Database ${EMOJI_DB_HASH}.html`),
-    notionPage("Emoji Database", "", "", `<div class="page-header-icon"><span class="icon">📚</span></div>`),
+    notionPage("Emoji Database", "", "", `<div class="page-header-icon"><span class="icon" data-emoji="📚"></span></div>`),
     "utf8"
   );
   await mkdir(join(source, "Remote Icon Database"), { recursive: true });
@@ -200,7 +201,8 @@ try {
       "Remote Icon Database",
       "",
       "",
-      `<div class="page-header-icon"><img class="icon" src="https://app.notion.com/icons/database_blue.svg"/></div>`
+      `<div class="page-header-icon"><img class="icon" src="missing-database-icon.svg"/></div>`,
+      ` data-notion-page-icon="https://app.notion.com/icons/database_blue.svg?size=64&amp;theme=light"`
     ),
     "utf8"
   );
@@ -583,8 +585,8 @@ try {
   );
   assert.equal(
     importedSchemas.find((schema) => schema.notion_source_hash === REMOTE_ICON_DB_HASH)?.icon,
-    "https://app.notion.com/icons/database_blue.svg",
-    "Remote database icons should import by exact Notion identity"
+    "https://app.notion.com/icons/database_blue.svg?size=64&theme=light",
+    "Remote database icons should import by exact Notion identity and decode HTML attribute entities"
   );
   assert.equal(
     importedSchemas.find((schema) => schema.notion_source_hash === LINK_ICON_DB_HASH)?.icon,
@@ -1756,6 +1758,19 @@ try {
     "utf8"
   );
   await writeFile(
+    join(splitExportRootPart2, "Writing", `Database Summary ${SPLIT_DATABASE_PAGE_HASH}_all.csv`),
+    "Name\nCatalog row\n",
+    "utf8"
+  );
+  await writeFile(
+    join(splitExportRoot, "Writing", `Database Summary ${SPLIT_DATABASE_PAGE_HASH}.html`),
+    notionPage(
+      "Database Summary",
+      `<a href="Database%20Summary%20${SPLIT_DATABASE_PAGE_HASH}.csv"><code>Database Summary ${SPLIT_DATABASE_PAGE_HASH}.csv</code></a><br/>`
+    ),
+    "utf8"
+  );
+  await writeFile(
     join(splitExportRoot, "Writing", "Letters", `2025 09 24 给恺媛的回信 ${SPLIT_ROW_HASH}.html`),
     notionPage(
       "2025/09/24 给恺媛的回信",
@@ -1796,6 +1811,16 @@ try {
   assert.equal(splitEntities.length, 1, "Search entity index should contain only the database row");
   assert.equal(splitEntities[0].kind, "row", "The split export page should be indexed as a row entity");
   assert.equal(splitEntities[0].source_notion_hash, SPLIT_ROW_HASH, "The row entity should keep the source Notion hash");
+  assert.equal(
+    splitPageRows.some((row) => row.title === "Database Summary"),
+    false,
+    "A full-page database HTML file in a separate export root should not also import as a CSV-link page"
+  );
+  assert.equal(
+    splitEntityRows.filter((row) => row.title === "Database Summary" && row.kind === "database").length,
+    1,
+    "A split HTML/CSV export should emit one canonical database entity for an exact Notion hash"
+  );
 } finally {
   await rm(root, { recursive: true, force: true });
 }

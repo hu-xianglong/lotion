@@ -59,6 +59,7 @@ try {
     renderDatabaseViewTabsBar,
     renderBackupButton,
     renderEmbeddedDatabaseHeader,
+    renderEmbeddedDatabaseHeaderWithoutIcon,
     renderEmbeddedViewRendererCached,
     renderEmbeddedViewRendererLoading,
     renderEntityIcons,
@@ -248,7 +249,7 @@ try {
   testStartupLoadingScreen(renderStartupLoadingScreen());
   testStartupPerformancePanel(renderStartupPerformancePanel());
   testStandaloneDatabaseHeader(renderStandaloneDatabaseHeader());
-  testEmbeddedDatabaseHeader(renderEmbeddedDatabaseHeader());
+  testEmbeddedDatabaseHeader(renderEmbeddedDatabaseHeader(), renderEmbeddedDatabaseHeaderWithoutIcon());
   testEmbeddedViewRendererCached(renderEmbeddedViewRendererCached());
   testEmbeddedViewRendererLoading(renderEmbeddedViewRendererLoading());
   testDatabaseViewTabsBar(renderDatabaseViewTabsBar());
@@ -1817,8 +1818,10 @@ function testStandaloneDatabaseHeader(html) {
   assert.match(html, /aria-label="Open in new window"/, "open-in-new-window affordance should be labelled");
 }
 
-function testEmbeddedDatabaseHeader(html) {
+function testEmbeddedDatabaseHeader(html, fallbackHtml) {
   assert.match(html, /class="embedded-view-header"/, "embedded database header should render");
+  assert.match(html, /class="entity-icon entity-icon-emoji embedded-view-database-icon"[^>]*>📊<\/span>/, "embedded database header should render the source database icon");
+  assert.match(fallbackHtml, /class="entity-icon entity-icon-default embedded-view-database-icon"/, "embedded databases without a custom icon should render the neutral database glyph");
   assert.match(html, /Inline Tasks/, "embedded title should render");
   assert.match(html, /All rows/, "active view name should render in subtitle");
   assert.match(html, /Table/, "active view type label should render in subtitle");
@@ -6594,6 +6597,22 @@ function rendererComponentEntry() {
           refreshing: false,
           onOpen: () => {},
           onRefresh: () => {},
+          onOpenSettings: () => {}
+        })
+      );
+    }
+
+    export function renderEmbeddedDatabaseHeaderWithoutIcon() {
+      const bundle = makeDatabaseChromeBundle();
+      bundle.schema = { ...bundle.schema, icon: undefined };
+      return renderToStaticMarkup(
+        React.createElement(EmbeddedDatabaseHeader, {
+          bundle,
+          title: "Inline Tasks",
+          activeView: bundle.views[0],
+          activeViewTypeLabel: "Table",
+          viewActions: null,
+          refreshing: false,
           onOpenSettings: () => {}
         })
       );
