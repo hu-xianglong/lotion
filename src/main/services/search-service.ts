@@ -125,6 +125,10 @@ const SEARCH_IGNORED_FIELD_IDS = new Set([
   "notion_original_csv"
 ]);
 
+export function resolveRipgrepExecutablePath(path: string): string {
+  return path.replace(/([\\/])app\.asar([\\/])/, "$1app.asar.unpacked$2");
+}
+
 interface DbIndex {
   id: string;
   name: string;
@@ -285,7 +289,7 @@ export class SearchService {
     ];
 
     return new Promise((resolve) => {
-      const child = spawn(rgPath, args, { cwd: root });
+      const child = spawn(resolveRipgrepExecutablePath(rgPath), args, { cwd: root });
       const hits: RawHit[] = [];
       let buffer = "";
       let truncated = false;

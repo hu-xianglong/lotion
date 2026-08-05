@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { parseArgs, promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
 const root = resolve(import.meta.dirname, "..");
 const {
   values: {
@@ -74,9 +76,8 @@ const ripgrepBinaries = await collectFiles(
   `${appAsar}.unpacked`,
   (path) => path.includes("@vscode/ripgrep-") && basename(path) === "rg"
 );
-const lanceDbPackage = JSON.parse(
-  await readFile(join(root, "node_modules", "@lancedb", "lancedb", "package.json"), "utf8")
-);
+const lanceDbPackageRoot = dirname(dirname(require.resolve("@lancedb/lancedb")));
+const lanceDbPackage = JSON.parse(await readFile(join(lanceDbPackageRoot, "package.json"), "utf8"));
 const lanceDbNativePackage = `@lancedb/lancedb-darwin-${arch}`;
 const expectsNativeModules = Boolean(lanceDbPackage.optionalDependencies?.[lanceDbNativePackage]);
 if (expectsNativeModules) {
@@ -86,6 +87,8 @@ if (expectsNativeModules) {
   );
 }
 assert.ok(ripgrepBinaries.length > 0, "Packaged app is missing the ripgrep executable");
+const { stdout: ripgrepVersion } = await execFileAsync(ripgrepBinaries[0], ["--version"]);
+assert.match(ripgrepVersion, /^ripgrep \d+/m, "Packaged ripgrep executable did not start");
 
 const userData = await mkdtemp(join(tmpdir(), "lotion-packaged-smoke-"));
 let stderr = "";

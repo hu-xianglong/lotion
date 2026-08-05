@@ -27,6 +27,7 @@ const hasNotarizationCredentials = Boolean(
 module.exports = {
   appId: "com.huxianglong.lotion",
   productName: "Lotion",
+  electronVersion: require("electron/package.json").version,
   artifactName: "Lotion-${version}-macOS-${arch}.${ext}",
   asar: true,
   asarUnpack: [

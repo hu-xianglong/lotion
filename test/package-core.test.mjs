@@ -9,7 +9,10 @@ import test from "node:test";
 import { IconsService } from "../dist-electron/main/services/icons-service.js";
 import { GitService } from "../dist-electron/main/services/git-service.js";
 import { GitSyncScheduler, gitAutoBackupDelayMs, gitAutoPushDelayMs } from "../dist-electron/main/services/git-sync-scheduler.js";
-import { SearchService } from "../dist-electron/main/services/search-service.js";
+import {
+  SearchService,
+  resolveRipgrepExecutablePath
+} from "../dist-electron/main/services/search-service.js";
 import { DatabaseService } from "../dist-electron/main/services/database-service.js";
 import { RowPagesService } from "../dist-electron/main/services/row-pages-service.js";
 import { WorkspaceService } from "../dist-electron/main/services/workspace-service.js";
@@ -138,6 +141,25 @@ import {
 } from "../dist-electron/builtin-plugins/github-backup/service.js";
 
 const execFileAsync = promisify(execFile);
+
+test("packaged ripgrep paths resolve outside app.asar", () => {
+  assert.equal(
+    resolveRipgrepExecutablePath("/Applications/Lotion.app/Contents/Resources/app.asar/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg"),
+    "/Applications/Lotion.app/Contents/Resources/app.asar.unpacked/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg"
+  );
+  assert.equal(
+    resolveRipgrepExecutablePath("C:\\Lotion\\resources\\app.asar\\node_modules\\@vscode\\ripgrep-win32-x64\\bin\\rg.exe"),
+    "C:\\Lotion\\resources\\app.asar.unpacked\\node_modules\\@vscode\\ripgrep-win32-x64\\bin\\rg.exe"
+  );
+  assert.equal(
+    resolveRipgrepExecutablePath("/workspace/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg"),
+    "/workspace/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg"
+  );
+  assert.equal(
+    resolveRipgrepExecutablePath("/workspace/app.asar-backup/node_modules/rg"),
+    "/workspace/app.asar-backup/node_modules/rg"
+  );
+});
 
 test("plugin host scopes providers, events, commands, settings, and inspection", async () => {
   const platform = {
