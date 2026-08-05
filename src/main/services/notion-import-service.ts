@@ -3751,6 +3751,7 @@ async function emitWorkspace(
     let skippedEmptyRowPages = 0;
     const recordById = new Map(dbPlan.records.map((record) => [String(record.id ?? ""), record]));
     const skippedRowIds = new Set<string>();
+    const materializedRowBodyIds = new Set<string>();
     await forEachConcurrent(dbPlan.rowPlans, bodyPool.size, async (rowPlan) => {
       const rowPagePath = `${dbRowPagesPath}/${rowPlan.fileName}`;
       const bodyMd = rowPlan.sourcePath
@@ -3777,7 +3778,14 @@ async function emitWorkspace(
             : "blank database row not imported: no row-page source and all meaningful user fields are empty"
         });
       } else {
-        await writeText(join(target, rowPagePath), cleaned);
+        if (cleaned.trim().length > 0) {
+          await writeText(join(target, rowPagePath), cleaned);
+          materializedRowBodyIds.add(rowPlan.rowId);
+        } else if (record) {
+          // Property-only rows remain first-class database pages, but their
+          // Markdown body stays lazy until the user actually edits it.
+          record.page_file = "";
+        }
       }
       markWrite(`Writing row pages for ${dbPlan.name}`);
     });
@@ -3788,13 +3796,15 @@ async function emitWorkspace(
     for (const rowPlan of dbPlan.rowPlans) {
       const record = recordById.get(rowPlan.rowId);
       const rowPathSegments = [...dbPathSegments, rowPlan.title.trim() || "Untitled"];
+      const hasMaterializedBody = materializedRowBodyIds.has(rowPlan.rowId);
+      const rowBodyPath = hasMaterializedBody ? `${dbRowPagesPath}/${rowPlan.fileName}` : "";
       pageRecords.push({
         id: rowPlan.rowId,
         created_time: record?.created_time ?? now,
         updated_time: record?.updated_time ?? now,
         title: rowPlan.title.trim() || "Untitled",
         kind: "row_page",
-        body_path: `${dbRowPagesPath}/${rowPlan.fileName}`,
+        body_path: rowBodyPath,
         icon: rowPlan.icon ?? "",
         cover: rowPlan.cover ?? "",
         cover_offset: rowPlan.coverOffset === undefined ? "" : String(rowPlan.coverOffset),
@@ -3803,7 +3813,7 @@ async function emitWorkspace(
         full_width: record?.page_full_width ?? "",
         database_id: dbPlan.id,
         row_id: rowPlan.rowId,
-        page_file: rowPlan.fileName,
+        page_file: hasMaterializedBody ? rowPlan.fileName : "",
         [ORIGINAL_NOTION_HTML_FIELD_ID]: originalHtmlAttachmentForSource(rowPlan.sourcePath)
       });
       entityRecords.push({
@@ -3818,7 +3828,7 @@ async function emitWorkspace(
         parentKind: "database",
         databaseId: dbPlan.id,
         rowId: rowPlan.rowId,
-        bodyPath: `${dbRowPagesPath}/${rowPlan.fileName}`,
+        bodyPath: rowBodyPath || undefined,
         sourceNotionHash: rowPlan.hash
       });
     }

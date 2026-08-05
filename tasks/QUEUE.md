@@ -767,6 +767,7 @@ surface.
 | 714 | done | Notion import rounded-corner visual baseline determinism | `tasks/done/notion-import-rounded-corner-visual-baseline-determinism.md` | verified two consecutive strict Electron passes; only the 10×15 live-backdrop corner is excluded and an outside-region pixel still fails |
 | 715 | done | Notion import database icon identity | `tasks/done/notion-import-database-icon-identity.md` | exact wrapper identity and link-target evidence, safe repair restored 10 production icons, 79/79 fast suite, build, and installed-app visual verification passed |
 | 716 | done | Inline database icon provenance and rendering | `tasks/done/inline-database-icon-provenance-and-rendering.md` | restored 3 source-backed icons, rendered custom/default icons in embedded views, added dual-export database-page regression coverage, and verified repair idempotence |
+| 717 | done | Notion import lazy empty row bodies | `tasks/done/notion-import-lazy-empty-row-bodies.md` | property-only rows retain CSV data with lazy body metadata; real 1,185-database dual-export import passed structure and hierarchy validation |
 
 ## Latency Benchmark Coverage
 

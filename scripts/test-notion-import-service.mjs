@@ -632,6 +632,12 @@ try {
   assert.equal(markdownUpdatedField?.type, "updated_time", "CSV-only Notion Last edited time should retain its timestamp type");
   const markdownFieldsRows = rowsAsObjects(await readFile(join(markdownFieldsDbPath, "data.csv"), "utf8"));
   const markdownAlphaRow = markdownFieldsRows.find((row) => row.title === "Alpha");
+  assert.ok(markdownAlphaRow, "CSV-only rows with meaningful properties should remain imported");
+  assert.equal(
+    markdownAlphaRow.page_file,
+    "",
+    "A property-only CSV row should not allocate a zero-byte Markdown file"
+  );
   assert.equal(markdownAlphaRow?.link, "https://example.com/a", "CSV-only URL values should stay clickable URLs");
   assert.equal(markdownAlphaRow?.done, "true", "CSV-only checkbox values should normalize to canonical booleans");
   assert.equal(markdownAlphaRow?.amount, "1234.50", "CSV-only number values should normalize to canonical numbers");
@@ -868,6 +874,14 @@ try {
   );
   const markdownAlphaEntity = entityRows.find(
     (row) => row.kind === "row" && row.database_id === markdownFieldsSchema.id && row.row_id === markdownAlphaRow?.id
+  );
+  assert.equal(markdownAlphaPage?.body_path, "", "Property-only rows should keep system page body paths lazy");
+  assert.equal(markdownAlphaPage?.page_file, "", "Property-only rows should keep system page filenames lazy");
+  assert.equal(markdownAlphaEntity?.body_path, "", "Property-only row entities should not reference an empty file");
+  assert.deepEqual(
+    await readdir(join(markdownFieldsDbPath, "pages")),
+    [],
+    "CSV-only property rows should not emit zero-byte Markdown bodies"
   );
   assert.equal(markdownAlphaPage?.created_time, MD_CREATED_TIME, "Pages index should preserve imported Notion Created time");
   assert.equal(markdownAlphaPage?.updated_time, MD_UPDATED_TIME, "Pages index should preserve imported Notion Last edited time");
