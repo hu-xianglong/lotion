@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ArrowUpRight, ImagePlus, RefreshCw, SmilePlus } from "lucide-react";
-import type { DatabaseBundle, FieldSchema, TableView } from "../../../shared/types";
+import type { DatabaseBundle, EntityRef, FieldSchema, TableView } from "../../../shared/types";
 import type { DatabaseViewProvider } from "../../../shared/plugin-api";
 import { EntityIcon } from "../../components/EntityIcon";
 import { FieldTypeIcon, ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { SettingsIcon } from "../../components/Icons";
 import { useI18n } from "../../lib/i18n";
 import { CoverArea } from "../pages/CoverArea";
+import { EntityBreadcrumbs, type EntityBreadcrumbItem } from "../../components/EntityBreadcrumbs";
 
 export type ViewOrderMutationStatus = "submitted" | "failed" | "ignored";
-
-export interface DatabaseBreadcrumbItem {
-  label: string;
-  onOpen?: () => void;
-}
 
 export function viewOrderControlsBlocked(pending: boolean, retryable: boolean): boolean {
   return pending || retryable;
@@ -103,14 +99,16 @@ export function StandaloneDatabaseHeader({
   onPickCover,
   onClearCover,
   onCommitCoverOffset,
+  onOpenEntity,
   onOpenInNewWindow
 }: {
   bundle: DatabaseBundle;
-  breadcrumbs?: DatabaseBreadcrumbItem[];
+  breadcrumbs?: EntityBreadcrumbItem[];
   onPickIcon?: () => void;
   onPickCover?: () => void;
   onClearCover?: () => void;
   onCommitCoverOffset?: (offset: number) => void | Promise<void>;
+  onOpenEntity?: (ref: EntityRef) => void;
   onOpenInNewWindow?: () => void;
 }) {
   const { t, locale } = useI18n();
@@ -152,31 +150,11 @@ export function StandaloneDatabaseHeader({
             </button>
           )}
         </div>
+        <EntityBreadcrumbs items={breadcrumbs ?? []} onOpenEntity={onOpenEntity} />
         <div className="database-toolbar">
           <div className="database-title-wrap">
             <h1>{bundle.schema.name}</h1>
             <div className="database-subtitle">
-              {breadcrumbs && breadcrumbs.length > 1 && (
-                <>
-                  <span className="database-breadcrumb">
-                    {breadcrumbs.map((item, index) => (
-                      <span className="database-breadcrumb-item" key={`${index}:${item.label}`}>
-                        {index > 0 && <span className="database-breadcrumb-separator" aria-hidden="true">/</span>}
-                        {item.onOpen ? (
-                          <button type="button" className="database-breadcrumb-link" onClick={item.onOpen}>
-                            {item.label}
-                          </button>
-                        ) : (
-                          <span className="database-breadcrumb-current" aria-current={index === breadcrumbs.length - 1 ? "page" : undefined}>
-                            {item.label}
-                          </span>
-                        )}
-                      </span>
-                    ))}
-                  </span>
-                  <span aria-hidden="true"> · </span>
-                </>
-              )}
               <span>{formatDbStats(locale, bundle)}</span>
             </div>
           </div>

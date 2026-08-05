@@ -37,6 +37,7 @@ import { EMPTY_GROUP_KEY, groupDatabaseRecords } from "../../../shared/database-
 import { GroupSettingsDialog } from "./GroupSettingsDialog";
 import { normalizePageOpenMode } from "../../../shared/database-page-open";
 import { useDateTimeDisplayDefaults } from "../../lib/settings";
+import { resolveEntityBreadcrumbItems } from "../../components/EntityBreadcrumbs";
 
 const DEFAULT_COLUMN_WIDTH = 180;
 const MIN_COLUMN_WIDTH = 80;
@@ -1361,20 +1362,17 @@ export const DatabaseTable = memo(function DatabaseTable({
   );
 
   const standaloneBreadcrumbs = useMemo(() => {
-    const segments = normalizedPath(bundle.schema.path);
-    if (segments.length <= 1) return [];
-    return segments.map((label, index) => {
-      if (index === segments.length - 1) return { label };
-      const prefix = segments.slice(0, index + 1);
-      const parentPage = pages.find((page) => pathsEqual(page.path, prefix));
-      if (parentPage) return { label, onOpen: () => void selectPage(parentPage.id) };
-      const parentDatabase = databases.find((database) =>
-        database.id !== bundle.schema.id && pathsEqual(database.path, prefix)
-      );
-      if (parentDatabase) return { label, onOpen: () => void selectDatabase(parentDatabase.id) };
-      return { label };
+    return resolveEntityBreadcrumbItems({
+      source: {
+        id: bundle.schema.id,
+        kind: "database",
+        title: bundle.schema.name,
+        path: bundle.schema.path
+      },
+      pages,
+      databases
     });
-  }, [bundle.schema.id, bundle.schema.path, databases, pages, selectDatabase, selectPage]);
+  }, [bundle.schema.id, bundle.schema.name, bundle.schema.path, databases, pages]);
 
   useEffect(() => {
     const disposable = pluginHost.views.onChange(() => {
@@ -1393,6 +1391,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           onPickCover={onPickCover}
           onClearCover={onClearCover}
           onCommitCoverOffset={onCommitCoverOffset}
+          onOpenEntity={openEntityRef}
           onOpenInNewWindow={onOpenInNewWindow}
         />
       )}
@@ -2494,13 +2493,4 @@ export function diffTableView(current: TableView, next: TableView): TableViewPat
     (patch as Record<string, unknown>)[key] = value;
   }
   return patch;
-}
-
-function normalizedPath(path: string[] | undefined): string[] {
-  return (path ?? []).map((segment) => segment.trim()).filter(Boolean);
-}
-
-function pathsEqual(path: string[] | undefined, expected: string[]): boolean {
-  const actual = normalizedPath(path);
-  return actual.length === expected.length && actual.every((segment, index) => segment === expected[index]);
 }

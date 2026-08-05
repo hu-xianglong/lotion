@@ -59,6 +59,7 @@ export async function withLotionUIHarness(name, run, options = {}) {
     await page.bringToFront().catch(() => undefined);
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 15_000 });
+    await page.evaluate(() => window.lotion.runtime.ready());
     previousWorkspacePath = await currentNonSmokeWorkspacePath(page);
 
     const context = {

@@ -1778,7 +1778,6 @@ function AppContent() {
     const viewStateKey = editorViewStateKey({ type: "row_page", databaseId: rp.databaseId, rowId: rp.rowId });
     const activeNavigationAnchor = navigationAnchor?.viewStateKey === viewStateKey ? navigationAnchor : null;
     const dbSchema = activeRowBundle.schema;
-    const dbPathLabel = entityPathLabel(dbSchema.path, dbSchema.name);
     const rowCover = String(activeRow.cover ?? "");
     const rowCoverOffset = Number(activeRow.cover_offset ?? 50);
     const rowIcon = String(activeRow.row_icon ?? "");
@@ -1799,22 +1798,6 @@ function AppContent() {
     };
     content = (
       <div className={rp.fullWidth ? "row-page-surface full-width" : "row-page-surface"}>
-        <div className="row-page-breadcrumb">
-          <button
-            type="button"
-            className="row-page-breadcrumb-link"
-            onClick={() => selectDatabase(rp.databaseId)}
-            title={dbPathLabel}
-          >
-            <EntityIcon kind="database" icon={dbSchema.icon} size={14} />
-            <span>{dbPathLabel}</span>
-          </button>
-          <span className="row-page-breadcrumb-sep">/</span>
-          <span className="row-page-breadcrumb-current" title={String(activeRow.title ?? "")}>
-            <EntityIcon kind="row_page" icon={rowIcon || undefined} size={14} />
-            <span>{String(activeRow.title ?? "") || t("rowPage.untitled")}</span>
-          </span>
-        </div>
         <PageEditor
           key={viewStateKey}
           ref={activePageEditorRef}
@@ -1822,6 +1805,15 @@ function AppContent() {
           page={page}
           databases={state.databases}
           pages={state.pages}
+          breadcrumbSource={{
+            id: rp.rowId,
+            kind: "row",
+            title: String(activeRow.title ?? "") || t("rowPage.untitled"),
+            path: rowMeta?.path ?? [...(dbSchema.path ?? [dbSchema.name]), String(activeRow.title ?? "") || t("rowPage.untitled")],
+            parentId: rp.databaseId,
+            parentKind: "database",
+            databaseId: rp.databaseId
+          }}
           onChange={saveRowPageBody}
           onRename={(title) => renameRowPage(rp.databaseId, rp.rowId, title)}
           onPickCover={() => pickCoverForRow(rp.databaseId, rp.rowId)}
@@ -1949,6 +1941,15 @@ function AppContent() {
                 page={page}
                 databases={state.databases}
                 pages={state.pages}
+                breadcrumbSource={{
+                  id: rp.rowId,
+                  kind: "row",
+                  title: String(peekRow.title ?? "") || t("rowPage.untitled"),
+                  path: rp.meta?.path ?? [...(peekRowBundle.schema.path ?? [peekRowBundle.schema.name]), String(peekRow.title ?? "") || t("rowPage.untitled")],
+                  parentId: rp.databaseId,
+                  parentKind: "database",
+                  databaseId: rp.databaseId
+                }}
                 onChange={saveRowPageBody}
                 onRename={(title) => renameRowPage(rp.databaseId, rp.rowId, title)}
                 onPickCover={() => pickCoverForRow(rp.databaseId, rp.rowId)}
@@ -2292,11 +2293,6 @@ function markdownPositionForLine(markdown: string, line: number | undefined): nu
     pos = nextBreak + 1;
   }
   return Math.max(0, Math.min(pos, markdown.length));
-}
-
-function entityPathLabel(path: string[] | undefined, fallback: string): string {
-  const segments = (path ?? []).map((segment) => segment.trim()).filter(Boolean);
-  return segments.length > 0 ? segments.join(" / ") : fallback;
 }
 
 function isFavorited(list: FavoriteItem[], item: FavoriteItem): boolean {

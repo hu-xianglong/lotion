@@ -27,20 +27,20 @@ await withLotionUIHarness("page-path-slash-ui", async ({ cdpUrl, page, openWorks
     await waitForPageService(page, fixture.pageId);
     await openPage(page, fixture.pageId);
     await page.getByText(fixture.pageTitle).first().waitFor({ timeout: 8_000 });
-    const pathLabel = page.locator(".page-path-label").first();
+    const pathLabel = page.locator(".entity-breadcrumbs").first();
     await pathLabel.waitFor({ timeout: 8_000 });
     await assertWithinViewport(page, pathLabel, `page path label ${viewport.name}`, 4);
     await assertNoDocumentHorizontalOverflow(page, `page path slash initial ${viewport.name}`);
 
     const rendered = await page.evaluate(() => {
-      const label = document.querySelector(".page-path-label");
+      const label = document.querySelector(".entity-breadcrumbs");
       return {
         title: label?.getAttribute("title") ?? "",
-        segments: Array.from(label?.querySelectorAll(".page-path-segment, .page-path-link") ?? [])
+        segments: Array.from(label?.querySelectorAll(".entity-breadcrumb-segment, .entity-breadcrumb-current, .entity-breadcrumb-link") ?? [])
           .map((segment) => segment.textContent?.trim() ?? "")
           .filter(Boolean),
-        separators: label?.querySelectorAll(".page-path-separator").length ?? 0,
-        parentLinks: label?.querySelectorAll(".page-path-link").length ?? 0
+        separators: label?.querySelectorAll(".entity-breadcrumb-separator").length ?? 0,
+        parentLinks: label?.querySelectorAll(".entity-breadcrumb-link").length ?? 0
       };
     });
 
@@ -86,7 +86,7 @@ async function waitForPageService(page, pageId) {
 }
 
 async function assertParentBreadcrumbOpensPage(page, fixture, viewportName) {
-  const parentBreadcrumb = page.locator(".page-path-link").filter({ hasText: fixture.parentSegment }).first();
+  const parentBreadcrumb = page.locator(".entity-breadcrumb-link").filter({ hasText: fixture.parentSegment }).first();
   await assertWithinViewport(page, parentBreadcrumb, `parent breadcrumb ${viewportName}`, 4);
   await parentBreadcrumb.click();
   await page.waitForFunction(

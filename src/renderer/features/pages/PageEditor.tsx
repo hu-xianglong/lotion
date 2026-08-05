@@ -23,6 +23,11 @@ import { ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { pluginHost } from "../../plugin-host";
 import { formatDateForField, type DateTimeDisplayDefaults } from "../../../shared/date-values";
 import { useDateTimeDisplayDefaults } from "../../lib/settings";
+import {
+  EntityBreadcrumbs,
+  resolveEntityBreadcrumbItems,
+  type EntityBreadcrumbSource
+} from "../../components/EntityBreadcrumbs";
 
 // The favorite toggle uses Lucide's Star — filled when active so the
 // gold "favorited" state is unambiguous without changing icon shape.
@@ -61,6 +66,8 @@ interface PageEditorProps {
   onSetSmallText?: (smallText: boolean) => void | Promise<void>;
   onOpenInNewWindow?: () => void;
   onOpenEntity?: (ref: EntityRef) => void;
+  /** Overrides the page identity used by the shared breadcrumb resolver. */
+  breadcrumbSource?: EntityBreadcrumbSource;
   viewStateKey?: string;
   initialViewState?: PageEditorViewState;
   navigationAnchorPos?: number;
@@ -268,6 +275,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   onSetSmallText,
   onOpenInNewWindow,
   onOpenEntity,
+  breadcrumbSource,
   viewStateKey,
   initialViewState,
   navigationAnchorPos,
@@ -322,9 +330,20 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const markdownRef = useRef(page.markdown);
   const pageIdRef = useRef(page.meta.id);
   const viewStateRef = useRef<PageEditorViewState>(restoredViewState ?? {});
-  const parentLink = parentLinkFromMeta(page.meta, pages, databases);
-  const pathSegments = pagePathSegments(page.meta, parentLink);
-  const parentPathIndex = parentPathSegmentIndex(pathSegments, parentLink);
+  const breadcrumbItems = resolveEntityBreadcrumbItems({
+    source: breadcrumbSource
+      ? { ...breadcrumbSource, title }
+      : {
+          id: page.meta.id,
+          kind: "page",
+          title,
+          path: page.meta.path,
+          parentId: page.meta.parentId,
+          parentKind: page.meta.parentKind
+        },
+    pages,
+    databases
+  });
 
   useEffect(() => {
     if (titlePageIdRef.current !== page.meta.id) {
@@ -559,8 +578,6 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   }
 
   const showEmptyPrompt = emptyTemplates !== undefined && editorValue.trim().length === 0 && !emptyPromptDismissed;
-  const pagePathLabel = pathSegments.join(" / ");
-
   function focusBodyEditorSoon() {
     window.setTimeout(() => codeMirrorRef.current?.focus(), 0);
   }
@@ -713,43 +730,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
           </button>
         )}
       </div>
-      {(pathSegments.length > 1 || parentLink) && (
-        <div className="page-path-label" title={pagePathLabel || parentLink?.label}>
-          {pathSegments.length > 1 ? (
-            pathSegments.map((segment, index) => {
-              const isParent = !!parentLink && index === parentPathIndex;
-              return (
-                <span key={`${segment}-${index}`} className="page-path-part">
-                  {index > 0 && <span className="page-path-separator">/</span>}
-                  {isParent && parentLink.ref && onOpenEntity ? (
-                    <button
-                      type="button"
-                      className="page-path-link"
-                      onClick={() => onOpenEntity(parentLink.ref as EntityRef)}
-                      title={parentLink.label}
-                    >
-                      {parentLink.label}
-                    </button>
-                  ) : (
-                    <span className="page-path-segment">{segment}</span>
-                  )}
-                </span>
-              );
-            })
-          ) : parentLink?.ref && onOpenEntity ? (
-            <button
-              type="button"
-              className="page-path-link"
-              onClick={() => onOpenEntity(parentLink.ref as EntityRef)}
-              title={parentLink.label}
-            >
-              {parentLink.label}
-            </button>
-          ) : (
-            <span className="page-path-segment">{parentLink?.label}</span>
-          )}
-        </div>
-      )}
+      <EntityBreadcrumbs items={breadcrumbItems} onOpenEntity={onOpenEntity} />
       <div className="topbar">
         <input
           className="title-input"
@@ -1373,85 +1354,8 @@ function entityIconKind(ref: EntityRef): "page" | "database" | "row_page" | "wor
 }
 
 function databasePathLabel(path: string[] | undefined): string {
-  const segments = pagePathSegmentsFromPath(path) ?? [];
-  return segments.length > 1 ? segments.join(" / ") : "";
-}
-
-interface ParentEntityLink {
-  label: string;
-  ref?: EntityRef;
-  path?: string[];
-}
-
-function pagePathSegments(meta: PageMeta, parentLink?: ParentEntityLink): string[] {
-  const segments = (meta.path ?? []).map((segment) => segment.trim()).filter(Boolean);
-  const parentPath = pagePathSegmentsFromPath(parentLink?.path);
-  const title = meta.title.trim() || "Untitled";
-  if (!parentPath || !title) return segments;
-  const expected = [...parentPath, title];
-  const prefixMatches = parentPath.every((segment, index) => segments[index] === segment);
-  const titleMatches = segments[segments.length - 1] === title;
-  return prefixMatches && titleMatches && segments.length === expected.length ? segments : expected;
-}
-
-function parentLinkFromMeta(
-  meta: PageMeta,
-  pages: PageMeta[] | undefined,
-  databases: DatabaseSummary[]
-): ParentEntityLink | undefined {
-  if (!meta.parentId) return undefined;
-  const kind = meta.parentKind ?? "page";
-  let label = parentTitleFromPath(meta);
-  let parentPath = parentPathFromMeta(meta);
-  if (kind === "database") {
-    const database = databases.find((item) => item.id === meta.parentId);
-    label = database?.name || label;
-    parentPath = pagePathSegmentsFromPath(database?.path) ?? parentPath;
-  } else if (kind === "page") {
-    const page = pages?.find((item) => item.id === meta.parentId);
-    label = page?.title || label;
-    parentPath = pagePathSegmentsFromPath(page?.path) ?? parentPath;
-  }
-  label = label || "Parent";
-  return {
-    label,
-    path: parentPath,
-    ref: {
-      entityId: meta.parentId,
-      kind,
-      rowId: kind === "row" ? meta.parentId : undefined,
-      titleSnapshot: label,
-      pathSnapshot: parentPath
-    }
-  };
-}
-
-function parentPathSegmentIndex(path: string[], parentLink: ParentEntityLink | undefined): number {
-  if (!parentLink || path.length <= 1) return -1;
-  const parentPath = pagePathSegmentsFromPath(parentLink.path) ?? [];
-  if (parentPath.length > 0 && parentPath.length < path.length) {
-    const prefixMatches = parentPath.every((segment, index) => path[index] === segment);
-    if (prefixMatches) return parentPath.length - 1;
-  }
-  const labelIndex = path.findIndex((segment, index) => index < path.length - 1 && segment === parentLink.label);
-  if (labelIndex >= 0) return labelIndex;
-  return path.length - 2;
-}
-
-function parentTitleFromPath(meta: PageMeta): string {
-  const path = pagePathSegments(meta);
-  return path.length >= 2 ? path[path.length - 2] : "";
-}
-
-function parentPathFromMeta(meta: PageMeta): string[] | undefined {
-  const path = pagePathSegments(meta);
-  if (path.length <= 1) return undefined;
-  return path.slice(0, -1);
-}
-
-function pagePathSegmentsFromPath(path: string[] | undefined): string[] | undefined {
   const segments = (path ?? []).map((segment) => segment.trim()).filter(Boolean);
-  return segments.length > 0 ? segments : undefined;
+  return segments.length > 1 ? segments.join(" / ") : "";
 }
 
 interface EmptyPagePromptProps {

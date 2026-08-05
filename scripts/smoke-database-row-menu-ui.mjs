@@ -110,7 +110,7 @@ async function runScenario({ artifactRoot, page, viewport }) {
   menu = await openTableRowMenuByHandle(table, page, SOURCE_TITLE);
   await menu.getByRole("menuitem", { name: "Edit properties" }).click();
   await page.locator(".row-page-surface").waitFor();
-  await page.locator(".row-page-breadcrumb-current", { hasText: SOURCE_TITLE }).waitFor();
+  await page.locator(".entity-breadcrumb-current", { hasText: SOURCE_TITLE }).waitFor();
   table = await openDatabase(page);
 
   for (const [viewName, rowSelector] of [["List menu", ".list-view-row"], ["Gallery menu", ".gallery-card"]]) {
@@ -124,8 +124,21 @@ async function runScenario({ artifactRoot, page, viewport }) {
     await page.keyboard.press("Escape");
   }
   await selectView(table, page, "Calendar menu");
-  await table.getByRole("button", { name: "‹" }).click();
-  await table.getByRole("button", { name: "‹" }).click();
+  const monthOffset = await page.evaluate(async ({ databaseId, title }) => {
+    const bundle = await window.lotion.databases.get(databaseId);
+    const record = bundle.records.find((candidate) => candidate.title === title);
+    const raw = String(record?.due_date ?? "");
+    const [year, month] = raw.split("-").map(Number);
+    if (!Number.isInteger(year) || !Number.isInteger(month)) {
+      throw new Error(`Expected a dated calendar smoke row, received ${JSON.stringify(raw)}`);
+    }
+    const now = new Date();
+    return (year - now.getFullYear()) * 12 + (month - 1 - now.getMonth());
+  }, { databaseId: DATABASE_ID, title: SOURCE_TITLE });
+  const monthButton = table.getByRole("button", { name: monthOffset < 0 ? "‹" : "›" });
+  for (let offset = 0; offset < Math.abs(monthOffset); offset += 1) {
+    await monthButton.click();
+  }
   const calendarRow = table.locator(`.calendar-cell-row[title="${SOURCE_TITLE}"]`).first();
   const calendarHandle = calendarRow.getByRole("button", { name: `Row actions ${SOURCE_TITLE}` });
   await calendarHandle.focus();

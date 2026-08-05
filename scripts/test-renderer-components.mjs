@@ -62,6 +62,7 @@ try {
     renderEmbeddedDatabaseHeaderWithoutIcon,
     renderEmbeddedViewRendererCached,
     renderEmbeddedViewRendererLoading,
+    renderEntityBreadcrumbVariants,
     renderEntityIcons,
     renderFieldTypeIcons,
     renderFormulaCell,
@@ -252,6 +253,7 @@ try {
   testEmbeddedDatabaseHeader(renderEmbeddedDatabaseHeader(), renderEmbeddedDatabaseHeaderWithoutIcon());
   testEmbeddedViewRendererCached(renderEmbeddedViewRendererCached());
   testEmbeddedViewRendererLoading(renderEmbeddedViewRendererLoading());
+  testEntityBreadcrumbVariants(renderEntityBreadcrumbVariants());
   testDatabaseViewTabsBar(renderDatabaseViewTabsBar());
   testViewOrderMutationContract(await viewOrderMutationContract());
   testFieldTypeIcons(renderFieldTypeIcons());
@@ -1811,12 +1813,24 @@ function testStandaloneDatabaseHeader(html) {
   assert.match(html, /class="page-header"/, "standalone database header should render");
   assert.match(html, /aria-label="Change icon"/, "database icon picker should use the localized accessible label");
   assert.match(html, /Project Tracker/, "database title should render");
-  assert.match(html, /class="database-breadcrumb-link"[^>]*>Workspace<\/button>/, "resolved database parent should render as a link");
-  assert.match(html, /class="database-breadcrumb-current" aria-current="page">Operations<\/span>/, "current database should remain non-interactive");
+  assert.match(html, /class="entity-breadcrumb-link"[^>]*>Workspace<\/button>/, "resolved database parent should render as a shared entity link");
+  assert.match(html, /class="entity-breadcrumb-current" aria-current="page">Operations<\/span>/, "current database should remain non-interactive");
   assert.match(html, /3 fields · 2 rows/, "database subtitle should include visible field and row counts");
   assert.match(html, /class="page-header-addition page-add-cover"[\s\S]*Add cover/, "localized cover affordance should render when no cover is set");
   assert.match(html, /class="database-open-window"/, "open-in-new-window affordance should render");
   assert.match(html, /aria-label="Open in new window"/, "open-in-new-window affordance should be labelled");
+}
+
+function testEntityBreadcrumbVariants(variants) {
+  for (const [kind, html] of Object.entries(variants)) {
+    assert.match(html, /<nav class="entity-breadcrumbs"/, `${kind} should use the shared breadcrumb renderer`);
+    assert.match(html, /class="entity-breadcrumb-link"/, `${kind} should render a navigable ancestor`);
+    assert.match(html, /class="entity-breadcrumb-current" aria-current="page"/, `${kind} should expose one non-interactive current entity`);
+  }
+  assert.match(variants.page, />Workspace<\/button>[\s\S]*>Notes<\/span>/, "page breadcrumbs should resolve the complete parent path");
+  assert.match(variants.database, />Workspace<\/button>[\s\S]*>Projects<\/span>/, "database breadcrumbs should use the same path structure");
+  assert.match(variants.database, /data-entity-id="pg_workspace"/, "database ancestors should resolve by complete path instead of duplicate title");
+  assert.match(variants.row, />Projects<\/button>[\s\S]*>Launch<\/span>/, "row pages should resolve their owning database through the same renderer");
 }
 
 function testEmbeddedDatabaseHeader(html, fallbackHtml) {
@@ -2816,6 +2830,7 @@ function rendererComponentEntry() {
       shouldHydrateFieldSettingsDraft
     } from "./src/renderer/features/databases/FieldSettingsDialog.tsx";
     import { EntityIcon } from "./src/renderer/components/EntityIcon.tsx";
+    import { EntityBreadcrumbs, resolveEntityBreadcrumbItems } from "./src/renderer/components/EntityBreadcrumbs.tsx";
     import { MenuItem, MenuSection } from "./src/renderer/components/Menu.tsx";
     import { FieldTypeIcon, ViewTypeIcon } from "./src/renderer/components/FieldTypeIcon.tsx";
     import {
@@ -6578,9 +6593,10 @@ function rendererComponentEntry() {
         React.createElement(StandaloneDatabaseHeader, {
           bundle: makeDatabaseChromeBundle(),
           breadcrumbs: [
-            { label: "Workspace", onOpen: () => {} },
-            { label: "Operations" }
+            { label: "Workspace", ref: { entityId: "pg_workspace", kind: "page" } },
+            { label: "Operations", current: true }
           ],
+          onOpenEntity: () => {},
           onPickIcon: () => {},
           onPickCover: () => {},
           onClearCover: () => {},
@@ -6588,6 +6604,28 @@ function rendererComponentEntry() {
           onOpenInNewWindow: () => {}
         })
       );
+    }
+
+    export function renderEntityBreadcrumbVariants() {
+      const pages = [
+        { id: "pg_duplicate_workspace", title: "Workspace", created_time: "", updated_time: "", path: ["Archive", "Workspace"] },
+        { id: "pg_workspace", title: "Workspace", created_time: "", updated_time: "", path: ["Workspace"] },
+        { id: "pg_notes", title: "Notes", created_time: "", updated_time: "", path: ["Workspace", "Notes"], parentId: "pg_workspace", parentKind: "page" }
+      ];
+      const databases = [
+        { id: "db_projects", name: "Projects", path: ["Workspace", "Projects"] }
+      ];
+      const render = (source) => renderToStaticMarkup(
+        React.createElement(EntityBreadcrumbs, {
+          items: resolveEntityBreadcrumbItems({ source, pages, databases }),
+          onOpenEntity: () => {}
+        })
+      );
+      return {
+        page: render({ id: "pg_notes", kind: "page", title: "Notes", path: ["Workspace", "Notes"], parentId: "pg_workspace", parentKind: "page" }),
+        database: render({ id: "db_projects", kind: "database", title: "Projects", path: ["Workspace", "Projects"] }),
+        row: render({ id: "row_launch", kind: "row", title: "Launch", path: ["Workspace", "Projects", "Launch"], parentId: "db_projects", parentKind: "database", databaseId: "db_projects" })
+      };
     }
 
     export function renderEmbeddedDatabaseHeader() {
