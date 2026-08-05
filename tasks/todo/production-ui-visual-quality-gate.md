@@ -112,7 +112,7 @@ Release gate:
 - Cover at least these critical surfaces with screenshots and geometry checks:
   - Notion Import modal on real `Notion Import` workspace
   - imported page with images and Chinese title/content
-  - imported toggle page `Family Vision Check`
+  - imported toggle page `2022 爸妈视力检查`
   - Search & AI tabs including Advanced Search results
   - LLM Chat surface
   - unified Settings center

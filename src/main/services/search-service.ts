@@ -1533,8 +1533,8 @@ function metadataFieldScore(entity: EntityIndexEntry, pattern: string): number {
 
 function rowIconFromCells(cells: string[], db: DbIndex): string | undefined {
   const index = db.fieldIds.indexOf("row_icon");
-  const rowIcon = index < 0 ? "" : String(cells[index] ?? "").trim();
-  return rowIcon || db.icon;
+  if (index < 0) return undefined;
+  return String(cells[index] ?? "").trim() || undefined;
 }
 
 function csvFieldValue(cells: string[], db: DbIndex, fieldId: string): string {
@@ -1657,59 +1657,3 @@ function entityToSearchHit(
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
-// Deliberate test contract for the pure parsing and ranking layer. Keeping this
-// separate from SearchService lets boundary tests exercise malformed imported
-// data without spawning ripgrep or mutating a workspace.
-export const searchServiceTestInternals = {
-  withSearchMeta,
-  stripSearchMeta,
-  previewCsvCells,
-  csvSearchMeta,
-  rowHasSearchableMatch,
-  cellMatchesSearch,
-  isSearchableCsvField,
-  snippetAround,
-  snippetAroundLoose,
-  byteRangesForPattern,
-  byteLength,
-  matchToHit,
-  isSearchSourcePath,
-  mergeRawHits,
-  mergeSearchHits,
-  rawHitKey,
-  rankAndDedupeHits,
-  timestampValue,
-  searchKindRank,
-  normalizeSearchSort,
-  searchVariantKey,
-  orderMatchTypes,
-  hitSearchMatchTypes,
-  withMergedMatchTypes,
-  matchTypeScore,
-  logicalHitKey,
-  searchScore,
-  primaryHitTitle,
-  matchesQuery,
-  looseSearchSeeds,
-  sameSearchNeedle,
-  looseTokens,
-  normalizeLoose,
-  isMetadataOnlyPreview,
-  trimContext,
-  parseCsvRow,
-  isEntityKind,
-  entityRowKey,
-  normalizeWorkspacePath,
-  entitySearchText,
-  metadataPreview,
-  metadataFieldScore,
-  rowIconFromCells,
-  csvFieldValue,
-  fileNameFromWorkspacePath,
-  internalMarkdownLinks,
-  extractEntityRefIds,
-  linkSourceScore,
-  entityToSearchHit,
-  escapeRegExp
-};

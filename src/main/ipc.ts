@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
 import { createMainWindow } from "./window.js";
 import { isAbsolute, resolve as resolvePath } from "node:path";
-import type { AddFieldInput, BatchRowsInput, CopyFieldToSystemTimeInput, CreateDatabaseInput, CreatePageInput, CreateViewInput, CreateWorkspaceInput, DeleteDatabaseTemplateInput, DeleteRowInput, DeleteViewInput, DuplicateRowInput, DuplicateViewInput, GitSyncSettingsInput, NotionAuditInput, PagesTree, PatchViewInput, PermanentlyDeleteFieldInput, PermanentlyDeleteRowInput, RecordValue, ReorderFieldsInput, ReorderViewsInput, RestoreFieldInput, RestoreRowInput, SaveDatabaseTemplateInput, SetDefaultViewInput, SetRowPageFullWidthInput, SetRowPageSmallTextInput, UpdateCellInput, UpdateDatabaseMetaInput, UpdateFieldInput, UpdatePageInput, UpdateRowPageInput, UpdateViewInput } from "../shared/types.js";
+import type { AddFieldInput, BatchRowsInput, CreateDatabaseInput, CreatePageInput, CreateViewInput, CreateWorkspaceInput, DeleteDatabaseTemplateInput, DeleteRowInput, DeleteViewInput, DuplicateRowInput, DuplicateViewInput, GitSyncSettingsInput, NotionAuditInput, PagesTree, PatchViewInput, PermanentlyDeleteFieldInput, PermanentlyDeleteRowInput, RecordValue, ReorderFieldsInput, ReorderViewsInput, RestoreFieldInput, RestoreRowInput, SaveDatabaseTemplateInput, SetDefaultViewInput, SetRowPageFullWidthInput, SetRowPageSmallTextInput, UpdateCellInput, UpdateDatabaseMetaInput, UpdateFieldInput, UpdatePageInput, UpdateRowPageInput, UpdateViewInput } from "../shared/types.js";
 import { AppConfigService } from "./services/app-config-service.js";
 import type { DatabaseService } from "./services/database-service.js";
 import type { NotionImportOptions } from "./services/notion-import-service.js";
@@ -161,7 +161,6 @@ export function registerIpc(workspace: WorkspaceService, appConfig: AppConfigSer
 
   handle("pages:list", () => pages.list());
   handle("pages:create", (_event, input: CreatePageInput) => pages.create(input));
-  handle("pages:duplicate", (_event, id: string) => pages.duplicate(id));
   handle("pages:get", (_event, id: string) => pages.get(id));
   handle("pages:update", (_event, payload: { id: string; input: UpdatePageInput }) => pages.update(payload.id, payload.input));
   handle("pages:rename", (_event, payload: { id: string; title: string }) => pages.rename(payload.id, payload.title));
@@ -176,9 +175,6 @@ export function registerIpc(workspace: WorkspaceService, appConfig: AppConfigSer
   handle("databases:addField", (_event, payload: { id: string; input: AddFieldInput }) => databases.addField(payload.id, payload.input));
   handle("databases:updateMeta", (_event, input: UpdateDatabaseMetaInput) => databases.updateMeta(input));
   handle("databases:updateField", (_event, input: UpdateFieldInput) => databases.updateField(input));
-  handle("databases:copyFieldToSystemTime", (_event, input: CopyFieldToSystemTimeInput) =>
-    databases.copyFieldToSystemTime(input)
-  );
   handle("databases:reorderFields", (_event, input: ReorderFieldsInput) => databases.reorderFields(input));
   handle("databases:deleteField", (_event, payload: { databaseId: string; fieldId: string }) =>
     databases.deleteField(payload.databaseId, payload.fieldId)

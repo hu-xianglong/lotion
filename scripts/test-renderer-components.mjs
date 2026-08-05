@@ -1776,10 +1776,9 @@ function testSidebarPageContextMenu(html) {
   assert.match(html, /class="sidebar-context-menu"/, "sidebar page context menu should render");
   assert.match(html, /role="menu"/, "sidebar page context menu should expose menu semantics");
   assert.match(html, /aria-label="Project Plan"/, "sidebar page context menu should name the target page");
-  assert.equal(count(html, 'role="menuitem"'), 4, "sidebar page context menu should render open, child-create, duplicate, and delete actions");
+  assert.equal(count(html, 'role="menuitem"'), 3, "sidebar page context menu should render open, child-create, and delete actions");
   assert.match(html, />Open</, "sidebar page context menu should render the open action");
   assert.match(html, />New child page</, "sidebar page context menu should render the child-page creation action");
-  assert.match(html, />Duplicate</, "sidebar page context menu should render the duplicate-page action");
   assert.match(html, />Delete</, "sidebar page context menu should render the delete action");
 }
 
@@ -2388,8 +2387,12 @@ function testNotionImportPanelPick(html) {
 }
 
 function testNotionImportDialogPick(html) {
-  assert.match(html, /class="dialog-backdrop"/, "import dialog should render a modal backdrop");
-  assert.match(html, /class="dialog notion-dialog"/, "import dialog should render the Notion import modal shell");
+  assert.match(html, /class="dialog-backdrop plugin-modal-backdrop"/, "import dialog should render the shared modal backdrop");
+  assert.match(html, /class="plugin-modal notion-dialog"[^>]*role="dialog"[^>]*aria-modal="true"/, "import dialog should render an accessible opaque modal shell");
+  assert.match(html, /id="notion-import-dialog-title">Import from Notion<\/h2>/, "import dialog should render its own visible title");
+  assert.match(html, /class="plugin-modal-close"[^>]*aria-label="Close import dialog"/, "import dialog should render a close action");
+  assert.match(html, /class="plugin-modal-body"/, "import dialog should render an owned scrolling body");
+  assert.doesNotMatch(html, /class="dialog notion-dialog"/, "import dialog should not depend on the removed generic dialog surface");
   assert.match(html, /class="notion-import-panel"/, "import dialog should render the import panel");
   assert.doesNotMatch(html, /class="notion-import-panel embedded"/, "modal import panel should not use embedded plugin-page styling");
   assert.doesNotMatch(html, /<h2>Import from Notion<\/h2>/, "modal import panel should not duplicate the modal shell heading");

@@ -38,7 +38,7 @@ blockquote source.
 
 The first implementation only attached the affordance to the first line of a
 blockquote and hid it while the cursor was inside the block. Real imported pages
-such as `8. Example imported chapter` contain multi-line blockquotes, so
+such as `8. Push all your own buttons` contain multi-line blockquotes, so
 hovering the highlighted middle line did not reveal anything.
 
 - Attach the same source-edit affordance to every visual line in a blockquote.

@@ -215,7 +215,7 @@ export class EntitiesDatabaseService {
     const startedAt = performance.now();
     await this.flushBacklinkSourceRefresh();
     const { graph, source } = await this.readBacklinkGraph();
-    if (this.backlinkUpdateListeners.size > 0) this.ensureBacklinkWatchers(graph);
+    this.ensureBacklinkWatchers(graph);
     const results = graph.knownIds.has(id)
       ? [...(graph.byTargetId.get(id) ?? [])]
       : [];
@@ -231,11 +231,7 @@ export class EntitiesDatabaseService {
 
   subscribeBacklinkUpdates(listener: () => void): () => void {
     this.backlinkUpdateListeners.add(listener);
-    if (this.backlinkCache) this.ensureBacklinkWatchers(this.backlinkCache);
-    return () => {
-      this.backlinkUpdateListeners.delete(listener);
-      if (this.backlinkUpdateListeners.size === 0) this.resetBacklinkWatchers();
-    };
+    return () => this.backlinkUpdateListeners.delete(listener);
   }
 
   dispose(): void {
@@ -289,25 +285,22 @@ export class EntitiesDatabaseService {
   private installBacklinkWatchers(root: string): void {
     const graph = this.backlinkCache;
     if (!graph || graph.root !== root) return;
-    let polling = false;
-    const poll = async (): Promise<void> => {
-      if (polling || this.backlinkCache !== graph || this.backlinkWatcherRoot !== root) return;
-      polling = true;
+    const paths = this.workspace.requirePaths();
+    for (const directory of [paths.userDatabasesDir(), paths.systemDatabasesDir()]) {
+      if (!fileService.exists(directory)) continue;
       try {
-        for (const contribution of graph.sourceContributions.values()) {
-          if (!contribution.signature) continue;
-          const candidate = resolve(root, contribution.path);
-          if (await fileSignature(candidate) === contribution.signature) continue;
-          fileService.noteExternalMutation(candidate);
-        }
+        const watcher = fileService.watch(directory, (_eventType, fileName) => {
+          const candidate = fileName ? resolve(directory, String(fileName)) : "";
+          if (!candidate || !isBacklinkSourcePath(root, candidate)) return;
+          void this.noteChangedBacklinkCandidate(graph, root, candidate)
+            .catch((error) => console.warn(`[lotion backlinks] watcher refresh failed for ${candidate}`, error));
+        }, { recursive: true });
+        watcher.unref();
+        this.backlinkWatchers.push(watcher);
       } catch (error) {
-        console.warn("[lotion backlinks] external source poll failed", error);
-      } finally {
-        polling = false;
+        console.warn(`[lotion backlinks] watcher unavailable for ${directory}`, error);
       }
-    };
-    this.backlinkWatcherTimer = setInterval(() => void poll(), 100);
-    this.backlinkWatcherTimer.unref();
+    }
   }
 
   private async noteChangedBacklinkCandidate(graph: BacklinkGraphCache, root: string, candidate: string): Promise<void> {
@@ -1143,37 +1136,3 @@ function openLog(label: string, detail: Record<string, unknown>) {
 function elapsedMs(start: number): number {
   return Number((performance.now() - start).toFixed(1));
 }
-
-// Entity and backlink parsing helpers are exposed only as an internal test
-// contract. EntitiesDatabaseService remains the production API.
-export const entitiesDatabaseTestInternals = {
-  parseEntityKind,
-  parsePath,
-  stringValue,
-  entityFromRecord,
-  entityFromPageRecord,
-  fallbackRowEntity,
-  targetWorkspaceLinkCandidates,
-  markdownLinkTargets,
-  normalizeMarkdownTarget,
-  normalizeWorkspacePath,
-  safeDecode,
-  cellReferencedEntityIds,
-  previewCell,
-  previewPropertyCell,
-  previewEntityRefCell,
-  entityRefPreviewLabel,
-  compareBacklinks,
-  backlinkTargetsByPath,
-  materializeBacklinkContributions,
-  markdownContributionKey,
-  tableContributionKey,
-  workspaceRelativePath,
-  isBacklinkSourcePath,
-  isEntityIndexTablePath,
-  appendBacklink,
-  backlinkSourceRevision,
-  fileSignature,
-  stableHash,
-  elapsedMs
-};

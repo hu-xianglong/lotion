@@ -8,8 +8,6 @@ import { DatabaseViewError } from "../../shared/database-view-errors.js";
 import type { RowPagesService } from "./row-pages-service.js";
 import type {
   AddFieldInput,
-  CopyFieldToSystemTimeInput,
-  CopyFieldToSystemTimeResult,
   ColumnSummaryType,
   CreateDatabaseInput,
   CreateViewInput,
@@ -45,7 +43,7 @@ import type {
 import { filterExpressionUsesField, flattenSimpleAndFilters, legacyFiltersToExpression, normalizeFilterExpression } from "../../shared/filter-expression.js";
 import { normalizeViewGroups } from "../../shared/database-grouping.js";
 import { normalizePageOpenMode } from "../../shared/database-page-open.js";
-import { parseDateTimeValue, parseDateValue } from "../../shared/date-values.js";
+import { parseDateValue } from "../../shared/date-values.js";
 import { assertDatabaseUnlocked, DatabaseLockedError } from "../../shared/database-lock.js";
 import { DatabaseMutationError, databasePersistenceError } from "../../shared/database-mutation-errors.js";
 import { readCsvFile, writeCsvFile } from "../storage/csv-file.js";
@@ -441,68 +439,6 @@ export class DatabaseService {
     };
     const final = await this.writeBundle(schema, bundle.records, bundle.views);
     return { ...bundle, schema, records: final };
-  }
-
-  async copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult> {
-    const bundle = await this.get(input.databaseId);
-    assertDatabaseUnlocked(bundle.schema);
-    const sourceField = bundle.schema.fields.find((field) => field.id === input.sourceFieldId);
-    if (!sourceField) throw new Error(`Source field not found: ${input.sourceFieldId}`);
-    if (!hasDateDisplay(sourceField.type)) {
-      throw new Error(`Source field is not date-like: ${input.sourceFieldId}`);
-    }
-    if (input.sourceFieldId === input.targetFieldId) {
-      throw new Error("Source and target time fields must be different");
-    }
-    const targetField = bundle.schema.fields.find((field) => field.id === input.targetFieldId);
-    if (!targetField || targetField.type !== input.targetFieldId || !targetField.system) {
-      throw new Error(`System time field not found: ${input.targetFieldId}`);
-    }
-
-    let copiedRows = 0;
-    let unchangedRows = 0;
-    let skippedEmptyRows = 0;
-    let skippedInvalidRows = 0;
-    const changedRecords: DatabaseRecord[] = [];
-    const records = bundle.records.map((record) => {
-      const rawValue = String(record[input.sourceFieldId] ?? "").trim();
-      if (!rawValue) {
-        skippedEmptyRows += 1;
-        return record;
-      }
-      const parsed = parseDateTimeValue(rawValue);
-      if (!parsed) {
-        skippedInvalidRows += 1;
-        return record;
-      }
-      const timestamp = parsed.toISOString();
-      if (String(record[input.targetFieldId] ?? "") === timestamp) {
-        unchangedRows += 1;
-        return record;
-      }
-      copiedRows += 1;
-      const next = { ...record, [input.targetFieldId]: timestamp };
-      changedRecords.push(next);
-      return next;
-    });
-
-    const final = copiedRows > 0
-      ? await this.writeBundle(bundle.schema, records, bundle.views)
-      : bundle.records;
-    if (changedRecords.length > 0) {
-      const finalById = new Map(final.map((record) => [String(record.id ?? ""), record]));
-      await this.syncPageRecordsForRows(
-        input.databaseId,
-        changedRecords.map((record) => finalById.get(String(record.id ?? "")) ?? record)
-      );
-    }
-    return {
-      bundle: { ...bundle, records: final },
-      copiedRows,
-      unchangedRows,
-      skippedEmptyRows,
-      skippedInvalidRows
-    };
   }
 
   async deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle> {
@@ -2246,57 +2182,3 @@ function viewRevision(view: TableView): number {
 function normalizeViewRevision(view: TableView): TableView {
   return { ...view, revision: viewRevision(view) };
 }
-
-// Database normalization helpers are exposed only for focused runtime
-// regression tests. DatabaseService remains the supported production API.
-export const databaseServiceTestInternals = {
-  migrateLegacyUrlFields,
-  looksLikeUrlField,
-  looksLikeUrlValue,
-  createDatabaseStatsSchema,
-  normalizeDatabaseStatsSchema,
-  createDatabaseStatsFields,
-  createDatabaseStatsDefaultView,
-  databaseStatsToRecord,
-  recordToDatabaseStats,
-  numberCell,
-  templateHeaders,
-  withTemplateDefaults,
-  parseTemplateValues,
-  parseBooleanCell,
-  withoutSchemaTemplates,
-  normalizeDatabasePath,
-  normalizePathSegments,
-  createDefaultTableView,
-  createBlankTableView,
-  ensureCreatedTimeSortViews,
-  createCreatedTimeSortView,
-  createdTimeVisibleFieldIds,
-  sanitizeViewForSchema,
-  sanitizeViewSorts,
-  sameStringList,
-  sortViews,
-  uniqueViewName,
-  assertUniqueViewName,
-  insertAtIfPresent,
-  insertStringAt,
-  insertFieldAt,
-  uniqueFieldName,
-  fieldDependencies,
-  fallbackVisibleFieldIds,
-  defaultVisibleFieldIds,
-  orderViewFieldIdsByContentRichness,
-  orderDefaultViewFieldIds,
-  needsOptions,
-  normalizeRelationConfig,
-  normalizeRollupConfig,
-  hasDateDisplay,
-  isReadOnlyComputedField,
-  normalizeDatabaseTemplate,
-  normalizeOptions,
-  normalizeTags,
-  sanitizeRecordsForField,
-  validateBatchValue,
-  viewRevision,
-  normalizeViewRevision
-};

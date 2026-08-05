@@ -8,7 +8,7 @@ Resolution: reverted and superseded
 
 ## Context
 
-On imported pages such as `8. Example imported chapter`, a blockquote line can
+On imported pages such as `8. Push all your own buttons`, a blockquote line can
 contain safe imported inline formatting:
 
 ```md

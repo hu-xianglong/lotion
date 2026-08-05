@@ -804,23 +804,3 @@ async function fileSignature(path: string): Promise<string> {
 function isNotFoundError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
-
-// Page index normalization helpers are exposed only as an internal test
-// contract. PagesDatabaseService remains the production API.
-export const pagesDatabaseTestInternals = {
-  recordToStartupSnapshot,
-  normalizePagesSchema,
-  withSchemaDefaults,
-  recordNeedsDefaultPageFileRecovery,
-  defaultPageBodyPath,
-  firstMarkdownHeading,
-  isDefaultPageRecord,
-  recordsDifferForSchema,
-  recordsEquivalentForSchema,
-  parseTags,
-  parsePath,
-  parseParentRef,
-  parseBoolean,
-  stringValue,
-  optionalStringValue
-};

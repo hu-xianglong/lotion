@@ -1670,17 +1670,6 @@ export const DatabaseTable = memo(function DatabaseTable({
             onDuplicate={() => duplicateColumn(field)}
             onInsert={(side) => insertColumn(field, side)}
             onFreeze={() => updateView({ ...activeView, frozenThroughFieldId: activeView.frozenThroughFieldId === field.id ? undefined : field.id })}
-            onCopyToSystemTime={async (targetFieldId) => {
-              const targetLabel = targetFieldId === "created_time" ? "Created time" : "Last updated time";
-              if (!window.confirm(`Copy valid dates from “${field.name}” to ${targetLabel}? Existing system timestamps will be overwritten.`)) {
-                throw new Error("Copy cancelled");
-              }
-              return cache.copyFieldToSystemTime({
-                databaseId: bundle.schema.id,
-                sourceFieldId: field.id,
-                targetFieldId
-              });
-            }}
             onDelete={async () => {
               if (window.confirm(`Delete property “${field.name}”? You can restore it from Manage properties.`)) await cache.deleteField(bundle.schema.id, field.id);
             }}

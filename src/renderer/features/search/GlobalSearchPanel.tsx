@@ -785,7 +785,7 @@ function buildBuiltinCommandIndex(actions: LotionActions, locale: Locale): Comma
       id: "lotion.new-page",
       title: titles["lotion.new-page"],
       category: "Lotion",
-      run: async () => { await actions.createPage(); }
+      run: () => actions.createPage()
     },
     {
       id: "lotion.new-database",

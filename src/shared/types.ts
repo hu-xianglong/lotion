@@ -51,10 +51,9 @@ export interface WorkspaceMeta {
   updated_time: string;
 }
 
-/** A bookmark to a page, database, or row-page. Order is preserved. */
+/** A bookmark to a page or row-page. Order in the list is preserved. */
 export type FavoriteItem =
   | { type: "page"; id: ID }
-  | { type: "database"; id: ID }
   | { type: "row_page"; databaseId: ID; rowId: ID };
 
 /** Most-recently-visited entry. Mirrors FavoriteItem + databases. */
@@ -593,22 +592,6 @@ export interface UpdateFieldInput {
   rollup?: RollupFieldConfig;
   dateFormat?: DateDisplayFormat;
   timeFormat?: TimeDisplayFormat;
-}
-
-export type SystemTimeFieldId = "created_time" | "updated_time";
-
-export interface CopyFieldToSystemTimeInput {
-  databaseId: ID;
-  sourceFieldId: ID;
-  targetFieldId: SystemTimeFieldId;
-}
-
-export interface CopyFieldToSystemTimeResult {
-  bundle: DatabaseBundle;
-  copiedRows: number;
-  unchangedRows: number;
-  skippedEmptyRows: number;
-  skippedInvalidRows: number;
 }
 
 export interface UpdateCellInput {

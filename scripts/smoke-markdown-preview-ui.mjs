@@ -553,7 +553,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
         const body = toggle.querySelector(".cm-md-toggle-body");
         const summaryText = summary?.textContent ?? "";
         const bodyText = body?.textContent ?? "";
-        return summaryText.trim() === "收据" && bodyText.includes("Example vision appointment");
+        return summaryText.trim() === "收据" && bodyText.includes("在美团上买了视力检查");
       });
       if (found) return true;
       scroller.scrollTop = Math.min(
@@ -573,7 +573,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
       const body = candidate.querySelector(".cm-md-toggle-body");
       const summaryText = summary?.textContent ?? "";
       const bodyText = body?.textContent ?? "";
-      return summaryText.trim() === "收据" && bodyText.includes("Example vision appointment");
+      return summaryText.trim() === "收据" && bodyText.includes("在美团上买了视力检查");
     });
     const summary = toggle?.querySelector(".cm-md-toggle-summary-text") ?? null;
     const body = toggle?.querySelector(".cm-md-toggle-body") ?? null;
@@ -604,7 +604,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
   if (snapshot.summaryText !== "收据" || snapshot.summaryEditable !== "SPAN" || snapshot.summaryContentEditable !== "plaintext-only") {
     throw new Error(`Imported Notion toggle summary did not render as an editable toggle: ${JSON.stringify(snapshot)}`);
   }
-  if (snapshot.bodyEditable !== "DIV" || !snapshot.bodyText.includes("Example vision appointment")) {
+  if (snapshot.bodyEditable !== "DIV" || !snapshot.bodyText.includes("在美团上买了视力检查")) {
     throw new Error(`Imported Notion toggle body text was not preserved: ${JSON.stringify(snapshot)}`);
   }
   if (snapshot.bodyRawMarkdownVisible || snapshot.bodyImageCount < 1) {
@@ -615,7 +615,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
   }
 
   await assertNoDocumentHorizontalOverflow(page, `imported Notion toggle ${viewport.name}`);
-  await page.locator(".cm-md-toggle-widget").filter({ hasText: "Appointment receipt" }).first().evaluate((element) => {
+  await page.locator(".cm-md-toggle-widget").filter({ hasText: "收据" }).first().evaluate((element) => {
     element.scrollIntoView({ block: "center", inline: "nearest" });
   });
   await nextAnimationFrame(page);
@@ -624,7 +624,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
     fixture,
     metadata: {
       phase: "imported-toggle",
-      importedToggleBodyTextPreserved: snapshot.bodyText.includes("Booked a vision check appointment"),
+      importedToggleBodyTextPreserved: snapshot.bodyText.includes("在美团上买了视力检查"),
       importedToggleImageCount: snapshot.bodyImageCount,
       importedToggleOpen: snapshot.open,
       importedToggleSummary: snapshot.summaryText
@@ -636,7 +636,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
   await page.waitForFunction(() => {
     const toggle = Array.from(document.querySelectorAll(".cm-md-toggle-widget")).find((candidate) => {
       const summary = candidate.querySelector(".cm-md-toggle-summary-text");
-      return summary?.textContent?.trim() === "Appointment receipt";
+      return summary?.textContent?.trim() === "收据";
     });
     const button = toggle?.querySelector(".cm-md-toggle-disclosure");
     if (!(button instanceof HTMLElement)) return false;
@@ -2409,7 +2409,7 @@ async function createMarkdownPreviewFixture(viewportName) {
     "---",
     `![receipt.jpg](${imageDataUrl})`,
     "",
-    "Example vision appointment",
+    "在美团上买了视力检查",
     "```",
     "```lotion-equation",
     "E = mc^2",

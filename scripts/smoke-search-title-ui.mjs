@@ -1398,14 +1398,14 @@ async function assertFavoriteCurrentPageCommand(page, createdPage, viewport) {
   await openGlobalSearch(page);
   await page.locator(".global-search-input").fill("favorite");
   const favoriteHit = page.locator(".global-search-hit")
-    .filter({ hasText: "收藏/取消收藏当前内容" })
+    .filter({ hasText: "收藏/取消收藏当前页面" })
     .filter({ hasText: "命令" })
     .first();
   await favoriteHit.waitFor({ timeout: 8_000 });
   await assertSearchLayout(page, `builtin favorite current page ${viewport.name}`, { expectResults: true, expectFilters: true });
   const rendered = await collectSearchRows(page);
   const favoriteRow = assertCommandRow(rendered, {
-    title: "收藏/取消收藏当前内容",
+    title: "收藏/取消收藏当前页面",
     previewIncludes: ["Lotion", "内置", "lotion.toggle-favorite"]
   });
   await favoriteHit.click();

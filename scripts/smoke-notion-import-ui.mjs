@@ -34,11 +34,19 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
   const viewportResults = [];
   const diagnosticResults = [];
   const modalResults = [];
+  const workspaceModalResults = [];
   const expectedViewports = selectedViewports();
   await forEachViewport(page, expectedViewports, async (viewport) => {
     const fixture = await createAuditFixture(`${viewport.name}-passing`);
     registerTempWorkspace(fixture.root);
     modalResults.push(await runImportModalOverlayCheck({
+      artifactRoot,
+      fixture,
+      openWorkspace,
+      page,
+      viewport
+    }));
+    workspaceModalResults.push(await runWorkspaceImportModalOverlayCheck({
       artifactRoot,
       fixture,
       openWorkspace,
@@ -71,6 +79,7 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
     cdpUrl,
     diagnostics: diagnosticResults,
     importModal: modalResults,
+    workspaceImportModal: workspaceModalResults,
     viewports: viewportResults,
     status: "passed"
   };
@@ -174,6 +183,116 @@ async function runImportModalOverlayCheck({ artifactRoot, fixture, openWorkspace
   };
 }
 
+async function runWorkspaceImportModalOverlayCheck({ artifactRoot, fixture, openWorkspace, page, viewport }) {
+  await openWorkspace(fixture.workspaceRoot);
+  await page.getByText("Audit UI Home").first().waitFor({ timeout: 8_000 });
+  await openWorkspaceImportModal(page);
+
+  const modal = page.locator(".notion-dialog").first();
+  await modal.waitFor({ timeout: 8_000 });
+  await modal.locator(".notion-import-panel").waitFor({ timeout: 8_000 });
+  await assertWithinViewport(page, modal, `workspace Notion import modal ${viewport.name}`, 8);
+  await assertNoDocumentHorizontalOverflow(page, `workspace Notion import modal ${viewport.name}`, 2);
+
+  const overlay = await page.evaluate(() => {
+    const dialog = document.querySelector(".notion-dialog");
+    const backdrop = dialog?.closest(".dialog-backdrop");
+    const pageTitle = Array.from(document.querySelectorAll("h1, h2"))
+      .find((candidate) => (candidate.textContent ?? "").includes("Audit UI Home"));
+    const center = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    const dialogRect = dialog?.getBoundingClientRect();
+    const backdropRect = backdrop?.getBoundingClientRect();
+    const style = dialog ? getComputedStyle(dialog) : null;
+    const color = style?.backgroundColor ?? "transparent";
+    const components = color.match(/[\d.]+/g)?.map(Number) ?? [];
+    const backgroundAlpha = color.startsWith("rgba") ? (components[3] ?? 0) : color === "transparent" ? 0 : 1;
+    return {
+      ariaModal: dialog?.getAttribute("aria-modal") ?? "",
+      backdropCoversViewport: Boolean(backdropRect)
+        && backdropRect.left <= 1
+        && backdropRect.top <= 1
+        && backdropRect.right >= window.innerWidth - 1
+        && backdropRect.bottom >= window.innerHeight - 1,
+      backgroundAlpha,
+      backgroundColor: color,
+      centerInsideModal: Boolean(center?.closest(".notion-dialog")),
+      modalContainsPageTitle: Boolean(dialog && pageTitle && dialog.contains(pageTitle)),
+      modalHeight: Math.round(dialogRect?.height ?? 0),
+      modalRole: dialog?.getAttribute("role") ?? "",
+      modalWidth: Math.round(dialogRect?.width ?? 0),
+      title: dialog?.querySelector(".dialog-header h2")?.textContent?.trim() ?? ""
+    };
+  });
+  if (
+    overlay.title !== "Import from Notion"
+    || overlay.modalRole !== "dialog"
+    || overlay.ariaModal !== "true"
+    || !overlay.backdropCoversViewport
+    || !overlay.centerInsideModal
+    || overlay.modalContainsPageTitle
+    || overlay.backgroundAlpha < 0.99
+  ) {
+    throw new Error(`Workspace Notion import modal is transparent or incomplete: ${JSON.stringify(overlay)}`);
+  }
+
+  const controlState = await readImportModalControlState(page);
+  assertImportModalControlState(controlState, viewport.name, { requireCloseIcon: true });
+  await modal.evaluate((node) => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && node.contains(active)) active.blur();
+  });
+  await page.mouse.move(4, 4);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const snapshot = await captureElementSnapshot({
+    artifactRoot,
+    locator: modal,
+    metadata: {
+      overlay,
+      controlState,
+      phase: "workspace-selector-modal",
+      workspaceRoot: fixture.workspaceRoot
+    },
+    name: `notion-import-workspace-modal-${viewport.name}`,
+    page,
+    viewport
+  });
+
+  await modal.locator(".dialog-header").click();
+  await modal.waitFor({ state: "visible", timeout: 2_000 });
+  await modal.getByRole("button", { name: "Close import dialog" }).click();
+  await modal.waitFor({ state: "detached", timeout: 8_000 });
+
+  await openWorkspaceImportModal(page);
+  await modal.waitFor({ timeout: 8_000 });
+  await page.keyboard.press("Escape");
+  await modal.waitFor({ state: "detached", timeout: 8_000 });
+
+  await openWorkspaceImportModal(page);
+  await modal.waitFor({ timeout: 8_000 });
+  await page.locator(".dialog-backdrop").click({ position: { x: 4, y: 4 } });
+  await modal.waitFor({ state: "detached", timeout: 8_000 });
+  return {
+    viewport: viewport.name,
+    overlay,
+    controlState,
+    dismissalChecks: {
+      backdrop: "passed",
+      closeButton: "passed",
+      escape: "passed",
+      insideClick: "passed"
+    },
+    snapshot: snapshotSummary(snapshot),
+    workspaceRoot: fixture.workspaceRoot
+  };
+}
+
+async function openWorkspaceImportModal(page) {
+  await page.locator(".workspace-selector").first().click();
+  const menu = page.locator(".workspace-selector-menu").first();
+  await menu.waitFor({ timeout: 8_000 });
+  await menu.getByRole("button", { name: /Import from Notion/ }).click();
+}
+
 async function readImportModalControlState(page) {
   return page.evaluate(() => {
     const modal = document.querySelector(".plugin-modal");
@@ -186,6 +305,7 @@ async function readImportModalControlState(page) {
     const actions = panel?.querySelector(".notion-dialog-actions");
     const actionButtons = Array.from(actions?.querySelectorAll("button") ?? []);
     const close = modal?.querySelector(".plugin-modal-close");
+    const closeIcon = close?.querySelector("svg");
     const title = modal?.querySelector(".dialog-header h2");
     const rect = (node) => {
       const value = node?.getBoundingClientRect();
@@ -216,6 +336,7 @@ async function readImportModalControlState(page) {
       panelRect: rect(panel),
       titleRect: rect(title),
       closeRect: rect(close),
+      closeIconRect: rect(closeIcon),
       optionsRect: rect(options),
       optionRects: optionLabels.map(rect),
       sourceCardRects: sourceCards.map(rect),
@@ -259,7 +380,7 @@ async function readImportModalControlState(page) {
   });
 }
 
-function assertImportModalControlState(state, viewportName) {
+function assertImportModalControlState(state, viewportName, { requireCloseIcon = false } = {}) {
   const rectKeys = [
     "modalRect",
     "bodyRect",
@@ -271,11 +392,15 @@ function assertImportModalControlState(state, viewportName) {
     "cancelRect",
     "scanRect"
   ];
+  if (requireCloseIcon) rectKeys.push("closeIconRect");
   for (const key of rectKeys) {
     const rect = state?.[key];
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       throw new Error(`Notion import modal missing ${key} geometry for ${viewportName}: ${JSON.stringify(rect)}`);
     }
+  }
+  if (requireCloseIcon && (state.closeIconRect.width < 16 || state.closeIconRect.height < 16)) {
+    throw new Error(`Notion import modal close icon is undersized for ${viewportName}: ${JSON.stringify(state.closeIconRect)}`);
   }
   for (const [key, expectedCount] of [["optionRects", 3], ["sourceCardRects", 2], ["sourceButtonRects", 2]]) {
     const rects = state?.[key];

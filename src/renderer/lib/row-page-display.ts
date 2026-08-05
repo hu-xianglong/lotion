@@ -1,5 +1,4 @@
 import type { DatabaseBundle } from "../../shared/types";
-import { resolveRowIcon } from "../../shared/row-icons";
 
 export interface RowPageDisplay {
   title: string;
@@ -15,6 +14,6 @@ export function rowPageDisplay(
 ): RowPageDisplay {
   const record = bundle?.records.find((item) => item.id === rowId);
   const title = String(record?.title ?? storedTitle ?? "").trim() || fallbackTitle;
-  const icon = resolveRowIcon(record, bundle?.schema.icon, storedIcon);
+  const icon = String(record?.row_icon ?? storedIcon ?? "").trim() || undefined;
   return { title, icon };
 }

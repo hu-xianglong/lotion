@@ -1059,7 +1059,7 @@ test("workspace, page, pages database, and entity services persist core workspac
     assert.match(page.meta.id, /^pg_/);
     assert.equal((await pageService.list()).some((item) => item.title === "First Page"), true);
     const loadedPage = await pageService.get(page.meta.id);
-    assert.equal(loadedPage.markdown, "");
+    assert.equal(loadedPage.markdown.includes("Start writing here."), true);
 
     const updatedPage = await pageService.update(page.meta.id, {
       markdown: "# First Page\n\nUpdated body",
@@ -1579,22 +1579,22 @@ test("row pages read legacy top-level database bodies without overriding current
     const bundle = await databases.create({ name: "待办事项" });
     const databaseId = bundle.schema.id;
     const rowId = String(bundle.records[0].id);
-    const fileName = "Legacy Imported Row.md";
-    await databases.updateCell({ databaseId, rowId, fieldId: "title", value: "Legacy Imported Row" });
+    const fileName = "2022敦促爸妈视力检查.md";
+    await databases.updateCell({ databaseId, rowId, fieldId: "title", value: "2022敦促爸妈视力检查" });
     await databases.setSystemCell(databaseId, rowId, "page_file", fileName);
 
     const paths = workspace.requirePaths();
     const legacyPath = join(paths.pagesDir(), `db_${databaseId}`, fileName);
     await mkdir(join(paths.pagesDir(), `db_${databaseId}`), { recursive: true });
-    await writeFile(legacyPath, "# Legacy Imported Row\n\nStatus: Complete\n", "utf8");
-    assert.match((await rowPages.open(databaseId, rowId)).markdown, /Status: Complete/);
+    await writeFile(legacyPath, "# 2022敦促爸妈视力检查\n\n状态: 完成\n", "utf8");
+    assert.match((await rowPages.open(databaseId, rowId)).markdown, /状态: 完成/);
 
     const currentPath = paths.rowPage(databaseId, fileName);
     await mkdir(paths.rowPagesDir(databaseId), { recursive: true });
     await writeFile(currentPath, "# Current body\n\nCurrent layout wins.\n", "utf8");
     const current = await rowPages.open(databaseId, rowId);
     assert.match(current.markdown, /Current layout wins/);
-    assert.doesNotMatch(current.markdown, /Status: Complete/);
+    assert.doesNotMatch(current.markdown, /状态: 完成/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1849,7 +1849,7 @@ test("page title rename failures preserve metadata and Markdown before exact ret
     const recovered = await pages.rename(page.meta.id, "Recovered rename");
     const recoveredPath = join(workspaceRoot, pageBodyPath(page.meta.id, "Recovered rename"));
     assert.equal(recovered.meta.title, "Recovered rename");
-    assert.equal(recovered.markdown.trimEnd(), "# Recovered rename");
+    assert.equal(recovered.markdown.trimEnd(), "# Recovered rename\n\nStart writing here.");
     assert.equal(fileService.exists(previousPath), false, "successful rename should remove the stale body path");
     assert.equal(fileService.exists(recoveredPath), true, "successful retry should create the exact requested body path");
     assert.equal((await pages.get(page.meta.id)).meta.title, "Recovered rename");

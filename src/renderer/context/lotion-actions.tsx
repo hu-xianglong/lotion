@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { CreatePageInput, PageDocument, PageOpenMode } from "../../shared/types";
+import type { CreatePageInput, PageOpenMode } from "../../shared/types";
 import type { ManageKind } from "../state/app-store";
 
 /**
@@ -12,15 +12,14 @@ import type { ManageKind } from "../state/app-store";
  * stay as ordinary props on the components that own that state.
  */
 export interface LotionActions {
-  selectPage(id: string, options?: NavigationJumpOptions): Promise<void> | void;
+  selectPage(id: string, options?: NavigationJumpOptions): void;
   selectDatabase(id: string): void;
   /** Open a management landing page (all databases / all pages / recent). */
   openManage(kind: ManageKind): void;
   openRowPage(databaseId: string, rowId: string, options?: NavigationJumpOptions): void;
   openRowPageInNewWindow(databaseId: string, rowId: string): void;
   openRowPageByFile(databaseId: string, fileName: string, options?: NavigationJumpOptions): void;
-  createPage(input?: Partial<CreatePageInput>, options?: { open?: boolean }): Promise<PageDocument>;
-  duplicatePage(id: string): Promise<PageDocument>;
+  createPage(input?: Partial<CreatePageInput>): void;
   createDatabase(): void;
   deletePage(id: string): Promise<void>;
   toggleFavoriteCurrent(): Promise<void> | void;

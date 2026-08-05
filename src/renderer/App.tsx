@@ -963,59 +963,29 @@ function AppContent() {
     setState((current) => ({ ...current, pagesTree }));
   }
 
-  async function createPage(
-    input: Partial<CreatePageInput> = {},
-    options: { open?: boolean } = {}
-  ): Promise<PageDocument> {
+  async function createPage(input: Partial<CreatePageInput> = {}) {
     const title = input.title?.trim() || t("common.untitled");
     const page = await window.lotion.pages.create({
       title,
       ...(input.path ? { path: input.path } : {}),
       ...(input.parentId ? { parentId: input.parentId, parentKind: input.parentKind ?? "page" } : {})
     });
-    pageDocCacheRef.current.set(page.meta.id, page);
     setState((current) => ({
       ...current,
       pages: [
         page.meta,
         ...current.pages.filter((item) => item.id !== page.meta.id)
       ],
-      ...(options.open === false ? {} : {
-        activeItem: { type: "page", id: page.meta.id } as const,
-        activePage: page,
-        activeDatabaseId: undefined,
-        activeRowPage: undefined,
-        ...activateItemInTabs(current, { type: "page", id: page.meta.id })
-      })
-    }));
-    if (options.open !== false) await recordRecent({ type: "page", id: page.meta.id });
-    void refreshLists().catch((error) => {
-      console.warn("[lotion] failed to refresh lists after creating page:", error);
-    });
-    return page;
-  }
-
-  async function duplicatePage(id: string): Promise<PageDocument> {
-    await flushPendingMarkdownSaves();
-    const page = await window.lotion.pages.duplicate(id);
-    pageDocCacheRef.current.set(page.meta.id, page);
-    const item: ActiveItem = { type: "page", id: page.meta.id };
-    recordHistory(item);
-    setState((current) => ({
-      ...current,
-      pages: [
-        page.meta,
-        ...current.pages.filter((candidate) => candidate.id !== page.meta.id)
-      ],
-      activeItem: item,
+      activeItem: { type: "page", id: page.meta.id },
       activePage: page,
       activeDatabaseId: undefined,
       activeRowPage: undefined,
-      ...activateItemInTabs(current, item)
+      ...activateItemInTabs(current, { type: "page", id: page.meta.id })
     }));
     await recordRecent({ type: "page", id: page.meta.id });
-    await refreshLists();
-    return page;
+    void refreshLists().catch((error) => {
+      console.warn("[lotion] failed to refresh lists after creating page:", error);
+    });
   }
 
   function createDatabase() {
@@ -1900,7 +1870,6 @@ function AppContent() {
     openRowPageInNewWindow: (databaseId, rowId) => openItemInNewWindow({ type: "row_page", databaseId, rowId }),
     openRowPageByFile,
     createPage,
-    duplicatePage,
     createDatabase,
     deletePage,
     toggleFavoriteCurrent,

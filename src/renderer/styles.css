@@ -10799,6 +10799,13 @@ td input:focus {
   overflow: auto;
 }
 
+.plugin-modal.notion-dialog {
+  width: min(760px, 100%);
+  max-width: none;
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: hidden;
+}
+
 .plugin-modal-close {
   width: 28px;
   height: 28px;
@@ -10817,6 +10824,12 @@ td input:focus {
 .plugin-modal-close:hover {
   background: var(--vellum);
   color: var(--ink-1);
+}
+
+.plugin-modal-close > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
 }
 
 .view-dialog {

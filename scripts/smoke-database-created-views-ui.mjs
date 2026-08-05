@@ -58,7 +58,6 @@ async function runCreatedViewsSmoke({ artifactRoot, fixture, page, viewport }) {
   await assertIntersectsViewport(page, page.locator(".database-table").first(), `created views table ${viewport.name}`, 4);
   await assertNoDocumentHorizontalOverflow(page, `created views initial ${viewport.name}`);
 
-  const favoriteState = await assertDatabaseFavoriteFlow(page, fixture, viewport);
   const generatedBeforeClick = await assertGeneratedCreatedViews(page, fixture.databaseId);
   const visibleTabState = await assertVisibleViewTabs(page, ["All", "Created date asc", "Created date desc"]);
 
@@ -547,7 +546,6 @@ async function runCreatedViewsSmoke({ artifactRoot, fixture, page, viewport }) {
     descFirstTitle,
     generatedViewCountAfterReload: generatedAfterReload.generatedViewIds.length,
     generatedViewIds: generatedBeforeClick.generatedViewIds,
-    favoriteState,
     keyboardActivatedTab: (keyboardActivatedTab ?? "").trim(),
     noHorizontalOverflow: true,
     phase: "database-created-views",
@@ -580,63 +578,6 @@ async function runCreatedViewsSmoke({ artifactRoot, fixture, page, viewport }) {
     ...evidence,
     snapshot
   };
-}
-
-async function assertDatabaseFavoriteFlow(page, fixture, viewport) {
-  const favoriteToggle = page.locator(".page-action-bar .favorite-toggle").first();
-  await favoriteToggle.waitFor({ timeout: 8_000 });
-  await assertIntersectsViewport(page, favoriteToggle, `database favorite toggle ${viewport.name}`, 4);
-  const initialPressed = await favoriteToggle.getAttribute("aria-pressed");
-  if (initialPressed !== "false") {
-    throw new Error(`Database favorite should start unpressed in ${viewport.name}: ${initialPressed}`);
-  }
-
-  await favoriteToggle.click();
-  const added = await waitForDatabaseFavoriteState(page, fixture, true);
-  await assertNoDocumentHorizontalOverflow(page, `database favorite add ${viewport.name}`);
-
-  await favoriteToggle.click();
-  const removed = await waitForDatabaseFavoriteState(page, fixture, false);
-
-  await favoriteToggle.click();
-  const final = await waitForDatabaseFavoriteState(page, fixture, true);
-  await assertNoDocumentHorizontalOverflow(page, `database favorite final ${viewport.name}`);
-
-  return {
-    added,
-    final,
-    initialPressed,
-    removed
-  };
-}
-
-async function waitForDatabaseFavoriteState(page, fixture, expected) {
-  return pollPageValue(
-    page,
-    async ({ databaseId, databaseName, expectedState }) => {
-      const button = document.querySelector(".page-action-bar .favorite-toggle");
-      const favorites = await window.lotion.favorites.list();
-      const favoriteSection = Array.from(document.querySelectorAll(".nav-section")).find((section) =>
-        /^(Favorites|收藏)$/.test(section.querySelector(".section-heading")?.textContent?.trim() ?? "")
-      );
-      const labels = Array.from(favoriteSection?.querySelectorAll(".nav-item-label") ?? [])
-        .map((node) => node.textContent?.trim() ?? "");
-      const manifestHasDatabase = favorites.some((item) => item.type === "database" && item.id === databaseId);
-      const sidebarHasDatabase = labels.includes(databaseName);
-      const pressed = button?.getAttribute("aria-pressed") === "true";
-      return {
-        buttonClass: button?.getAttribute("class") ?? "",
-        labels,
-        manifestHasDatabase,
-        ok: pressed === expectedState && manifestHasDatabase === expectedState && sidebarHasDatabase === expectedState,
-        pressed,
-        sidebarHasDatabase
-      };
-    },
-    { databaseId: fixture.databaseId, databaseName: fixture.databaseName, expectedState: expected },
-    (value) => Boolean(value?.ok),
-    `database favorite state ${expected ? "on" : "off"}`
-  );
 }
 
 async function navigateToDatabase(page, databaseId) {
@@ -1087,7 +1028,7 @@ async function createDatabaseCreatedViewsFixture(viewportName) {
   ], [
     {
       id: "row_mid",
-      created_time: "December 31, 2025 11:00 PM",
+      created_time: "2025-01-01T00:00:00.000Z",
       updated_time: now,
       title: "Middle created row",
       page_file: "",
@@ -1096,7 +1037,7 @@ async function createDatabaseCreatedViewsFixture(viewportName) {
     },
     {
       id: "row_new",
-      created_time: "January 1, 2026 12:00 AM",
+      created_time: "2026-01-01T00:00:00.000Z",
       updated_time: now,
       title: "Newest created row",
       page_file: "",
@@ -1105,7 +1046,7 @@ async function createDatabaseCreatedViewsFixture(viewportName) {
     },
     {
       id: "row_old",
-      created_time: "September 30, 2024 8:00 AM",
+      created_time: "2024-01-01T00:00:00.000Z",
       updated_time: now,
       title: "Oldest created row",
       page_file: "",

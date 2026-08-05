@@ -35,7 +35,7 @@ text, multi-line URL field). `wc -l` counts physical newlines and
 double- or 50×-overcounts row totals.
 
 Always use a real CSV parser. We tripped on this in
-`scripts/audit-notion-import.mjs` — it reported 示例面试笔记 as src=438 imp=48
+`scripts/audit-notion-import.mjs` — it reported 亚麻面经 as src=438 imp=48
 ("lost 390 rows!") when actually both sides had 48; the source CSV's
 443 physical lines were one row whose body cell wrapped 9 times.
 

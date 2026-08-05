@@ -924,22 +924,3 @@ function chatStyleTag(): HTMLStyleElement {
   `;
   return style;
 }
-
-export const openAILLMChatTestInternals = {
-  promptWithTranscript,
-  toolModeFromSelect,
-  contextModeFromSelect,
-  toolLabel,
-  contextLabel,
-  systemContextForMode,
-  writePolicyForMode,
-  extractWritePreview,
-  groupHistory,
-  providerFromSelect,
-  modelChoices,
-  currentContextText,
-  truncate,
-  escapeHtml,
-  escapeAttr,
-  setDataAttribute
-};

@@ -351,12 +351,12 @@ test("ui harness persists redacted real-workspace immutability evidence", async 
             metadataPath: "desktop-toggle.json",
             imageBytes: 1234,
             provenance: "clone-seeded",
-            title: "Family Vision Check",
+            title: "2022 爸妈视力检查",
             openMs: 321,
             toggleCount: 1,
             loadedImageCount: 1,
             documentHorizontalOverflowPx: 0,
-            toggleSummary: "Appointment receipt",
+            toggleSummary: "收据",
             collapsed: true,
             reexpanded: true,
             overlay: { kind: "command-modal", visible: true, sourcePath: "/must/not/persist" }
@@ -5955,7 +5955,7 @@ function markdownPreviewContractEntry(viewportName, {
         summaryEditable: "SPAN",
         summaryContentEditable: "plaintext-only",
         bodyEditable: "DIV",
-        bodyText: "Example vision appointment",
+        bodyText: "在美团上买了视力检查",
         bodyImageCount: 1,
         bodyRawMarkdownVisible: false,
         editSourcePresent: false
@@ -7918,9 +7918,9 @@ async function writeSearchSnapshotFiles({
     image: imagePath,
     metadata: {
       pageId: `pg_search_contract_${viewportName}`,
-      pageTitle: "[完成] exampleSearchPage",
+      pageTitle: "[完成] createDeepDive",
       phase,
-      query: phase === "typed" ? "exampleSearchPage" : queryForSearchPhase(phase),
+      query: phase === "typed" ? "createDeepDive" : queryForSearchPhase(phase),
       visibleRows: [...searchRowsForPhase(phase), ...extraVisibleRows]
     }
   }, null, 2)}\n`, "utf8");
@@ -7934,7 +7934,7 @@ function globalSearchContractEntry(viewportName, snapshotPaths) {
     height: 600,
     width: 660
   }));
-  const pageTitle = "[完成] exampleSearchPage";
+  const pageTitle = "[完成] createDeepDive";
   const typedRows = searchRowsForPhase("typed");
   const defaultRows = searchRowsForPhase("default-command-palette");
   const recentRows = searchRowsForPhase("recent");
@@ -8021,11 +8021,11 @@ function searchRowsForPhase(phase) {
   ];
   if (phase === "typed") {
     return [{
-      title: "[完成] exampleSearchPage",
+      title: "[完成] createDeepDive",
       badge: "页面",
       icon: "✅",
       type: "page",
-      preview: "标题 · exampleSearchPage",
+      preview: "标题 · createDeepDive",
       path: "Search Bench"
     }];
   }

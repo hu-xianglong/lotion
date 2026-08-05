@@ -27,7 +27,6 @@ const api: LotionApi = {
   pages: {
     list: () => invoke("pages:list"),
     create: (input) => invoke("pages:create", input),
-    duplicate: (id) => invoke("pages:duplicate", id),
     get: (id) => invoke("pages:get", id),
     update: (id, input) => invoke("pages:update", { id, input }),
     rename: (id, title) => invoke("pages:rename", { id, title }),
@@ -43,7 +42,6 @@ const api: LotionApi = {
     updateMeta: (input) => invoke("databases:updateMeta", input),
     addField: (id, input) => invoke("databases:addField", { id, input }),
     updateField: (input) => invoke("databases:updateField", input),
-    copyFieldToSystemTime: (input) => invoke("databases:copyFieldToSystemTime", input),
     reorderFields: (input) => invoke("databases:reorderFields", input),
     deleteField: (databaseId, fieldId) => invoke("databases:deleteField", { databaseId, fieldId }),
     restoreField: (input) => invoke("databases:restoreField", input),

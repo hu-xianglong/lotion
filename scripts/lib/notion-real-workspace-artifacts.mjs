@@ -1,13 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 
 const WORKSPACE_NAME = "Notion Import";
-const NATIVE_VISION_TITLE = "Family Vision Check Log";
-const SEEDED_TOGGLE_TITLE = "Family Vision Check";
+const NATIVE_VISION_TITLE = "2022敦促爸妈视力检查";
+const SEEDED_TOGGLE_TITLE = "2022 爸妈视力检查";
 const SEEDED_PROVENANCE = "clone-seeded-exact-importer-regression";
 
 export async function assertNotionRealWorkspaceArtifactContract(summary, {
   expectedViewportNames = ["desktop", "compact"],
-  expectedNativePageTitle = NATIVE_VISION_TITLE,
   minSourceFiles = 10_000,
   minSourceBytes = 1_000_000_000,
   maxOpenMs = 20_000
@@ -32,7 +31,7 @@ export async function assertNotionRealWorkspaceArtifactContract(summary, {
   }
   if (
     summary.staleSource?.toggleTargetMissing !== true ||
-    summary.staleSource?.nativeVisionTitle !== expectedNativePageTitle ||
+    summary.staleSource?.nativeVisionTitle !== NATIVE_VISION_TITLE ||
     summary.seededRegression?.title !== SEEDED_TOGGLE_TITLE ||
     summary.seededRegression?.provenance !== SEEDED_PROVENANCE ||
     summary.seededRegression?.seededInClone !== true
@@ -51,7 +50,7 @@ export async function assertNotionRealWorkspaceArtifactContract(summary, {
     if (!entry?.activeWorkspaceWasClone || entry.workspaceName !== WORKSPACE_NAME) {
       throw new Error(`Notion real-workspace did not open the isolated clone for ${viewportName}: ${JSON.stringify(entry)}`);
     }
-    assertNativeVision(entry.nativeVision, viewportName, maxOpenMs, expectedNativePageTitle);
+    assertNativeVision(entry.nativeVision, viewportName, maxOpenMs);
     assertSeededToggle(entry.seededToggle, viewportName, maxOpenMs);
     assertImportModal(entry.importModal, viewportName);
     snapshots.push(
@@ -88,9 +87,9 @@ function assertFingerprint(fingerprint, { minSourceBytes, minSourceFiles }) {
   if (!/^[a-f0-9]{64}$/.test(fingerprint.sha256 || "")) throw new Error("Notion real-workspace fingerprint is missing SHA-256 evidence.");
 }
 
-function assertNativeVision(state, viewportName, maxOpenMs, expectedNativePageTitle) {
+function assertNativeVision(state, viewportName, maxOpenMs) {
   if (
-    state?.title !== expectedNativePageTitle ||
+    state?.title !== NATIVE_VISION_TITLE ||
     state?.provenance !== "native-real-workspace" ||
     state?.statusText !== "状态: 完成" ||
     state?.logHeadingVisible !== true
@@ -107,8 +106,8 @@ function assertSeededToggle(state, viewportName, maxOpenMs) {
   if (
     state?.title !== SEEDED_TOGGLE_TITLE ||
     state?.provenance !== SEEDED_PROVENANCE ||
-    state?.summary !== "Appointment receipt" ||
-    !String(state.bodyText || "").includes("Booked a vision check appointment") ||
+    state?.summary !== "收据" ||
+    !String(state.bodyText || "").includes("在美团上买了视力检查") ||
     state?.toggleCount < 1 ||
     state?.loadedImageCount < 1 ||
     state?.summaryEditable !== true ||

@@ -351,7 +351,7 @@ function validateRenderedWidgets(rendered, viewportName) {
     importedToggle?.summaryEditable !== "SPAN" ||
     importedToggle?.summaryContentEditable !== "plaintext-only" ||
     importedToggle?.bodyEditable !== "DIV" ||
-    !String(importedToggle?.bodyText || "").includes("Example vision appointment") ||
+    !String(importedToggle?.bodyText || "").includes("在美团上买了视力检查") ||
     importedToggle?.bodyRawMarkdownVisible ||
     !(Number(importedToggle?.bodyImageCount) >= 1) ||
     importedToggle?.editSourcePresent !== false

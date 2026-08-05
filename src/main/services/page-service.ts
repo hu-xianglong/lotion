@@ -91,7 +91,7 @@ export class PageService {
         path,
         ...(input.parentId ? { parentId: input.parentId, parentKind } : {})
       },
-      markdown: ""
+      markdown: `# ${title}\n\nStart writing here.`
     };
 
     const paths = this.workspace.requirePaths();
@@ -104,40 +104,6 @@ export class PageService {
       activePageId: id
     });
     return page;
-  }
-
-  async duplicate(id: string): Promise<PageDocument> {
-    const source = await this.get(id);
-    const existingTitles = new Set((await this.list()).map((page) => page.title.trim()));
-    const title = duplicatePageTitle(source.meta.title, existingTitles);
-    const now = new Date().toISOString();
-    const duplicateId = createId("pg");
-    const sourcePath = normalizePath(source.meta.path);
-    const path = sourcePath.length > 0
-      ? [...sourcePath.slice(0, -1), title]
-      : [title];
-    const duplicate: PageDocument = {
-      meta: {
-        ...source.meta,
-        id: duplicateId,
-        title,
-        created_time: now,
-        updated_time: now,
-        path
-      },
-      markdown: source.markdown
-    };
-
-    const bodyPath = pageBodyPath(duplicateId, title);
-    await writeMarkdownBody(join(this.workspace.requirePaths().root, bodyPath), duplicate.markdown);
-    await this.pageRecords.upsert({ ...defaultPageRecordInput(duplicate.meta), bodyPath });
-
-    const manifest = await this.workspace.getManifest();
-    const pages = [...manifest.pages];
-    const sourceIndex = pages.indexOf(id);
-    pages.splice(sourceIndex >= 0 ? sourceIndex + 1 : pages.length, 0, duplicateId);
-    await this.workspace.saveManifest({ ...manifest, pages, activePageId: duplicateId });
-    return duplicate;
   }
 
   async get(id: string): Promise<PageDocument> {
@@ -467,18 +433,6 @@ export class PageService {
 
 function clampPct(n: number): number {
   return Math.max(0, Math.min(100, n));
-}
-
-function duplicatePageTitle(sourceTitle: string, existingTitles: Set<string>): string {
-  const cleanTitle = sourceTitle.trim() || "Untitled";
-  const baseTitle = cleanTitle.replace(/ \(Copy(?: \d+)?\)$/i, "");
-  let candidate = `${baseTitle} (Copy)`;
-  let copyNumber = 2;
-  while (existingTitles.has(candidate)) {
-    candidate = `${baseTitle} (Copy ${copyNumber})`;
-    copyNumber += 1;
-  }
-  return candidate;
 }
 
 function firstMarkdownHeading(markdown: string): string | undefined {

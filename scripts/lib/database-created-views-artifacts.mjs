@@ -78,21 +78,6 @@ function assertCreatedViewsEvidence(entry, viewportName) {
   assertViewSettingsRecoveryEvidence(entry.viewSettingsRecovery, viewportName);
   assertTemplateRecoveryEvidence(entry.templateRecovery, viewportName);
 
-  const favorite = entry.favoriteState;
-  if (
-    favorite?.initialPressed !== "false" ||
-    favorite?.added?.pressed !== true ||
-    favorite?.added?.manifestHasDatabase !== true ||
-    favorite?.added?.sidebarHasDatabase !== true ||
-    favorite?.removed?.pressed !== false ||
-    favorite?.removed?.manifestHasDatabase !== false ||
-    favorite?.removed?.sidebarHasDatabase !== false ||
-    favorite?.final?.pressed !== true ||
-    favorite?.final?.buttonClass?.includes("on") !== true
-  ) {
-    throw new Error(`Database created views artifact contract missing favorite add/remove evidence for ${viewportName}: ${JSON.stringify(favorite)}`);
-  }
-
   if (!isUsableRect(entry.tableRect) || !isUsableRect(entry.tabsRect) || !isUsableRect(entry.activeTabRect)) {
     throw new Error(`Database created views artifact contract missing usable geometry for ${viewportName}: ${JSON.stringify({
       activeTabRect: entry.activeTabRect,

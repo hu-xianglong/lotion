@@ -51,7 +51,7 @@ async function createFixture() {
   const viewports = [];
   for (const viewport of ["desktop", "compact"]) {
     const nativeVision = await stateWithSnapshot(root, viewport, "native-vision", {
-      title: "Family Vision Check Log",
+      title: "2022敦促爸妈视力检查",
       provenance: "native-real-workspace",
       statusText: "状态: 完成",
       logHeadingVisible: true,
@@ -59,10 +59,10 @@ async function createFixture() {
       documentHorizontalOverflowPx: 0
     });
     const seededToggle = await stateWithSnapshot(root, viewport, "seeded-toggle-media", {
-      title: "Family Vision Check",
+      title: "2022 爸妈视力检查",
       provenance: "clone-seeded-exact-importer-regression",
-      summary: "Appointment receipt",
-      bodyText: "Booked a vision check appointment",
+      summary: "收据",
+      bodyText: "在美团上买了视力检查",
       toggleCount: 1,
       loadedImageCount: 1,
       summaryEditable: true,
@@ -95,8 +95,8 @@ async function createFixture() {
       cloneFingerprint: { ...fingerprint },
       isolation: { symlinksAllowed: false, byteIdenticalAtClone: true },
       sourceSafety: { unchanged: true, before: { ...fingerprint }, after: { ...fingerprint } },
-      staleSource: { toggleTargetMissing: true, nativeVisionTitle: "Family Vision Check Log" },
-      seededRegression: { title: "Family Vision Check", provenance: "clone-seeded-exact-importer-regression", seededInClone: true },
+      staleSource: { toggleTargetMissing: true, nativeVisionTitle: "2022敦促爸妈视力检查" },
+      seededRegression: { title: "2022 爸妈视力检查", provenance: "clone-seeded-exact-importer-regression", seededInClone: true },
       viewports
     }
   };

@@ -655,7 +655,7 @@ surface.
 | 602 | done | Built-in plugin enable disable controls | `tasks/done/builtin-plugin-enable-disable-controls.md` | package-core plugin host test, plugin manager UI smoke, typecheck, diff check |
 | 603 | done | Bug: Notion import overlay layout is visually broken | `tasks/done/notion-import-overlay-layout-bug.md` | reproduce with Notion Import workspace, focused Notion import UI smoke, screenshot artifact, typecheck, diff check |
 | 604 | done | Bug: Open Workspace should explain wrong workspace/folder selection | `tasks/done/open-workspace-manual-test-load-bug.md` | wrong-folder prompt, selected path visibility, path-with-spaces regression, focused workspace-open smoke, typecheck, diff check |
-| 605 | done | Bug: Imported Notion toggle fixture is broken | `tasks/done/imported-notion-toggle-page-regression.md` | importer nested-toggle regression, markdown preview UI smoke with imported-toggle screenshots, typecheck, diff check |
+| 605 | done | Bug: Imported Notion toggle is broken on 2022 parents vision check page | `tasks/done/imported-notion-toggle-page-2022-parents-vision-check-bug.md` | importer nested-toggle regression, markdown preview UI smoke with imported-toggle screenshots, typecheck, diff check |
 | 606 | done | Embedded view header actions artifact contract | `tasks/done/embedded-view-header-actions-artifact-contract.md` | embedded view smoke header action evidence, artifact contract unit test, typecheck, diff check |
 | 607 | done | Production UI visual quality gate first slice | `tasks/done/production-ui-visual-quality-gate-first-slice.md` | production visual npm gate, critical surface screenshot/geometry artifact contract, desktop+compact coverage, docs, typecheck, focused UI gate, diff check |
 | 608 | done | Release test requires production visual gate | `tasks/done/release-test-requires-production-visual-gate.md` | default release gate includes production visual, release manifest/unit coverage, docs, typecheck, focused release test, diff check |
@@ -763,6 +763,7 @@ surface.
 | 710 | done | Notion short-ID embedded view recovery | `tasks/done/notion-short-id-embedded-view-recovery.md` | resolved sparse duplicate-title embedded views; repaired 3,311 placeholders with verified backups and no unrelated source changes |
 | 711 | done | Notion collection conflicting evidence | `tasks/done/notion-collection-conflicting-evidence.md` | verified terminal ambiguity for conflicting row/href evidence; both regressions plus unrestricted 79/79 fast suite, build, typecheck, and task-doc gates passed |
 | 712 | done | Global date/time default inheritance | `tasks/done/global-date-time-default-inheritance.md` | fixed inherited formats becoming local overrides; focused regression, two-viewport Electron persistence smoke, 79/79 fast suite, typecheck, and build passed |
+| 713 | done | Local-authoritative public main restoration | `tasks/done/local-authoritative-public-main-restoration.md` | restored shared files from local commit 5acfd1d, retained public-only release infrastructure, excluded private assets, and added strict workspace-entry Notion import screenshot coverage |
 
 ## Latency Benchmark Coverage
 

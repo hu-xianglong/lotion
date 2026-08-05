@@ -14,8 +14,6 @@ import { SearchService } from "./services/search-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
 import type {
   AddFieldInput,
-  CopyFieldToSystemTimeInput,
-  CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
   CreatePageInput,
   CreateViewInput,
@@ -97,7 +95,6 @@ export interface LotionCustomerApi {
   pages: {
     list(): Promise<PageMeta[]>;
     create(input: CreatePageInput): Promise<PageDocument>;
-    duplicate(id: string): Promise<PageDocument>;
     get(id: string): Promise<PageDocument>;
     update(id: string, input: UpdatePageInput): Promise<PageDocument>;
     rename(id: string, title: string): Promise<PageDocument>;
@@ -113,7 +110,6 @@ export interface LotionCustomerApi {
     updateMeta(input: UpdateDatabaseMetaInput): Promise<DatabaseBundle>;
     addField(id: string, input: AddFieldInput): Promise<DatabaseBundle>;
     updateField(input: UpdateFieldInput): Promise<DatabaseBundle>;
-    copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult>;
     deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle>;
     updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
     addRow(databaseId: string, templateId?: string): Promise<DatabaseBundle>;
@@ -208,7 +204,6 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
     pages: {
       list: () => pages.list(),
       create: (input) => pages.create(input),
-      duplicate: (id) => pages.duplicate(id),
       get: (id) => pages.get(id),
       update: (id, input) => pages.update(id, input),
       rename: (id, title) => pages.rename(id, title),
@@ -224,7 +219,6 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
       updateMeta: (input) => databases.updateMeta(input),
       addField: (id, input) => databases.addField(id, input),
       updateField: (input) => databases.updateField(input),
-      copyFieldToSystemTime: (input) => databases.copyFieldToSystemTime(input),
       deleteField: (databaseId, fieldId) => databases.deleteField(databaseId, fieldId),
       updateCell: (input) => databases.updateCell(input),
       addRow: (databaseId, templateId) => databases.addRow(databaseId, templateId),

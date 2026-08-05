@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import type {
   NotionImportOptions,
   NotionImportProgress,
@@ -513,11 +514,40 @@ function persistReportTab(reportPageId: string): void {
  * management page embeds the same panel directly.
  */
 export function NotionImportDialog({ onClose }: NotionImportDialogProps) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog notion-dialog" onClick={(e) => e.stopPropagation()}>
-        <NotionImportPanel onClose={onClose} />
-      </div>
+    <div
+      className="dialog-backdrop plugin-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="plugin-modal notion-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="notion-import-dialog-title"
+      >
+        <div className="dialog-header">
+          <div>
+            <h2 id="notion-import-dialog-title">Import from Notion</h2>
+          </div>
+          <button type="button" className="plugin-modal-close" onClick={onClose} aria-label="Close import dialog">
+            <X aria-hidden="true" size={17} />
+          </button>
+        </div>
+        <div className="plugin-modal-body">
+          <NotionImportPanel onClose={onClose} />
+        </div>
+      </section>
     </div>
   );
 }

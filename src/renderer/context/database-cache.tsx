@@ -3,8 +3,6 @@ import type {
   AddFieldInput,
   BatchRowsInput,
   BatchRowsResult,
-  CopyFieldToSystemTimeInput,
-  CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
   CreateViewInput,
   DatabaseBundle,
@@ -60,7 +58,6 @@ export interface DatabaseCache {
   updateMeta(input: UpdateDatabaseMetaInput): Promise<DatabaseBundle>;
   updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
   updateField(input: UpdateFieldInput): Promise<DatabaseBundle>;
-  copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult>;
   reorderFields(input: ReorderFieldsInput): Promise<DatabaseBundle>;
   deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle>;
   restoreField(input: RestoreFieldInput): Promise<DatabaseBundle>;
@@ -205,12 +202,6 @@ export function DatabaseCacheProvider({ children }: { children: ReactNode }) {
     const next = await window.lotion.databases.updateField(input);
     write(input.databaseId, next);
     return next;
-  }, [write]);
-
-  const copyFieldToSystemTime = useCallback(async (input: CopyFieldToSystemTimeInput) => {
-    const result = await window.lotion.databases.copyFieldToSystemTime(input);
-    write(input.databaseId, result.bundle);
-    return result;
   }, [write]);
 
   const reorderFields = useCallback(async (input: ReorderFieldsInput) => {
@@ -493,7 +484,6 @@ export function DatabaseCacheProvider({ children }: { children: ReactNode }) {
     updateMeta,
     updateCell,
     updateField,
-    copyFieldToSystemTime,
     reorderFields,
     deleteField,
     restoreField,
@@ -522,7 +512,7 @@ export function DatabaseCacheProvider({ children }: { children: ReactNode }) {
     updateRowPage,
     setRowPageFullWidth,
     setRowPageSmallText
-  }), [bundles, loadBundle, invalidate, createDatabase, updateMeta, updateCell, updateField, copyFieldToSystemTime, reorderFields, deleteField, restoreField, permanentlyDeleteField, addField, addRow, deleteRow, duplicateRow, restoreRow, permanentlyDeleteRow, batchRows, saveTemplate, deleteTemplate, createView, duplicateView, updateView, patchView, mutateView, retryViewMutation, getViewMutationState, deleteView, setDefaultView, reorderViews, openRowPage, openRowPageByFile, updateRowPage, setRowPageFullWidth, setRowPageSmallText]);
+  }), [bundles, loadBundle, invalidate, createDatabase, updateMeta, updateCell, updateField, reorderFields, deleteField, restoreField, permanentlyDeleteField, addField, addRow, deleteRow, duplicateRow, restoreRow, permanentlyDeleteRow, batchRows, saveTemplate, deleteTemplate, createView, duplicateView, updateView, patchView, mutateView, retryViewMutation, getViewMutationState, deleteView, setDefaultView, reorderViews, openRowPage, openRowPageByFile, updateRowPage, setRowPageFullWidth, setRowPageSmallText]);
 
   return <DatabaseCacheValueProvider value={value}>{children}</DatabaseCacheValueProvider>;
 }

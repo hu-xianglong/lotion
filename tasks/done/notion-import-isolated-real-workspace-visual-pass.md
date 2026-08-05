@@ -25,10 +25,10 @@ source workspace.
 ## Real-Workspace Constraint
 
 The current source workspace is the known stale import recorded by
-`tasks/done/imported-notion-toggle-page-regression.md`: the original nested
-toggle page is absent. Verification must record that fact, exercise an existing
-imported row natively, and seed the importer-regression toggle shape only inside
-the disposable clone.
+`tasks/done/imported-notion-toggle-page-2022-parents-vision-check-bug.md`: the
+original `2022 爸妈视力检查` nested page is absent. Verification must record that
+fact, exercise the existing Chinese vision-check row natively, and seed the
+exact importer-regression toggle shape only inside the disposable clone.
 
 ## Required Verification
 
@@ -44,7 +44,7 @@ the disposable clone.
 
 - Reused the regular-file-only, symlink-rejecting, copy-on-write clone helper
   and complete source/clone/post-run SHA-256 fingerprints.
-- Added a real Electron runner for a native imported database row,
+- Added a real Electron runner for the native `2022敦促爸妈视力检查` database row,
   the actual Notion Import plugin modal, and an exact importer toggle shape
   seeded through the public pages API only inside the disposable clone.
 - Added desktop and compact gates for Chinese content, toggle summary/body,
@@ -70,7 +70,7 @@ the disposable clone.
   The current toggle body emits a direct image; the runner now checks
   `.cm-md-toggle-body img`, and its loaded-image evidence is persisted.
 - The real source is a known stale import and does not contain the original
-  nested toggle page/hash. The final evidence explicitly records that
+  `2022 爸妈视力检查` page/hash. The final evidence explicitly records that
   absence and labels the exact toggle regression page as clone-seeded rather
   than native.
 
@@ -80,8 +80,10 @@ Verified on 2026-07-22.
 
 - Final Electron artifact:
   `artifacts/ui-smoke/real-notion-import-ui-2026-07-23T02-17-14-884Z/harness-result.json`.
-- Source, clone, and post-run source fingerprints matched; source-path
-  redaction and clone-only mutation boundaries passed.
+- Source, clone, and post-run source matched SHA-256
+  `50ba8b497f6acd29be3235aee3ec08b7327fbc1119202170a4716674dc110e95`
+  (13,394 files, 456 directories, 1,218,388,572 bytes); source-path redaction
+  and clone-only mutation boundaries passed.
 - Desktop native row open was 614.2 ms; seeded toggle page open was 114.5 ms.
   Compact native row open was 503.7 ms; seeded toggle page open was 111.8 ms.
 - Both viewports recorded one toggle, one loaded image, successful collapse and

@@ -59,14 +59,6 @@ await withLotionUIHarness("page-path-slash-ui", async ({ cdpUrl, page, openWorks
 
     const parentOpened = await assertParentBreadcrumbOpensPage(page, fixture, viewport.name);
     await assertNoDocumentHorizontalOverflow(page, `page path slash parent ${viewport.name}`);
-    const slashCreated = await assertSlashCreatesChildPage(page, fixture, viewport.name);
-    await openPage(page, fixture.parentId);
-    await page.waitForFunction(
-      (title) => document.querySelector(".title-input")?.value === title,
-      fixture.parentSegment,
-      { timeout: 8_000 }
-    );
-    const duplicated = await assertPageDuplicate(page, fixture, viewport.name);
 
     viewportResults.push({
       viewport: viewport.name,
@@ -74,9 +66,7 @@ await withLotionUIHarness("page-path-slash-ui", async ({ cdpUrl, page, openWorks
       pageId: fixture.pageId,
       pageTitle: fixture.pageTitle,
       rendered,
-      parentOpened,
-      duplicated,
-      slashCreated
+      parentOpened
     });
   });
 
@@ -87,165 +77,12 @@ await withLotionUIHarness("page-path-slash-ui", async ({ cdpUrl, page, openWorks
   }, null, 2));
 });
 
-async function assertPageDuplicate(page, fixture, viewportName) {
-  const source = await page.evaluate((id) => window.lotion.pages.get(id), fixture.parentId);
-  const existingIds = await page.evaluate(async () => (await window.lotion.pages.list()).map((item) => item.id));
-  await page.locator(".page-options-toggle").click();
-  const action = page.getByRole("menuitem", { name: /Duplicate|创建副本/ }).first();
-  await action.waitFor({ timeout: 5_000 });
-  await assertWithinViewport(page, action, `duplicate page action ${viewportName}`, 4);
-  await action.click();
-
-  const expectedTitle = `${source.meta.title} (Copy)`;
-  await page.waitForFunction(async ({ existingIds, expectedTitle, sourceId }) => {
-    const pages = await window.lotion.pages.list();
-    const meta = pages.find((item) => !existingIds.includes(item.id) && item.title === expectedTitle);
-    if (!meta) return false;
-    const duplicate = await window.lotion.pages.get(meta.id);
-    const sourceDocument = await window.lotion.pages.get(sourceId);
-    const manifest = await window.lotion.workspace.getManifest();
-    const sourceIndex = manifest.pages.indexOf(sourceId);
-    if (duplicate.markdown !== sourceDocument.markdown) return false;
-    if (manifest.pages[sourceIndex + 1] !== meta.id) return false;
-    if (duplicate.meta.icon !== sourceDocument.meta.icon) return false;
-    if (duplicate.meta.path?.at(-1) !== expectedTitle) return false;
-    if (document.querySelector(".title-input")?.value !== expectedTitle) return false;
-    return true;
-  }, { existingIds, expectedTitle, sourceId: fixture.parentId }, { timeout: 10_000 });
-
-  const duplicate = await page.evaluate(async (expectedTitle) => {
-    const pages = await window.lotion.pages.list();
-    const meta = pages.find((item) => item.title === expectedTitle);
-    if (!meta) return null;
-    const document = await window.lotion.pages.get(meta.id);
-    const manifest = await window.lotion.workspace.getManifest();
-    return {
-      id: meta.id,
-      title: meta.title,
-      markdown: document.markdown,
-      icon: document.meta.icon,
-      path: document.meta.path ?? [],
-      manifestPosition: manifest.pages.indexOf(meta.id)
-    };
-  }, expectedTitle);
-
-  if (!duplicate) throw new Error(`Duplicate page was not readable after creation: ${expectedTitle}`);
-  await assertNoDocumentHorizontalOverflow(page, `duplicated page ${viewportName}`);
-  return duplicate;
-}
-
 async function waitForPageService(page, pageId) {
   await page.waitForSelector(".main-content", { timeout: 8_000 });
   await page.waitForFunction(async (targetPageId) => {
     const pages = await window.lotion.pages.list();
     return pages.some((candidate) => candidate.id === targetPageId);
   }, pageId, { timeout: 8_000 });
-}
-
-async function assertSlashCreatesChildPage(page, fixture, viewportName) {
-  const editor = page.locator(".cm-content").first();
-  await editor.click();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+End" : "Control+End");
-  await page.keyboard.press("End");
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("/page");
-
-  const menu = page.locator(".slash-menu").first();
-  await menu.waitFor({ timeout: 5_000 });
-  const command = menu.locator(".slash-menu-item").filter({ hasText: /Page|页面/ }).first();
-  await command.waitFor({ timeout: 5_000 });
-  await assertWithinViewport(page, command, `new page slash command ${viewportName}`, 4);
-  await command.click();
-
-  let created = null;
-  const deadline = Date.now() + 12_000;
-  while (Date.now() < deadline && !created) {
-    created = await page.evaluate(async ({ parentId, existingChildId }) => {
-      const pages = await window.lotion.pages.list();
-      const child = pages.find((candidate) => (
-        candidate.parentId === parentId && candidate.id !== parentId && candidate.id !== existingChildId
-      ));
-      if (!child) return null;
-      const childDocument = await window.lotion.pages.get(child.id);
-      if (childDocument.markdown !== "") return null;
-      const parent = await window.lotion.pages.get(parentId);
-      if (!parent.markdown.includes(child.id) || !parent.markdown.includes(`[${child.title}]`)) return null;
-      const title = document.querySelector(".title-input")?.value ?? "";
-      if (title !== child.title) return null;
-      return {
-        childId: child.id,
-        childTitle: child.title,
-        childPath: child.path ?? [],
-        childParentId: child.parentId,
-        childParentKind: child.parentKind,
-        childMarkdown: childDocument.markdown,
-        parentMarkdown: parent.markdown
-      };
-    }, { parentId: fixture.parentId, existingChildId: fixture.pageId });
-    if (!created) await page.waitForTimeout(100);
-  }
-  if (!created) {
-    const debug = await page.evaluate(async (parentId) => ({
-      title: document.querySelector(".title-input")?.value ?? "",
-      pages: await window.lotion.pages.list(),
-      parent: await window.lotion.pages.get(parentId)
-    }), fixture.parentId);
-    throw new Error(`Slash-created page did not become durable: ${JSON.stringify(debug)}`);
-  }
-  if (created.childParentId !== fixture.parentId || created.childParentKind !== "page") {
-    throw new Error(`Slash-created page has the wrong parent: ${JSON.stringify(created)}`);
-  }
-  const expectedPathPrefix = [fixture.parentSegment];
-  if (
-    created.childPath.length !== 2 ||
-    created.childPath[0] !== expectedPathPrefix[0] ||
-    created.childPath[1] !== created.childTitle
-  ) {
-    throw new Error(`Slash-created page has the wrong path: ${JSON.stringify(created)}`);
-  }
-  if (/\/page\s*$/m.test(created.parentMarkdown)) {
-    throw new Error(`Slash source was not replaced in parent markdown: ${JSON.stringify(created.parentMarkdown)}`);
-  }
-  const renamedTitle = `Renamed child ${viewportName}`;
-  const titleInput = page.locator(".title-input");
-  await titleInput.fill(renamedTitle);
-  await titleInput.blur();
-  await page.waitForFunction(async ({ childId, renamedTitle }) => {
-    const child = (await window.lotion.pages.list()).find((candidate) => candidate.id === childId);
-    if (child?.title !== renamedTitle || child.path?.at(-1) !== renamedTitle) return false;
-    return (await window.lotion.pages.get(childId)).markdown === "";
-  }, { childId: created.childId, renamedTitle }, { timeout: 8_000 });
-
-  const parentBreadcrumb = page.locator(".page-path-link").filter({ hasText: fixture.parentSegment }).last();
-  await parentBreadcrumb.waitFor({ timeout: 5_000 });
-  await parentBreadcrumb.click();
-  await page.waitForFunction(
-    (title) => document.querySelector(".title-input")?.value === title,
-    fixture.parentSegment,
-    { timeout: 8_000 }
-  );
-
-  const renamedLink = page.locator(".cm-md-link").filter({ hasText: renamedTitle }).last();
-  await renamedLink.waitFor({ timeout: 5_000 });
-  if (await page.locator(".cm-md-link").filter({ hasText: "Untitled" }).count()) {
-    throw new Error("Renamed slash-created page still renders with the Untitled label");
-  }
-  await renamedLink.click();
-  await page.waitForFunction(
-    (title) => document.querySelector(".title-input")?.value === title,
-    renamedTitle,
-    { timeout: 8_000 }
-  ).catch(async (error) => {
-    const debug = await renamedLink.evaluate((element) => ({
-      html: element.outerHTML,
-      text: element.textContent,
-      dataUrl: element.getAttribute("data-md-url"),
-      currentTitle: document.querySelector(".title-input")?.value
-    })).catch((debugError) => ({ debugError: debugError.message }));
-    throw new Error(`Renamed internal page link did not reopen the child: ${JSON.stringify(debug)}. ${error.message}`);
-  });
-  await assertNoDocumentHorizontalOverflow(page, `slash-created-child-${viewportName}`);
-  return { ...created, renamedTitle };
 }
 
 async function assertParentBreadcrumbOpensPage(page, fixture, viewportName) {

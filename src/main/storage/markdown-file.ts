@@ -43,8 +43,7 @@ export async function writeMarkdownBody(path: string, markdown: string): Promise
 }
 
 export function serializeMarkdownBody(markdown: string): string {
-  const trimmed = markdown.trimEnd();
-  return trimmed ? `${trimmed}\n` : "";
+  return `${markdown.trimEnd()}\n`;
 }
 
 function firstMarkdownHeading(markdown: string): string | undefined {

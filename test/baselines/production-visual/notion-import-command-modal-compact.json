@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/notion-import-command-modal-compact.png",
-    "sha256": "e32f0ea63f897eee9e99068157ba49e01d4c77d09f74cae130568bfce94ba3b7",
+    "sha256": "482e88a9455050342a2d7bdbd199dbbd5928ab0fb7e2ea2a21df38485adadde0",
     "width": 760,
-    "height": 644
+    "height": 650
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-05",
+  "sourceTask": "tasks/done/local-authoritative-public-main-restoration.md"
 }

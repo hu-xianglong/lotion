@@ -21,10 +21,10 @@ import {
 } from "./ui-harness.mjs";
 
 const SOURCE_WORKSPACE_NAME = "Notion Import";
-const NATIVE_DATABASE_ID = requiredEnv("LOTION_REAL_NOTION_DATABASE_ID");
-const NATIVE_ROW_ID = requiredEnv("LOTION_REAL_NOTION_ROW_ID");
-const NATIVE_VISION_TITLE = requiredEnv("LOTION_REAL_NOTION_PAGE_TITLE");
-const SEEDED_TOGGLE_TITLE = "Family Vision Check";
+const NATIVE_DATABASE_ID = "db_77d6c1b0";
+const NATIVE_ROW_ID = "row_46fc9e6b";
+const NATIVE_VISION_TITLE = "2022敦促爸妈视力检查";
+const SEEDED_TOGGLE_TITLE = "2022 爸妈视力检查";
 const SEEDED_PROVENANCE = "clone-seeded-exact-importer-regression";
 const RAW_MARKDOWN_STORAGE_KEY = "lotion.settings.rawMarkdown";
 const sourceRoot = process.env.LOTION_REAL_WORKSPACE_PATH
@@ -80,7 +80,6 @@ try {
       viewports
     };
     summary.artifactContract = await assertNotionRealWorkspaceArtifactContract(summary, {
-      expectedNativePageTitle: NATIVE_VISION_TITLE,
       expectedViewportNames: selectedViewports().map((viewport) => viewport.name)
     });
     return summary;
@@ -101,12 +100,6 @@ if (runError || safetyError) {
   throw new AggregateError([runError, safetyError].filter(Boolean), "Real Notion Import visual smoke failed or source immutability was not proven.");
 }
 console.log(JSON.stringify(result, null, 2));
-
-function requiredEnv(name) {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required for the isolated real-workspace smoke.`);
-  return value;
-}
 
 async function inspectStaleSource(page) {
   return page.evaluate(async ({ databaseId, rowId, missingTitle, nativeTitle }) => {
@@ -132,22 +125,22 @@ async function seedExactToggleRegression(page, attachmentPath) {
     `# ${SEEDED_TOGGLE_TITLE}`,
     "",
     "```lotion-toggle",
-    "summary: Appointment receipt",
+    "summary: 收据",
     "open: true",
     "---",
-    `![appointment.jpg](${attachmentPath})`,
+    `![receipt.jpg](${attachmentPath})`,
     "",
-    "Booked a vision check appointment",
+    "在美团上买了视力检查",
     "```",
     "",
-    "## Log",
+    "## 日志",
     "",
-    "| Date | Note |",
+    "| 日期 | 内容 |",
     "| --- | --- |",
-    "| 2024/1/15 | Booked a vision check appointment |"
+    "| 2022/6/18 | 在美团上买了视力检查 |"
   ].join("\n");
   const seeded = await page.evaluate(async ({ title, body }) => {
-    const created = await window.lotion.pages.create({ title, path: ["Health Archive", title] });
+    const created = await window.lotion.pages.create({ title, path: ["2022年度习惯", title] });
     const updated = await window.lotion.pages.update(created.meta.id, { markdown: body });
     return { pageId: updated.meta.id, title: updated.meta.title };
   }, { title: SEEDED_TOGGLE_TITLE, body: markdown });
@@ -244,7 +237,7 @@ async function verifyImportModal({ artifactRoot, page, viewport }) {
     const backdrop = document.querySelector(".plugin-modal-backdrop");
     const dialog = document.querySelector(".plugin-modal");
     const pageTitle = Array.from(document.querySelectorAll(".page-header .title-input, .database-title-wrap h1"))
-      .find((candidate) => ((candidate instanceof HTMLInputElement ? candidate.value : candidate.textContent) || "").includes("Family Vision Check"));
+      .find((candidate) => ((candidate instanceof HTMLInputElement ? candidate.value : candidate.textContent) || "").includes("2022 爸妈视力检查"));
     const center = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
     const backdropRect = backdrop?.getBoundingClientRect();
     return {

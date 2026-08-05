@@ -11,7 +11,6 @@ const errors = [];
 const deep = process.argv.includes("--deep");
 const SAMPLE_LARGE_CSV_AFTER_BYTES = 2 * 1024 * 1024;
 const LARGE_CSV_SAMPLE_BYTES = 512 * 1024;
-const OPTIONAL_GENERATED_DATA_IDS = new Set(["db_rows_500k"]);
 let sampledLargeCsvs = 0;
 
 const manifest = await readJson(join(spaceRoot, "lotion.json"));
@@ -74,9 +73,8 @@ for (const databaseId of manifest.databases) {
   const dataPath = join(databaseDir, "data.csv");
 
   assert(existsSync(schemaPath), `schema exists for ${databaseId}`);
-  const hasData = existsSync(dataPath);
-  assert(hasData || OPTIONAL_GENERATED_DATA_IDS.has(databaseId), `data.csv exists for ${databaseId}`);
-  if (!existsSync(schemaPath)) continue;
+  assert(existsSync(dataPath), `data.csv exists for ${databaseId}`);
+  if (!existsSync(schemaPath) || !existsSync(dataPath)) continue;
 
   const schema = await readJson(schemaPath);
   assert(schema.id === databaseId, `schema id matches ${databaseId}`);
@@ -103,24 +101,22 @@ for (const databaseId of manifest.databases) {
     }
   }
 
-  if (hasData) {
-    const csv = await readCsvRows(dataPath);
-    assert(csv.length >= 2, `database ${databaseId} has at least one data row`);
-    const headers = csv[0] || [];
-    for (const fieldId of fieldIds) {
-      assert(headers.includes(fieldId), `database ${databaseId} CSV includes field ${fieldId}`);
-    }
-    const records = csv.slice(1).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] || ""])));
-    for (const field of schema.fields) {
-      if (field.type !== "select" && field.type !== "multi_select") continue;
-      const optionNames = new Set((field.options || []).map((option) => option.name));
-      for (const record of records) {
-        const raw = record[field.id];
-        if (!raw) continue;
-        const values = field.type === "multi_select" ? raw.split(";").map((value) => value.trim()).filter(Boolean) : [raw];
-        for (const value of values) {
-          assert(optionNames.has(value), `database ${databaseId} field ${field.id} value "${value}" exists in options`);
-        }
+  const csv = await readCsvRows(dataPath);
+  assert(csv.length >= 2, `database ${databaseId} has at least one data row`);
+  const headers = csv[0] || [];
+  for (const fieldId of fieldIds) {
+    assert(headers.includes(fieldId), `database ${databaseId} CSV includes field ${fieldId}`);
+  }
+  const records = csv.slice(1).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] || ""])));
+  for (const field of schema.fields) {
+    if (field.type !== "select" && field.type !== "multi_select") continue;
+    const optionNames = new Set((field.options || []).map((option) => option.name));
+    for (const record of records) {
+      const raw = record[field.id];
+      if (!raw) continue;
+      const values = field.type === "multi_select" ? raw.split(";").map((value) => value.trim()).filter(Boolean) : [raw];
+      for (const value of values) {
+        assert(optionNames.has(value), `database ${databaseId} field ${field.id} value "${value}" exists in options`);
       }
     }
   }

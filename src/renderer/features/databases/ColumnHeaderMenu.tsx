@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
-import type { CopyFieldToSystemTimeResult, FieldSchema, SystemTimeFieldId } from "../../../shared/types";
-import { isDateLikeFieldType } from "../../../shared/date-values";
+import type { FieldSchema } from "../../../shared/types";
 import { MenuItem, MenuSection, MenuSurface, type MenuAnchor } from "../../components/Menu";
 
 export type ColumnMenuActionStatus = "submitted" | "failed" | "ignored";
@@ -41,14 +40,12 @@ export async function runColumnMenuAction({
   return "submitted";
 }
 
-export function ColumnHeaderMenu({ anchor, field, wrapped, frozen, canHide, onClose, onEdit, onSort, onFilter, onCalculate, onWrap, onHide, onDuplicate, onInsert, onFreeze, onCopyToSystemTime, onDelete }: {
+export function ColumnHeaderMenu({ anchor, field, wrapped, frozen, canHide, onClose, onEdit, onSort, onFilter, onCalculate, onWrap, onHide, onDuplicate, onInsert, onFreeze, onDelete }: {
   anchor: MenuAnchor; field: FieldSchema; wrapped: boolean; frozen: boolean; canHide: boolean; onClose: () => void;
   onEdit: () => void; onSort: (direction: "asc" | "desc") => Promise<void>; onFilter: () => void; onCalculate: () => Promise<void>;
   onWrap: () => Promise<void>; onHide: () => Promise<void>; onDuplicate: () => Promise<void>; onInsert: (side: "left" | "right") => Promise<void>; onFreeze: () => Promise<void>; onDelete: () => Promise<void>;
-  onCopyToSystemTime?: (targetFieldId: SystemTimeFieldId) => Promise<CopyFieldToSystemTimeResult>;
 }) {
   const [actionError, setActionError] = useState("");
-  const [copyResult, setCopyResult] = useState("");
   const [pending, setPending] = useState(false);
   const actionRef = useRef(false);
   const protectedField = Boolean(field.system) || field.id === "title";
@@ -66,23 +63,6 @@ export function ColumnHeaderMenu({ anchor, field, wrapped, frozen, canHide, onCl
       onPendingChange: setPending,
       onSuccess: onClose
     });
-  }
-
-  async function copyToSystemTime(targetFieldId: SystemTimeFieldId) {
-    if (!onCopyToSystemTime || actionRef.current) return;
-    actionRef.current = true;
-    setActionError("");
-    setCopyResult("");
-    setPending(true);
-    try {
-      const result = await onCopyToSystemTime(targetFieldId);
-      setCopyResult(`Copied ${result.copiedRows} rows; ${result.unchangedRows} unchanged; skipped ${result.skippedEmptyRows} empty and ${result.skippedInvalidRows} invalid values.`);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      actionRef.current = false;
-      setPending(false);
-    }
   }
 
   return (
@@ -103,17 +83,10 @@ export function ColumnHeaderMenu({ anchor, field, wrapped, frozen, canHide, onCl
         <MenuItem label="Insert right" disabledReason={pendingReason} onSelect={() => void runAction(() => onInsert("right"))} />
         <MenuItem label={frozen ? "Unfreeze columns" : "Freeze up to this column"} disabledReason={pendingReason} onSelect={() => void runAction(onFreeze)} />
       </MenuSection>
-      {onCopyToSystemTime && isDateLikeFieldType(field.type) && (
-        <MenuSection label="System timestamps">
-          {field.id !== "created_time" && <MenuItem label="Copy to Created time" disabledReason={pendingReason} onSelect={() => void copyToSystemTime("created_time")} />}
-          {field.id !== "updated_time" && <MenuItem label="Copy to Last updated time" disabledReason={pendingReason} onSelect={() => void copyToSystemTime("updated_time")} />}
-        </MenuSection>
-      )}
       <MenuSection danger>
         <MenuItem label="Delete property" danger disabledReason={pendingReason || (protectedField ? "System and title properties cannot be deleted." : undefined)} onSelect={() => void runAction(onDelete)} />
       </MenuSection>
       {actionError && <small className="view-menu-action-error" role="alert">{actionError}</small>}
-      {copyResult && <output className="field-context-menu-result" role="status">{copyResult}</output>}
     </MenuSurface>
   );
 }

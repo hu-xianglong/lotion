@@ -6,7 +6,7 @@ Verification status: verified
 
 ## Context
 
-Real imported pages such as `8. Example imported chapter` expose two editor
+Real imported pages such as `8. Push all your own buttons` expose two editor
 parity bugs:
 
 - Callout/widget body markdown should preserve basic inline formatting the same

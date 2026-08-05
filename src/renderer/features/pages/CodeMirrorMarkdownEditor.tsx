@@ -43,23 +43,18 @@ import { classifyLink, databaseIdFromWorkspaceLink, pageIdFromWorkspacePath, try
 import {
   clearFloatingToc,
   linkIconResolver,
-  linkTitleResolver,
   markdownDecorationsEnabledFacet,
   lotionViewRegistry,
   markdownDecorations,
-  refreshLinkMetadataEffect,
   showEmbedSourceFacet
 } from "./markdown-decorations";
 import { useLotionViewBridge } from "./useLotionViewBridge";
 import {
   applySlashCommandTemplate,
   BASE_SLASH_COMMANDS,
-  createChildPageInput,
   createDatabaseSlashCommands,
-  createPageSlashCommands,
-  type SlashPageParent
+  createPageSlashCommands
 } from "../../../shared/slash-commands";
-import { useI18n } from "../../lib/i18n";
 import type { DatabaseSummary, PageMeta } from "../../../shared/types";
 
 declare global {
@@ -85,7 +80,6 @@ interface CodeMirrorMarkdownEditorProps {
    *  custom icon inside inline link widgets. */
   pages?: PageMeta[];
   databases?: DatabaseSummary[];
-  currentPage?: SlashPageParent;
 }
 
 export interface CodeMirrorMarkdownEditorHandle {
@@ -117,8 +111,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
   navigationAnchorKey,
   onViewStateChange,
   pages,
-  databases,
-  currentPage
+  databases
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -134,7 +127,6 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
   const slashStateRef = useRef<((next: SlashState) => void) | null>(null);
   slashStateRef.current = setSlash;
   const { vimMode, rawMarkdown, showEmbedSource } = useSettings();
-  const { t } = useI18n();
   const actions = useLotionActions();
   const lotionViewBridge = useLotionViewBridge();
   const slashCommands = useMemo(
@@ -300,18 +292,6 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
           // receives page/database summaries, so fall back to the page glyph.
           return undefined;
         }),
-        linkTitleResolver.of((url) => {
-          const path = url.replace(/^\.\//, "");
-          const pageId = pageIdFromWorkspacePath(path);
-          if (pageId) {
-            return pagesRef.current?.find((page) => page.id === pageId)?.title;
-          }
-          const databaseId = databaseIdFromWorkspaceLink(path);
-          if (databaseId) {
-            return databasesRef.current?.find((database) => database.id === databaseId)?.name;
-          }
-          return undefined;
-        }),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -416,10 +396,6 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
     });
   }, [rawMarkdown]);
 
-  useEffect(() => {
-    viewRef.current?.dispatch({ effects: refreshLinkMetadataEffect.of(undefined) });
-  }, [databases, pages]);
-
   // External value updates (page switch, programmatic edits) → replace the
   // doc. Skip when the editor already reflects this value so we don't tear
   // down the undo history during ordinary typing.
@@ -455,35 +431,6 @@ export const CodeMirrorMarkdownEditor = forwardRef<CodeMirrorMarkdownEditorHandl
           onPick={(cmd) => {
             const view = viewRef.current;
             if (!view) return;
-            if (cmd.id === "new-page" && currentPage) {
-              setSlash({ open: false });
-              void (async () => {
-                try {
-                  const page = await actions.createPage(
-                    createChildPageInput(currentPage, t("common.untitled")),
-                    { open: false }
-                  );
-                  const linkCommand = createPageSlashCommands([page.meta])[0];
-                  if (!linkCommand || !viewRef.current) return;
-                  const edit = applySlashCommandTemplate({
-                    doc: view.state.doc.toString(),
-                    lineFrom: slash.lineFrom!,
-                    slashFrom: slash.slashPos!,
-                    slashTo: slash.endPos!,
-                    command: linkCommand
-                  });
-                  view.dispatch({
-                    changes: { from: edit.from, to: edit.to, insert: edit.insert },
-                    selection: { anchor: edit.cursor }
-                  });
-                  await actions.selectPage(page.meta.id);
-                } catch (error) {
-                  console.error("[lotion] failed to create page from slash command:", error);
-                  view.focus();
-                }
-              })();
-              return;
-            }
             const edit = applySlashCommandTemplate({
               doc: view.state.doc.toString(),
               lineFrom: slash.lineFrom!,

@@ -43,16 +43,11 @@ for (const db of dbDirs) {
   }
   stats.databases += 1;
   assert(hasSchema, `${db.rel}/schema.json exists`);
-  if (!hasSchema) {
-    assert(hasData, `${db.rel}/data.csv exists`);
-    continue;
-  }
+  assert(hasData, `${db.rel}/data.csv exists`);
+  if (!hasSchema || !hasData) continue;
 
   const schema = await readJson(schemaPath);
   dbDirById.set(schema.id, db);
-  const missingGeneratedDataAllowed = !hasData && args.allowMissingDataIds.includes(schema.id);
-  assert(hasData || missingGeneratedDataAllowed, `${db.rel}/data.csv exists`);
-  if (!hasData) continue;
   const fieldIds = new Set();
   for (const field of schema.fields ?? []) {
     if (!field.id) report(`${db.rel}/schema.json: field without id`);
@@ -210,8 +205,7 @@ function parseArgs(argv) {
     workspace: null,
     expectQueries: [],
     expectDatabaseTitleContains: [],
-    forbidSystemPageSourceFragments: [],
-    allowMissingDataIds: []
+    forbidSystemPageSourceFragments: []
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -227,9 +221,6 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--forbid-system-page-source-fragment") {
       parsed.forbidSystemPageSourceFragments.push(value);
-      index += 1;
-    } else if (arg === "--allow-missing-data") {
-      parsed.allowMissingDataIds.push(value);
       index += 1;
     } else if (!arg.startsWith("-") && !parsed.workspace) {
       parsed.workspace = arg;

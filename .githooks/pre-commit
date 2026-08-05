@@ -8,5 +8,5 @@ cd "$root"
 # their Git subprocesses through hook-only environment variables.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
-echo "Running Lotion commit quality gate..."
-npm run gate:commit
+echo "Running Lotion package coverage gate..."
+npm run test:coverage

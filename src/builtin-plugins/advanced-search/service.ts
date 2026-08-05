@@ -988,36 +988,3 @@ function fnv1a(text: string): number {
   }
   return hash >>> 0;
 }
-
-export const advancedSearchTestInternals = {
-  OpenAICompatibleEmbeddingProvider,
-  materializeChunks,
-  shouldReportProgress,
-  hasExistingRowPagePointer,
-  normalizeIndex,
-  normalizeConfig,
-  normalizeStatus,
-  providerStatus,
-  databaseText,
-  rowText,
-  rowTitle,
-  valueForSearch,
-  stringValue,
-  displayPath,
-  chunkToLanceRow,
-  lanceRowToChunk,
-  rankChunks,
-  dedupeRankedChunks,
-  scoreChunk,
-  lexicalMatchScore,
-  chunkToHit,
-  makeSnippet,
-  tokenize,
-  hashTextVector,
-  normalizeVector,
-  cosineSimilarity,
-  roundScore,
-  hashStableJson,
-  hashText,
-  fnv1a
-};

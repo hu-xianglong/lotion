@@ -7,7 +7,7 @@ Verification status: verified
 ## Context
 
 The earlier selection fix only handled inline highlight/background spans. The
-actual visible bug in `8. Example imported chapter` was different: CodeMirror
+actual visible bug in `8. Push all your own buttons` was different: CodeMirror
 was drawing the purple selection range, but the opaque block-level line
 background for blockquotes sat above it, so the selection only showed around
 the edges of the block.

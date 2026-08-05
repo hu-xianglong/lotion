@@ -55,7 +55,7 @@ const SHORT_REF_VIEW_HASH_A = "41414141111122223333444455556666";
 const SHORT_REF_VIEW_HASH_B = "42424242111122223333444455556666";
 const SHORT_REF_PAGE_HASH = "43434343111122223333444455556666";
 const VISION_PARENT_PAGE_HASH = "23232323111122223333444455556666";
-const VISION_TOGGLE_PAGE_HASH = "67676767111122223333444455556666";
+const VISION_TOGGLE_PAGE_HASH = "7783c166b1d448379067ef2502c6c013";
 
 function notionPage(title, body, properties = "", headerPrefix = "") {
   return `<!doctype html><html><body><article class="page sans"><header>${headerPrefix}<h1 class="page-title">${title}</h1>${properties}</header><div class="page-body">${body}</div></article></body></html>`;
@@ -252,24 +252,24 @@ try {
   );
   await mkdir(join(source, "Loose Page"), { recursive: true });
   await writeFile(join(source, "Loose Page", "loose-cover.jpg"), "fake loose cover", "utf8");
-  await mkdir(join(source, "Health Archive", "Family Vision Check"), { recursive: true });
+  await mkdir(join(source, "2022年度习惯", "2022 爸妈视力检查"), { recursive: true });
   await writeFile(
-    join(source, `Health Archive ${VISION_PARENT_PAGE_HASH}.html`),
+    join(source, `2022年度习惯 ${VISION_PARENT_PAGE_HASH}.html`),
     notionPage(
-      "Health Archive",
-      `<p><a href="Health%20Archive/Family%20Vision%20Check%20${VISION_TOGGLE_PAGE_HASH}.html">Family Vision Check</a></p>`
+      "2022年度习惯",
+      `<p><a href="2022%E5%B9%B4%E5%BA%A6%E4%B9%A0%E6%83%AF/2022%20%E7%88%B8%E5%A6%88%E8%A7%86%E5%8A%9B%E6%A3%80%E6%9F%A5%20${VISION_TOGGLE_PAGE_HASH}.html">2022 爸妈视力检查</a></p>`
     ),
     "utf8"
   );
   await writeFile(
-    join(source, "Health Archive", `Family Vision Check ${VISION_TOGGLE_PAGE_HASH}.html`),
+    join(source, "2022年度习惯", `2022 爸妈视力检查 ${VISION_TOGGLE_PAGE_HASH}.html`),
     notionPage(
-      "Family Vision Check",
-      `<details open=""><summary>Appointment receipt</summary><div class="indented"><figure class="image"><a href="Family%20Vision%20Check/appointment.jpg"><img src="Family%20Vision%20Check/appointment.jpg"/></a></figure><p>Booked a vision check appointment</p></div></details><h2>Log</h2><table class="simple-table"><tbody><tr><td>Date</td><td>Note</td></tr><tr><td>2024/1/15</td><td>Booked a vision check appointment</td></tr></tbody></table>`
+      "2022 爸妈视力检查",
+      `<details open=""><summary>收据</summary><div class="indented"><figure class="image"><a href="2022%20%E7%88%B8%E5%A6%88%E8%A7%86%E5%8A%9B%E6%A3%80%E6%9F%A5/receipt.jpg"><img src="2022%20%E7%88%B8%E5%A6%88%E8%A7%86%E5%8A%9B%E6%A3%80%E6%9F%A5/receipt.jpg"/></a></figure><p>在美团上买了视力检查</p></div></details><h2>日志</h2><table class="simple-table"><tbody><tr><td>日期</td><td>内容</td></tr><tr><td>2022/6/18</td><td>在美团上买了视力检查</td></tr></tbody></table>`
     ),
     "utf8"
   );
-  await writeFile(join(source, "Health Archive", "Family Vision Check", "appointment.jpg"), "fake appointment image", "utf8");
+  await writeFile(join(source, "2022年度习惯", "2022 爸妈视力检查", "receipt.jpg"), "fake receipt", "utf8");
   await writeFile(
     join(source, "Loose Page", `Empty Nested ${EMPTY_NESTED_PAGE_HASH}.html`),
     notionPage("Empty Nested", `<div style="display:contents"><p id="empty" class="">
@@ -924,35 +924,35 @@ try {
     false,
     "Nested pages with only empty paragraphs should be omitted when skipEmptyRowsAndPages is enabled"
   );
-  const visionParentPage = pageRows.find((row) => row.title === "Health Archive");
-  assert.ok(visionParentPage, "The Notion parent page that links to the vision check page should import");
-  const visionTogglePage = pageRows.find((row) => row.title === "Family Vision Check");
+  const visionParentPage = pageRows.find((row) => row.title === "2022年度习惯");
+  assert.ok(visionParentPage, "The Notion parent page that links to the 2022 vision check page should import");
+  const visionTogglePage = pageRows.find((row) => row.title === "2022 爸妈视力检查");
   assert.ok(visionTogglePage, "Nested Notion pages with bare <details> toggles should import instead of being skipped");
   assert.deepEqual(
     storedPathSegments(visionTogglePage.path),
-    ["Health Archive", "Family Vision Check"],
+    ["2022年度习惯", "2022 爸妈视力检查"],
     "Nested toggle pages should retain their full Notion breadcrumb path"
   );
   const visionParentBody = await readFile(join(target, visionParentPage.body_path), "utf8");
   assert.match(
     visionParentBody,
-    /\[Family Vision Check\]\(databases\/system\/pages--db_pages\/pages\/Family_Vision_Check--pg_[^)]+\.md\)/,
+    /\[2022 爸妈视力检查\]\(databases\/system\/pages--db_pages\/pages\/2022[^)]*--pg_[^)]+\.md\)/,
     "Links to imported nested toggle pages should rewrite to the Lotion page body path"
   );
   assert.doesNotMatch(
     visionParentBody,
-    /67676767111122223333444455556666\.html/,
+    /7783c166b1d448379067ef2502c6c013\.html/,
     "Links to imported nested toggle pages should not keep the original URL-encoded Notion export path"
   );
   const visionToggleBody = await readFile(join(target, visionTogglePage.body_path), "utf8");
   assert.match(
     visionToggleBody,
-    /```lotion-toggle\nsummary: Appointment receipt\nopen: true\n---\n!\[appointment\.jpg\]\(attachments\/images\/[0-9a-f]+-appointment\.jpg\)\n\nBooked a vision check appointment\n```/,
+    /```lotion-toggle\nsummary: 收据\nopen: true\n---\n!\[receipt\.jpg\]\(attachments\/images\/[0-9a-f]+-receipt\.jpg\)\n\n在美团上买了视力检查\n```/,
     "Bare Notion <details> blocks should import as editable Lotion toggle fences while preserving nested image and text"
   );
   assert.match(
     visionToggleBody,
-    /\| Date \| Note \|[\s\S]*\| 2024\/1\/15 \| Booked a vision check appointment \|/,
+    /\| 日期 \| 内容 \|[\s\S]*\| 2022\/6\/18 \| 在美团上买了视力检查 \|/,
     "Content after an imported toggle should remain visible instead of being swallowed by the toggle"
   );
   assert.equal(
