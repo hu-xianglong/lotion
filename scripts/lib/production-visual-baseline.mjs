@@ -98,6 +98,9 @@ function validatePolicy(policy) {
   if (typeof comparison.includeAA !== "boolean") {
     throw new Error(`Invalid production visual baseline includeAA: ${comparison.includeAA ?? "missing"}`);
   }
+  if (comparison.ignoredRegions !== undefined && !Array.isArray(comparison.ignoredRegions)) {
+    throw new Error("Invalid production visual baseline ignoredRegions: expected an array");
+  }
   return policy;
 }
 

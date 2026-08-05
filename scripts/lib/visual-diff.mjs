@@ -20,9 +20,10 @@ export async function assertPngVisualBaseline({
   threshold = 0.1,
   maxDiffPixels = 0,
   maxDiffRatio = 0,
-  includeAA = false
+  includeAA = false,
+  ignoredRegions = []
 }) {
-  validateOptions({ actualPath, expectedPath, diffPath, metadataPath, threshold, maxDiffPixels, maxDiffRatio });
+  validateOptions({ actualPath, expectedPath, diffPath, metadataPath, threshold, maxDiffPixels, maxDiffRatio, ignoredRegions });
   const [actual, expected] = await Promise.all([
     readPng(actualPath, "actual"),
     readPng(expectedPath, "expected")
@@ -34,6 +35,7 @@ export async function assertPngVisualBaseline({
   let diffPixels;
 
   if (dimensionsMatch) {
+    applyIgnoredRegions(actual, expected, ignoredRegions);
     diffPixels = pixelmatch(expected.data, actual.data, diff.data, width, height, {
       threshold,
       includeAA,
@@ -65,7 +67,8 @@ export async function assertPngVisualBaseline({
     threshold,
     includeAA,
     maxDiffPixels,
-    maxDiffRatio
+    maxDiffRatio,
+    ignoredRegions
   };
 
   await Promise.all([mkdir(dirname(diffPath), { recursive: true }), mkdir(dirname(metadataPath), { recursive: true })]);
@@ -95,7 +98,20 @@ function fillDimensionMismatch(png) {
   }
 }
 
-function validateOptions({ actualPath, expectedPath, diffPath, metadataPath, threshold, maxDiffPixels, maxDiffRatio }) {
+function applyIgnoredRegions(actual, expected, regions) {
+  for (const region of regions) {
+    const right = Math.min(actual.width, region.x + region.width);
+    const bottom = Math.min(actual.height, region.y + region.height);
+    for (let y = region.y; y < bottom; y += 1) {
+      for (let x = region.x; x < right; x += 1) {
+        const offset = (y * actual.width + x) * 4;
+        expected.data.copy(actual.data, offset, offset, offset + 4);
+      }
+    }
+  }
+}
+
+function validateOptions({ actualPath, expectedPath, diffPath, metadataPath, threshold, maxDiffPixels, maxDiffRatio, ignoredRegions }) {
   for (const [label, value] of Object.entries({ actualPath, expectedPath, diffPath, metadataPath })) {
     if (!value) throw new Error(`assertPngVisualBaseline requires ${label}`);
   }
@@ -107,6 +123,16 @@ function validateOptions({ actualPath, expectedPath, diffPath, metadataPath, thr
   }
   if (!Number.isFinite(maxDiffRatio) || maxDiffRatio < 0 || maxDiffRatio > 1) {
     throw new Error(`Visual diff maxDiffRatio must be between 0 and 1, saw ${maxDiffRatio}`);
+  }
+  if (!Array.isArray(ignoredRegions)) throw new Error("Visual diff ignoredRegions must be an array");
+  for (const [index, region] of ignoredRegions.entries()) {
+    for (const key of ["x", "y", "width", "height"]) {
+      const value = region?.[key];
+      const minimum = key === "width" || key === "height" ? 1 : 0;
+      if (!Number.isInteger(value) || value < minimum) {
+        throw new Error(`Visual diff ignoredRegions[${index}].${key} must be an integer >= ${minimum}, saw ${value ?? "missing"}`);
+      }
+    }
   }
 }
 

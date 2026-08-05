@@ -53,6 +53,31 @@ test("PNG visual baseline ignores a small antialias color delta at the configure
   }
 });
 
+test("PNG visual baseline ignores only explicitly bounded composited regions", async () => {
+  const fixture = await createFixture("ignored-region");
+  try {
+    await writeSolidPng(fixture.expectedPath, 10, 10, [255, 255, 255, 255]);
+    await writeSolidPng(fixture.actualPath, 10, 10, [255, 255, 255, 255], [
+      { x: 9, y: 9, color: [0, 0, 0, 255] }
+    ]);
+    const ignoredRegions = [{ x: 8, y: 8, width: 2, height: 2, reason: "rounded-corner backdrop compositing" }];
+    const result = await assertPngVisualBaseline({ ...fixture, ignoredRegions });
+    assert.equal(result.status, "passed");
+    assert.equal(result.diffPixels, 0);
+    assert.deepEqual(result.ignoredRegions, ignoredRegions);
+
+    await writeSolidPng(fixture.actualPath, 10, 10, [255, 255, 255, 255], [
+      { x: 7, y: 7, color: [0, 0, 0, 255] }
+    ]);
+    await assert.rejects(
+      () => assertPngVisualBaseline({ ...fixture, ignoredRegions }),
+      VisualBaselineMismatchError
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("PNG visual baseline rejects layout drift and preserves actual, expected, diff, and metadata paths", async () => {
   const fixture = await createFixture("drift");
   try {
