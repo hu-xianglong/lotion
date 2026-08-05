@@ -770,6 +770,7 @@ surface.
 | 717 | done | Notion import lazy empty row bodies | `tasks/done/notion-import-lazy-empty-row-bodies.md` | property-only rows retain CSV data with lazy body metadata; real 1,185-database dual-export import passed structure and hierarchy validation |
 | 718 | done | Embedded database icon visual baseline | `tasks/done/embedded-database-icon-visual-baseline.md` | fixed input-backed row-title assertions and verified the intentional icon baselines twice at 0 changed pixels across compact, desktop, and wide |
 | 719 | done | Packaged search ripgrep executable path | `tasks/done/packaged-search-ripgrep-executable-path.md` | resolved app.asar paths to app.asar.unpacked, executed the packaged binary in verification, and confirmed a real imported row title is searchable |
+| 720 | done | Exact database title search ranking | `tasks/done/exact-database-title-search-ranking.md` | exact database ranks first, internal stats row resolves to database identity, 80/80 fast suite, real-workspace installed-app verification |
 
 ## Latency Benchmark Coverage
 

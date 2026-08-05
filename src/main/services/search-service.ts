@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
-import { ENTITIES_DATABASE_ID, PAGES_DATABASE_ID } from "../../shared/constants.js";
+import { DATABASE_STATS_DATABASE_ID, ENTITIES_DATABASE_ID, PAGES_DATABASE_ID } from "../../shared/constants.js";
 import { displayPathValue } from "../../shared/path-values.js";
 import { databaseFolderName, idFromDatabaseFolderName, idFromMarkdownFileName } from "../../shared/workspace-paths.js";
 import { readCsvFile } from "../storage/csv-file.js";
@@ -485,10 +485,12 @@ export class SearchService {
       if (entity.kind === "database") {
         const databaseId = entity.databaseId || entity.id;
         const db = cache.databasesById.get(databaseId);
+        const databaseName = entity.title || db?.name || databaseId;
+        const matchRoute = databaseMatchRoute(databaseName, pattern);
         hits.push(withSearchMeta({
           kind: "database",
           databaseId,
-          databaseName: entity.title || db?.name || databaseId,
+          databaseName,
           icon: entity.icon || db?.icon,
           createdTime: entity.createdTime || undefined,
           updatedTime: entity.updatedTime || undefined,
@@ -497,7 +499,7 @@ export class SearchService {
           line: 1,
           text: preview.text,
           ranges: preview.ranges
-        }, searchText, metadataFieldScore(entity, pattern), entity.id, "database"));
+        }, searchText, metadataFieldScore(entity, pattern), entity.id, matchRoute.primary, matchRoute.types));
         continue;
       }
       if (entity.kind === "row") {
@@ -780,6 +782,33 @@ export class SearchService {
       const preview = previewCsvCells(cells, db, pattern);
       const searchMeta = csvSearchMeta(cells, db, pattern);
 
+      if (db.id === DATABASE_STATS_DATABASE_ID) {
+        const databaseId = cells[0] ?? "";
+        const entity = cache.entities.byDatabaseId.get(databaseId) ?? cache.entities.byId.get(databaseId);
+        const targetDb = cache.databasesById.get(databaseId);
+        if (!databaseId || (!entity && !targetDb)) return null;
+        const databaseName = entity?.title || targetDb?.name || rowTitle || databaseId;
+        const matchRoute = databaseMatchRoute(databaseName, pattern);
+        return withSearchMeta({
+          kind: "database",
+          databaseId,
+          databaseName,
+          icon: entity?.icon || targetDb?.icon || rowIconFromCells(cells, db),
+          createdTime: entity?.createdTime || csvFieldValue(cells, db, "created_time") || undefined,
+          updatedTime: entity?.updatedTime || csvFieldValue(cells, db, "updated_time") || undefined,
+          entityPath: entity?.path || undefined,
+          path: entity?.path || `databases/${databaseId}`,
+          line: hit.line,
+          text: preview.text,
+          ranges: preview.ranges
+        },
+        `${entitySearchText(entity)} ${databaseName} ${searchMeta.text}`,
+        0,
+        entity?.id || databaseId,
+        matchRoute.primary,
+        matchRoute.types);
+      }
+
       if (db.id === PAGES_DATABASE_ID) {
         const pageId = cells[0] ?? "";
         const entity = cache.entities.byId.get(pageId);
@@ -832,10 +861,12 @@ export class SearchService {
       const databaseId = db?.id ?? idFromDatabaseFolderName(dirName, schema[1] === "system");
       const entity = cache.entities.byDatabaseId.get(databaseId) ?? cache.entities.byId.get(databaseId);
       const preview = trimContext(hit.text, hit.ranges);
+      const databaseName = entity?.title || db?.name || dirName;
+      const matchRoute = databaseMatchRoute(databaseName, pattern);
       return withSearchMeta({
         kind: "database",
         databaseId,
-        databaseName: entity?.title || db?.name || dirName,
+        databaseName,
         icon: entity?.icon || db?.icon,
         createdTime: entity?.createdTime || undefined,
         updatedTime: entity?.updatedTime || undefined,
@@ -844,7 +875,7 @@ export class SearchService {
         line: hit.line,
         text: preview.text,
         ranges: preview.ranges
-      }, `${entitySearchText(entity)} ${db?.name ?? dirName} ${preview.text} ${path}`, 0, entity?.id, "database");
+      }, `${entitySearchText(entity)} ${db?.name ?? dirName} ${preview.text} ${path}`, 0, entity?.id, matchRoute.primary, matchRoute.types);
     }
 
     return null;
@@ -981,6 +1012,16 @@ function cellMatchesSearch(value: string, pattern: string): boolean {
   if (tokens.length <= 1) return false;
   const loose = normalizeLoose(value);
   return tokens.every((token) => loose.includes(token));
+}
+
+function databaseMatchRoute(
+  databaseName: string,
+  pattern: string
+): { primary: SearchMatchType; types: SearchMatchType[] } {
+  if (cellMatchesSearch(databaseName, pattern)) {
+    return { primary: "title", types: ["title", "database"] };
+  }
+  return { primary: "database", types: ["database"] };
 }
 
 function isSearchableCsvField(fieldId: string): boolean {

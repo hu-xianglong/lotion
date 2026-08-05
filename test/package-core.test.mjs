@@ -77,7 +77,7 @@ import {
   shortcutActionForEvent,
   validateShortcutOverride
 } from "../dist-electron/shared/shortcuts.js";
-import { DEFAULT_VIEW_ID, ENTITIES_DATABASE_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/constants.js";
+import { DATABASE_STATS_DATABASE_ID, DEFAULT_VIEW_ID, ENTITIES_DATABASE_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/constants.js";
 import { databaseCapabilities } from "../dist-electron/shared/database-capabilities.js";
 import { databaseViewLink, parseDatabaseViewLink } from "../dist-electron/shared/database-view-link.js";
 import { databaseRowLink, parseDatabaseRowLink } from "../dist-electron/shared/database-row-link.js";
@@ -3114,12 +3114,15 @@ test("search service ranks title, content, database, and reference hits from a w
   try {
     const pagesFolder = databaseFolderName(PAGES_DATABASE_ID, "pages");
     const entitiesFolder = databaseFolderName(ENTITIES_DATABASE_ID, "entities");
+    const databaseStatsFolder = databaseFolderName(DATABASE_STATS_DATABASE_ID, "database_stats");
     const dealsFolder = databaseFolderName("db_deals", "Deals");
     const pagesDir = join(root, "databases", "system", pagesFolder);
     const entitiesDir = join(root, "databases", "system", entitiesFolder);
+    const databaseStatsDir = join(root, "databases", "system", databaseStatsFolder);
     const dealsDir = join(root, "databases", "user", dealsFolder);
     await mkdir(join(pagesDir, "pages"), { recursive: true });
     await mkdir(entitiesDir, { recursive: true });
+    await mkdir(databaseStatsDir, { recursive: true });
     await mkdir(join(dealsDir, "pages"), { recursive: true });
 
     const relatedBodyPath = `databases/system/${pagesFolder}/pages/Related_Page--pg_related.md`;
@@ -3152,6 +3155,24 @@ test("search service ranks title, content, database, and reference hits from a w
         { id: "relation", name: "Relation", type: "entity_ref" }
       ]
     });
+    await writeJsonFile(join(databaseStatsDir, "schema.json"), {
+      id: DATABASE_STATS_DATABASE_ID,
+      name: "database_stats",
+      fields: [
+        { id: "id", name: "ID", type: "id" },
+        { id: "title", name: "Name", type: "text" },
+        { id: "database_id", name: "Database ID", type: "text" }
+      ]
+    });
+    await writeFile(
+      join(databaseStatsDir, "data.csv"),
+      [
+        "id,title,database_id",
+        "db_deals,Deals,db_deals",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
     const relationCell = JSON.stringify([{ entityId: "pg_related", kind: "page" }]).replace(/"/g, '""');
     await writeFile(
       join(dealsDir, "data.csv"),
@@ -3188,7 +3209,11 @@ test("search service ranks title, content, database, and reference hits from a w
     assert.equal(fieldResults.hits.some((hit) => hit.title === "Alpha Target" && hit.matchTypes.includes("content")), true);
 
     const databaseResults = await search.query("Deals");
-    assert.equal(databaseResults.hits.some((hit) => hit.kind === "database" && hit.databaseName === "Deals"), true);
+    assert.equal(databaseResults.hits[0].kind, "database");
+    assert.equal(databaseResults.hits[0].databaseId, "db_deals");
+    assert.equal(databaseResults.hits[0].databaseName, "Deals");
+    assert.deepEqual(databaseResults.hits[0].matchTypes, ["title", "database"]);
+    assert.equal(databaseResults.hits.some((hit) => hit.kind === "page" && hit.pageId === "db_deals"), false);
 
     const pageResults = await search.query("Reference destination");
     assert.equal(pageResults.hits.some((hit) => hit.title === "Related Page"), true);
