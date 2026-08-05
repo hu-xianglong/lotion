@@ -684,8 +684,12 @@ async function collectEmbeddedSurfaceState(table) {
       rowCountRect: rect(rowCount),
       firstRowRect: rect(dataRows[0]),
       lastRowRect: rect(dataRows.at(-1)),
-      firstRowText: dataRows[0]?.textContent?.replace(/\s+/g, " ").trim() ?? "",
-      lastRowText: dataRows.at(-1)?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      firstRowText: dataRows[0]?.querySelector(".title-cell-editor input")?.value
+        ?? dataRows[0]?.textContent?.replace(/\s+/g, " ").trim()
+        ?? "",
+      lastRowText: dataRows.at(-1)?.querySelector(".title-cell-editor input")?.value
+        ?? dataRows.at(-1)?.textContent?.replace(/\s+/g, " ").trim()
+        ?? "",
       renderedDataRowCount: dataRows.length,
       virtualSpacerCount: surface.querySelectorAll(".virtual-spacer").length,
       titleText: title?.textContent?.trim() ?? "",

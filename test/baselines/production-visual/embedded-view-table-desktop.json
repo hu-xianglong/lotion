@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/embedded-view-table-desktop.png",
-    "sha256": "331cbd77999759a9d5f44e1f94c4649215ce57f1ca6678d08a1fb9904deb772f",
+    "sha256": "7661c83a94931bb8507f0e73142a321043e135947435c88d297e5a0ec77de978",
     "width": 712,
-    "height": 565
+    "height": 560
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-05",
+  "sourceTask": "tasks/done/embedded-database-icon-visual-baseline.md"
 }
