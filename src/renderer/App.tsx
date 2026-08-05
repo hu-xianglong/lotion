@@ -1763,6 +1763,7 @@ function AppContent() {
         bundle={activeBundle}
         view={view}
         databases={state.databases}
+        pages={state.pages}
         loadDurationMs={state.activeDatabaseLoadMs}
         onPickIcon={() => pickIconForDatabase(activeBundle.schema.id)}
         onPickCover={() => pickCoverForDatabase(activeBundle.schema.id)}

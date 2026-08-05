@@ -1811,7 +1811,8 @@ function testStandaloneDatabaseHeader(html) {
   assert.match(html, /class="page-header"/, "standalone database header should render");
   assert.match(html, /aria-label="Change icon"/, "database icon picker should use the localized accessible label");
   assert.match(html, /Project Tracker/, "database title should render");
-  assert.match(html, /Workspace \/ Operations/, "database path subtitle should render");
+  assert.match(html, /class="database-breadcrumb-link"[^>]*>Workspace<\/button>/, "resolved database parent should render as a link");
+  assert.match(html, /class="database-breadcrumb-current" aria-current="page">Operations<\/span>/, "current database should remain non-interactive");
   assert.match(html, /3 fields · 2 rows/, "database subtitle should include visible field and row counts");
   assert.match(html, /class="page-header-addition page-add-cover"[\s\S]*Add cover/, "localized cover affordance should render when no cover is set");
   assert.match(html, /class="database-open-window"/, "open-in-new-window affordance should render");
@@ -6576,6 +6577,10 @@ function rendererComponentEntry() {
       return renderToStaticMarkup(
         React.createElement(StandaloneDatabaseHeader, {
           bundle: makeDatabaseChromeBundle(),
+          breadcrumbs: [
+            { label: "Workspace", onOpen: () => {} },
+            { label: "Operations" }
+          ],
           onPickIcon: () => {},
           onPickCover: () => {},
           onClearCover: () => {},

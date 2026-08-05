@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type WheelEvent } from "react";
-import type { BatchRowsInput, BatchRowsResult, ColumnSummaryType, CreateViewInput, DatabaseBundle, DatabaseRecord, DatabaseSummary, EntityRef, FieldSchema, FieldType, RecordValue, SelectOption, TableView, TableViewPatch, UpdateCellInput } from "../../../shared/types";
+import type { BatchRowsInput, BatchRowsResult, ColumnSummaryType, CreateViewInput, DatabaseBundle, DatabaseRecord, DatabaseSummary, EntityRef, FieldSchema, FieldType, PageMeta, RecordValue, SelectOption, TableView, TableViewPatch, UpdateCellInput } from "../../../shared/types";
 import { formatDateForField, isDateLikeFieldType, parseDateValue, type DateTimeDisplayDefaults } from "../../../shared/date-values";
 import type { DatabaseViewProvider, Disposable, WorkspaceAPI } from "../../../shared/plugin-api";
 import { useDatabaseCache } from "../../context/database-cache";
@@ -235,6 +235,7 @@ interface DatabaseTableProps {
   bundle: DatabaseBundle;
   view: TableView;
   databases?: DatabaseSummary[];
+  pages?: PageMeta[];
   embedded?: boolean;
   embeddedTitle?: string;
   embeddedSubtitle?: string;
@@ -258,6 +259,7 @@ export const DatabaseTable = memo(function DatabaseTable({
   bundle,
   view,
   databases = [],
+  pages = [],
   embedded = false,
   embeddedTitle,
   embeddedSubtitle,
@@ -1358,6 +1360,22 @@ export const DatabaseTable = memo(function DatabaseTable({
     [activeView]
   );
 
+  const standaloneBreadcrumbs = useMemo(() => {
+    const segments = normalizedPath(bundle.schema.path);
+    if (segments.length <= 1) return [];
+    return segments.map((label, index) => {
+      if (index === segments.length - 1) return { label };
+      const prefix = segments.slice(0, index + 1);
+      const parentPage = pages.find((page) => pathsEqual(page.path, prefix));
+      if (parentPage) return { label, onOpen: () => void selectPage(parentPage.id) };
+      const parentDatabase = databases.find((database) =>
+        database.id !== bundle.schema.id && pathsEqual(database.path, prefix)
+      );
+      if (parentDatabase) return { label, onOpen: () => void selectDatabase(parentDatabase.id) };
+      return { label };
+    });
+  }, [bundle.schema.id, bundle.schema.path, databases, pages, selectDatabase, selectPage]);
+
   useEffect(() => {
     const disposable = pluginHost.views.onChange(() => {
       setViewProviderVersion((version) => version + 1);
@@ -1370,6 +1388,7 @@ export const DatabaseTable = memo(function DatabaseTable({
       {!embedded && (
         <StandaloneDatabaseHeader
           bundle={bundle}
+          breadcrumbs={standaloneBreadcrumbs}
           onPickIcon={onPickIcon}
           onPickCover={onPickCover}
           onClearCover={onClearCover}
@@ -2475,4 +2494,13 @@ export function diffTableView(current: TableView, next: TableView): TableViewPat
     (patch as Record<string, unknown>)[key] = value;
   }
   return patch;
+}
+
+function normalizedPath(path: string[] | undefined): string[] {
+  return (path ?? []).map((segment) => segment.trim()).filter(Boolean);
+}
+
+function pathsEqual(path: string[] | undefined, expected: string[]): boolean {
+  const actual = normalizedPath(path);
+  return actual.length === expected.length && actual.every((segment, index) => segment === expected[index]);
 }

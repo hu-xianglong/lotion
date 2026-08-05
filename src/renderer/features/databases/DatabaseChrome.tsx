@@ -10,6 +10,11 @@ import { CoverArea } from "../pages/CoverArea";
 
 export type ViewOrderMutationStatus = "submitted" | "failed" | "ignored";
 
+export interface DatabaseBreadcrumbItem {
+  label: string;
+  onOpen?: () => void;
+}
+
 export function viewOrderControlsBlocked(pending: boolean, retryable: boolean): boolean {
   return pending || retryable;
 }
@@ -93,6 +98,7 @@ export function DatabaseProperties({
 
 export function StandaloneDatabaseHeader({
   bundle,
+  breadcrumbs,
   onPickIcon,
   onPickCover,
   onClearCover,
@@ -100,6 +106,7 @@ export function StandaloneDatabaseHeader({
   onOpenInNewWindow
 }: {
   bundle: DatabaseBundle;
+  breadcrumbs?: DatabaseBreadcrumbItem[];
   onPickIcon?: () => void;
   onPickCover?: () => void;
   onClearCover?: () => void;
@@ -148,7 +155,30 @@ export function StandaloneDatabaseHeader({
         <div className="database-toolbar">
           <div className="database-title-wrap">
             <h1>{bundle.schema.name}</h1>
-            <div className="database-subtitle">{formatDbSubtitle(locale, bundle)}</div>
+            <div className="database-subtitle">
+              {breadcrumbs && breadcrumbs.length > 1 && (
+                <>
+                  <span className="database-breadcrumb">
+                    {breadcrumbs.map((item, index) => (
+                      <span className="database-breadcrumb-item" key={`${index}:${item.label}`}>
+                        {index > 0 && <span className="database-breadcrumb-separator" aria-hidden="true">/</span>}
+                        {item.onOpen ? (
+                          <button type="button" className="database-breadcrumb-link" onClick={item.onOpen}>
+                            {item.label}
+                          </button>
+                        ) : (
+                          <span className="database-breadcrumb-current" aria-current={index === breadcrumbs.length - 1 ? "page" : undefined}>
+                            {item.label}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </span>
+                  <span aria-hidden="true"> · </span>
+                </>
+              )}
+              <span>{formatDbStats(locale, bundle)}</span>
+            </div>
           </div>
           {onOpenInNewWindow && (
             <button
@@ -482,21 +512,12 @@ export function DatabaseViewTabsBar({
   );
 }
 
-function formatDbSubtitle(locale: string, bundle: DatabaseBundle): string {
+function formatDbStats(locale: string, bundle: DatabaseBundle): string {
   const fields = bundle.schema.fields.filter(
     (field) => !field.hidden && field.id !== "id"
   ).length;
   const rows = bundle.records.length;
-  const stats = locale === "zh"
+  return locale === "zh"
     ? `${fields} 个字段 · ${rows} 行`
     : `${fields} field${fields === 1 ? "" : "s"} · ${rows} row${rows === 1 ? "" : "s"}`;
-  const path = databasePathLabel(bundle.schema.path, bundle.schema.name);
-  return path ? `${path} · ${stats}` : stats;
-}
-
-function databasePathLabel(path: string[] | undefined, name: string): string {
-  const segments = (path ?? []).map((segment) => segment.trim()).filter(Boolean);
-  if (segments.length <= 1) return "";
-  if (segments.length === 1 && segments[0] === name) return "";
-  return segments.join(" / ");
 }

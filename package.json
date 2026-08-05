@@ -125,6 +125,7 @@
     "smoke:window-popout-ui": "tsc -p tsconfig.main.json && node scripts/smoke-window-popout-ui.mjs",
     "smoke:database-template-ui": "tsc -p tsconfig.main.json && node scripts/smoke-database-template-ui.mjs",
     "smoke:database-created-views-ui": "tsc -p tsconfig.main.json && node scripts/smoke-database-created-views-ui.mjs",
+    "smoke:database-breadcrumb-ui": "tsc -p tsconfig.main.json && node scripts/smoke-database-breadcrumb-ui.mjs",
     "smoke:database-view-persistence-ui": "tsc -p tsconfig.main.json && node scripts/smoke-database-view-persistence-ui.mjs",
     "smoke:database-interaction-ui": "tsc -p tsconfig.main.json && node scripts/smoke-database-interaction-ui.mjs",
     "smoke:database-multi-view-ui": "tsc -p tsconfig.main.json && node scripts/smoke-database-multi-view-ui.mjs",

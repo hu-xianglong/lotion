@@ -8800,6 +8800,34 @@ html[data-icon-theme="plum"] .cm-md-link-icon-default-wrap > svg {
   color: var(--ink-3);
 }
 
+.database-breadcrumb,
+.database-breadcrumb-item {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.database-breadcrumb-separator {
+  margin: 0 5px;
+  color: var(--ink-4);
+}
+
+.database-breadcrumb-link {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.database-breadcrumb-link:hover,
+.database-breadcrumb-link:focus-visible {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .database-open-window {
   width: 32px;
   height: 32px;
