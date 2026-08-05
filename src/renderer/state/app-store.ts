@@ -26,7 +26,8 @@ export type ActiveItem =
   | { type: "page"; id: string }
   | { type: "database"; id: string }
   | { type: "row_page"; databaseId: string; rowId: string; title?: string }
-  | { type: "manage"; kind: ManageKind };
+  | { type: "manage"; kind: ManageKind }
+  | { type: "startup"; returnTabId?: string };
 
 export interface ActiveRowPageRef {
   databaseId: string;

@@ -42,10 +42,11 @@ export interface LotionApiMetricsApi {
 }
 
 export const LOTION_RENDERER_API_CONTRACT = [
-  { group: "workspace", methods: ["create", "open", "getManifest", "getPagesTree", "listRecent", "forget", "openPicker", "reorderPages", "reorderDatabases", "listRecents", "pushRecent"] },
+  { group: "runtime", methods: ["ready"] },
+  { group: "workspace", methods: ["create", "open", "getManifest", "getPagesTree", "getStartupIndex", "listRowPageFiles", "listRecent", "forget", "openPicker", "reorderPages", "reorderDatabases", "listRecents", "pushRecent"] },
   { group: "pages", methods: ["list", "create", "duplicate", "get", "update", "rename", "delete"] },
   { group: "databases", methods: ["list", "listStats", "refreshStats", "create", "get", "delete", "updateMeta", "addField", "updateField", "copyFieldToSystemTime", "deleteField", "updateCell", "addRow", "deleteRow", "saveTemplate", "deleteTemplate"] },
-  { group: "views", methods: ["create", "duplicate", "update", "delete", "setDefault"] },
+  { group: "views", methods: ["create", "duplicate", "update", "patch", "reorder", "delete", "setDefault"] },
   { group: "rowPages", methods: ["open", "openByFilename", "update", "setFullWidth", "setSmallText"] },
   { group: "git", methods: ["status", "backupNow", "initRepository", "settings", "updateSettings", "configureRemote", "testRemoteAccess", "push", "fetchStatus", "pull", "pickSshKey", "listPageHistory", "previewPageVersion", "restorePageVersion", "squashPreflight"] },
   { group: "shell", methods: ["openLink"] },
@@ -64,10 +65,10 @@ export const LOTION_RENDERER_API_CONTRACT = [
 ] as const satisfies readonly LotionApiContractGroup[];
 
 export const LOTION_PACKAGE_API_CONTRACT = [
-  { group: "workspace", methods: ["createAt", "open", "getManifest", "getPagesTree", "reorderPages", "reorderDatabases", "listFavorites", "toggleFavorite", "listRecents", "pushRecent"] },
+  { group: "workspace", methods: ["createAt", "open", "getManifest", "getPagesTree", "getStartupIndex", "listRowPageFiles", "reorderPages", "reorderDatabases", "listFavorites", "toggleFavorite", "listRecents", "pushRecent"] },
   { group: "pages", methods: ["list", "create", "duplicate", "get", "update", "rename", "delete"] },
   { group: "databases", methods: ["list", "listStats", "refreshStats", "create", "get", "delete", "updateMeta", "addField", "updateField", "copyFieldToSystemTime", "deleteField", "updateCell", "addRow", "deleteRow", "saveTemplate", "deleteTemplate"] },
-  { group: "views", methods: ["create", "duplicate", "update", "delete", "setDefault"] },
+  { group: "views", methods: ["create", "duplicate", "update", "patch", "reorder", "delete", "setDefault"] },
   { group: "rowPages", methods: ["open", "openByFilename", "update", "setFullWidth", "setSmallText"] },
   { group: "attachments", methods: ["list", "get", "add", "importFiles"] },
   { group: "search", methods: ["query"] },
@@ -77,10 +78,13 @@ export const LOTION_PACKAGE_API_CONTRACT = [
 ] as const satisfies readonly LotionApiContractGroup[];
 
 export const LOTION_IPC_CHANNEL_METHOD_IDS: Record<string, string> = {
+  "runtime:ready": "runtime.ready",
   "workspace:create": "workspace.create",
   "workspace:open": "workspace.open",
   "workspace:getManifest": "workspace.getManifest",
   "workspace:getPagesTree": "workspace.getPagesTree",
+  "workspace:getStartupIndex": "workspace.getStartupIndex",
+  "workspace:listRowPageFiles": "workspace.listRowPageFiles",
   "workspace:listRecent": "workspace.listRecent",
   "workspace:forget": "workspace.forget",
   "workspace:openPicker": "workspace.openPicker",
@@ -114,6 +118,8 @@ export const LOTION_IPC_CHANNEL_METHOD_IDS: Record<string, string> = {
   "views:create": "views.create",
   "views:duplicate": "views.duplicate",
   "views:update": "views.update",
+  "views:patch": "views.patch",
+  "views:reorder": "views.reorder",
   "views:delete": "views.delete",
   "views:setDefault": "views.setDefault",
   "rowPages:open": "rowPages.open",

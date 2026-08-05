@@ -1,5 +1,5 @@
 import electron from "electron";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { GitSyncSettings, GitSyncSettingsInput } from "../../shared/types.js";
 import { fileService } from "./file-service.js";
 
@@ -49,6 +49,10 @@ export class AppConfigService {
 
   constructor(configPath?: string) {
     this.path = configPath ?? join(app.getPath("userData"), "app-config.json");
+  }
+
+  localCacheRoot(): string {
+    return join(dirname(this.path), "workspace-cache");
   }
 
   async load(): Promise<AppConfig> {

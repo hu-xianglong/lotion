@@ -1,0 +1,46 @@
+{
+  "id": "view_created_time_desc",
+  "databaseId": "db_tasks",
+  "name": "Created date desc",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "created_time",
+    "due_date",
+    "status",
+    "tags",
+    "done",
+    "priority",
+    "score",
+    "effort"
+  ],
+  "fieldOrder": [
+    "title",
+    "created_time",
+    "due_date",
+    "status",
+    "tags",
+    "done",
+    "priority",
+    "score",
+    "effort"
+  ],
+  "wrapFieldIds": [
+    "title",
+    "created_time",
+    "due_date",
+    "status",
+    "tags",
+    "done",
+    "priority",
+    "score",
+    "effort"
+  ],
+  "sorts": [
+    {
+      "fieldId": "created_time",
+      "direction": "desc"
+    }
+  ],
+  "filters": []
+}

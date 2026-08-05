@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "plugin-manager",
+  "theme": "light",
+  "viewport": {
+    "name": "wide",
+    "width": 1728,
+    "height": 1100
+  },
+  "image": {
+    "path": "test/baselines/production-visual/plugin-manager-wide.png",
+    "sha256": "c263a1d5f402c402e659cf137b130b9e55a2cba5cb381b7f2de02d7dd771a483",
+    "width": 912,
+    "height": 2259
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

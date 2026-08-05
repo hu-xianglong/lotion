@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertSearchAiArtifactContract } from "./lib/search-ai-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertNoDocumentHorizontalOverflow,
   assertWithinViewport,
@@ -33,20 +34,42 @@ const result = await withLotionUIHarness("search-ai-ui", async ({ artifactRoot, 
     const search = await assertSearchAiSearchTab(page, surface, fixture, viewport.name);
     const advanced = await assertSearchAiAdvancedTab(page, surface, viewport.name);
     const chat = await assertSearchAiChatTab(page, surface, fixture, viewport.name);
-    const snapshot = await captureElementSnapshot({
-      artifactRoot,
-      name: `search-ai-${viewport.name}`,
-      locator: surface,
-      metadata: {
-        phase: "search-ai",
-        search,
-        advanced,
-        chat,
-        viewport: viewport.name
-      },
-      page,
-      viewport
-    });
+    await stabilizeSearchAiSnapshot(page, surface);
+    await prepareSearchAiSnapshot(page, surface);
+    let visibleState;
+    let snapshot;
+    try {
+      visibleState = await collectSearchAiVisibleState(surface);
+      snapshot = await captureElementSnapshot({
+        artifactRoot,
+        name: `search-ai-${viewport.name}`,
+        locator: surface,
+        metadata: {
+          phase: "search-ai",
+          search,
+          advanced,
+          chat,
+          visibleState,
+          viewport: viewport.name
+        },
+        page,
+        viewport
+      });
+    } finally {
+      await restoreSearchAiSnapshot(page, surface);
+    }
+    const baselinePolicy = {
+      compact: "test/baselines/production-visual/search-ai-chat-handoff-compact.json",
+      desktop: "test/baselines/production-visual/search-ai-chat-handoff-desktop.json",
+      wide: "test/baselines/production-visual/search-ai-chat-handoff-wide.json"
+    }[viewport.name];
+    snapshot.perceptualBaseline = baselinePolicy && process.env.LOTION_SEARCH_AI_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: snapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
     await surface.getByRole("button", { name: "Close Search and AI" }).click();
     await surface.waitFor({ state: "detached", timeout: 5_000 });
     viewports.push({
@@ -60,12 +83,117 @@ const result = await withLotionUIHarness("search-ai-ui", async ({ artifactRoot, 
   });
   const summary = { cdpUrl, viewports, status: "passed" };
   summary.artifactContract = await assertSearchAiArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_SEARCH_AI_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
   });
   return summary;
 });
 
 console.log(JSON.stringify(result, null, 2));
+
+async function stabilizeSearchAiSnapshot(page, surface) {
+  await page.mouse.move(0, 0);
+  await surface.evaluate(async (root) => {
+    if (root.contains(document.activeElement) && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    await Promise.all(root.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
+async function prepareSearchAiSnapshot(page, surface) {
+  await surface.evaluate((root) => {
+    root.setAttribute("data-search-ai-snapshot-inline-style", root.getAttribute("style") ?? "");
+    root.style.boxSizing = "border-box";
+    root.style.width = "880px";
+    root.style.height = "368px";
+    root.style.minWidth = "880px";
+    root.style.maxWidth = "880px";
+    root.style.minHeight = "368px";
+    root.style.maxHeight = "368px";
+    root.style.overflow = "hidden";
+  });
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.setAttribute("data-search-ai-snapshot-style", "true");
+    style.textContent = `
+      [data-testid="search-ai-surface"],
+      [data-testid="search-ai-surface"] * {
+        -webkit-font-smoothing: antialiased !important;
+        font-feature-settings: normal !important;
+        font-kerning: none !important;
+        font-optical-sizing: none !important;
+        font-variant-ligatures: none !important;
+        text-rendering: geometricPrecision !important;
+      }
+    `;
+    document.head.appendChild(style);
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function restoreSearchAiSnapshot(page, surface) {
+  await surface.evaluate((root) => {
+    const original = root.getAttribute("data-search-ai-snapshot-inline-style") ?? "";
+    if (original) root.setAttribute("style", original);
+    else root.removeAttribute("style");
+    root.removeAttribute("data-search-ai-snapshot-inline-style");
+  });
+  await page.evaluate(() => {
+    for (const style of document.querySelectorAll("[data-search-ai-snapshot-style]")) style.remove();
+  });
+}
+
+async function collectSearchAiVisibleState(surface) {
+  return await surface.evaluate((root) => {
+    const rect = (node) => {
+      if (!(node instanceof Element)) return null;
+      const box = node.getBoundingClientRect();
+      return {
+        top: box.top,
+        right: box.right,
+        bottom: box.bottom,
+        left: box.left,
+        width: box.width,
+        height: box.height
+      };
+    };
+    const surfaceRect = root.getBoundingClientRect();
+    const selected = root.querySelector('[data-testid="search-ai-selected-source"]');
+    const selectedRect = selected?.getBoundingClientRect();
+    const primaryTabs = Array.from(root.querySelectorAll(".search-ai-primary-tabs [role=tab]"));
+    const text = root.textContent || "";
+    return {
+      activePrimaryTab: root.querySelector(".search-ai-primary-tabs [aria-selected=true]")?.textContent?.trim() ?? "",
+      primaryTabs: primaryTabs.map((tab) => {
+        const tabRect = tab.getBoundingClientRect();
+        return {
+          label: tab.textContent?.trim() ?? "",
+          fullyVisible: tabRect.left >= surfaceRect.left && tabRect.right <= surfaceRect.right + 0.5
+        };
+      }),
+      selectedSource: {
+        title: selected?.querySelector("strong")?.textContent?.trim() ?? "",
+        subtitle: selected?.querySelector("small")?.textContent?.trim() ?? "",
+        clientWidth: selected instanceof HTMLElement ? selected.clientWidth : 0,
+        scrollWidth: selected instanceof HTMLElement ? selected.scrollWidth : 0,
+        fullyVisible: Boolean(
+          selectedRect
+          && selectedRect.width > 0
+          && selectedRect.height > 0
+          && selectedRect.top >= surfaceRect.top
+          && selectedRect.bottom <= surfaceRect.bottom + 0.5
+        ),
+        rect: rect(selected)
+      },
+      storageLeakMatches: text.match(/databases\/(?:user|system)\/\S+|--(?:db|row|pg)_[a-z0-9_-]+|(?:data\.csv|[A-Za-z0-9_-]+--(?:row|pg)_[A-Za-z0-9_-]+\.md)/gi) || [],
+      surface: rect(root)
+    };
+  });
+}
 
 async function assertUnifiedSidebarEntry(page, label) {
   const footerLabels = await page.evaluate(() =>

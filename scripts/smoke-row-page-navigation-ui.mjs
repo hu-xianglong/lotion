@@ -23,7 +23,8 @@ const thresholdMs = Number(process.env.LOTION_ROW_PAGE_NAV_THRESHOLD_MS ?? 1500)
 
 const result = await withLotionUIHarness("row-page-navigation", async ({ artifactRoot, cdpUrl, openWorkspace, page }) => {
   const viewportResults = [];
-  await forEachViewport(page, selectedViewports(), async (viewport) => {
+  const expectedViewports = selectedViewports();
+  await forEachViewport(page, expectedViewports, async (viewport) => {
     const fixture = await createRowPageNavigationFixture(viewport.name);
 
     await openWorkspace(fixture.root);
@@ -88,7 +89,9 @@ const result = await withLotionUIHarness("row-page-navigation", async ({ artifac
     viewports: viewportResults,
     status: "passed"
   };
-  summary.artifactContract = await assertRowPageNavigationArtifactContract(summary);
+  summary.artifactContract = await assertRowPageNavigationArtifactContract(summary, {
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+  });
   return summary;
 });
 
@@ -266,10 +269,16 @@ async function assertOptionSearchActivation(page, fixture, viewport, { fieldName
     classes: button.className,
     text: button.textContent?.trim() ?? "",
     optionPills: button.querySelectorAll(".option-pill").length,
+    searchLabels: button.querySelectorAll(".row-property-option-search-label").length,
     tabIndex: button instanceof HTMLButtonElement ? button.tabIndex : null,
     role: button.getAttribute("role") ?? button.tagName.toLowerCase()
   }));
-  if (!String(buttonState.classes).includes("row-property-option-search-chip") || buttonState.optionPills !== 1 || !buttonState.text.includes(value)) {
+  if (
+    !String(buttonState.classes).includes("row-property-option-search-chip")
+    || buttonState.optionPills !== 0
+    || buttonState.searchLabels !== 1
+    || !buttonState.text.includes(value)
+  ) {
     throw new Error(`Row property option search is not rendered as a navigable chip: ${JSON.stringify({ fieldName, value, buttonState })}`);
   }
   if (activation === "keyboard") {
@@ -1353,6 +1362,7 @@ function defaultView(databaseId, fields) {
     visibleFieldIds: fields,
     fieldOrder: fields,
     wrapFieldIds: fields,
+    pageOpenMode: "full_page",
     sorts: [],
     filters: []
   };

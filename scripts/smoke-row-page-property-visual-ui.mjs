@@ -8,6 +8,8 @@ import {
   withLotionUIHarness
 } from "./ui-harness.mjs";
 import {
+  assertRowPagePropertyRecovery,
+  assertRowPagePropertyOptionRecovery,
   assertRowPagePropertyVisuals,
   createRowPagePropertyVisualFixture,
   expandPageDetailsPanel
@@ -29,11 +31,15 @@ const result = await withLotionUIHarness("row-page-property-visual", async ({ ar
     await expandPageDetailsPanel(page);
     await assertNoDocumentHorizontalOverflow(page, `row-property visual opened ${viewport.name}`, 2);
     const propertyVisuals = await assertRowPagePropertyVisuals({ artifactRoot, fixture, page, viewport });
+    const recovery = await assertRowPagePropertyRecovery(page, fixture, viewport.name);
+    const optionRecovery = await assertRowPagePropertyOptionRecovery(page, fixture, viewport.name);
     viewports.push({
       viewport: viewport.name,
       databaseId: fixture.databaseId,
       rowId: fixture.rowId,
       rowTitle: fixture.rowTitle,
+      recovery,
+      optionRecovery,
       propertyVisuals
     });
   });
@@ -45,7 +51,10 @@ const result = await withLotionUIHarness("row-page-property-visual", async ({ ar
   return {
     ...summary,
     artifactContract: await assertRowPagePropertyVisualArtifactContract(summary, {
-      expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+      expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+      requiredPerceptualBaselineViewportNames: process.env.LOTION_ROW_PROPERTY_SKIP_BASELINE === "1"
+        ? []
+        : expectedViewports.map((viewport) => viewport.name)
     }),
     viewportCoverage: assertHarnessViewportCoverage(summary)
   };

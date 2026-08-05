@@ -1,10 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement } from "react";
 import { isTagManageKind, tagFromManageKind, tagManageKind, type AppState, type ManageKind } from "../state/app-store";
 import { SearchBox } from "../features/search/SearchBox";
-import { BackupButton } from "../features/backup/BackupButton";
-import { NotionImportDialog } from "../../builtin-plugins/notion-import/NotionImportDialog";
 import { WorkspaceSelector } from "./WorkspaceSelector";
-import { ShortcutSettings } from "./ShortcutSettings";
 import { useLotionActions } from "../context/lotion-actions";
 import { useDatabaseCache } from "../context/database-cache";
 import { pluginHost } from "../plugin-host";
@@ -27,6 +24,11 @@ import { EntityIcon } from "./EntityIcon";
 import type { CreatePageInput, DatabaseSummary, PageMeta, PagesTree } from "../../shared/types";
 import { databaseFolderName, pageMarkdownFileName } from "../../shared/workspace-paths";
 import { Copy } from "lucide-react";
+
+const BackupButton = lazy(() => import("../features/backup/BackupButton").then((module) => ({ default: module.BackupButton })));
+const NotionImportDialog = lazy(() => import("../../builtin-plugins/notion-import/NotionImportDialog").then((module) => ({ default: module.NotionImportDialog })));
+const ShortcutSettings = lazy(() => import("./ShortcutSettings").then((module) => ({ default: module.ShortcutSettings })));
+const STARTUP_DIRECTORY_RENDER_LIMIT = 40;
 
 // ── Files section helpers ─────────────────────────────────────────────
 
@@ -70,6 +72,7 @@ function FileTreeRow({
               onToggle?.();
             }}
             aria-expanded={expanded}
+            aria-label={`${expanded ? "收起" : "展开"}${label}`}
           >
             {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
           </button>
@@ -98,6 +101,8 @@ interface FilesSectionProps {
   onSelectPage: (id: string) => void;
   onSelectDatabase: (id: string) => void;
   onOpenRowPageByFile: (databaseId: string, fileName: string) => void;
+  onLoadRowPageFiles: (databaseId: string) => void;
+  rowFilesByDatabase: Map<string, string[]>;
   filesLabel: string;
 }
 
@@ -110,6 +115,8 @@ function FilesSection({
   onSelectPage,
   onSelectDatabase,
   onOpenRowPageByFile,
+  onLoadRowPageFiles,
+  rowFilesByDatabase,
   filesLabel
 }: FilesSectionProps) {
   const rootOpen = expandedTreePaths.has("files");
@@ -168,9 +175,12 @@ function FilesSection({
                   name={database.name}
                   depth={2}
                   basePath="files/databases/user"
-                  rowFiles={tree?.databases.find((f) => f.databaseId === database.id)?.fileNames ?? []}
+                  rowFiles={rowFilesByDatabase.get(database.id)
+                    ?? tree?.databases.find((f) => f.databaseId === database.id)?.fileNames
+                    ?? []}
                   expandedTreePaths={expandedTreePaths}
                   onTogglePath={onTogglePath}
+                  onLoadRowPageFiles={onLoadRowPageFiles}
                   onSelectDatabase={onSelectDatabase}
                   onOpenRowPageByFile={onOpenRowPageByFile}
                 />
@@ -194,6 +204,7 @@ function FilesSection({
                   rowFiles={databaseId === "pages" ? tree?.topLevelPages.map((page) => pageMarkdownFileName(page.id, page.title)) ?? [] : []}
                   expandedTreePaths={expandedTreePaths}
                   onTogglePath={onTogglePath}
+                  onLoadRowPageFiles={onLoadRowPageFiles}
                   onSelectDatabase={onSelectDatabase}
                   onOpenRowPageByFile={databaseId === "pages"
                     ? (_databaseId, fileName) => {
@@ -219,6 +230,7 @@ interface DatabaseFileTreeProps {
   rowFiles: string[];
   expandedTreePaths: Set<string>;
   onTogglePath: (path: string) => void;
+  onLoadRowPageFiles: (databaseId: string) => void;
   onSelectDatabase: (id: string) => void;
   onOpenRowPageByFile: (databaseId: string, fileName: string) => void;
 }
@@ -231,6 +243,7 @@ function DatabaseFileTree({
   rowFiles,
   expandedTreePaths,
   onTogglePath,
+  onLoadRowPageFiles,
   onSelectDatabase,
   onOpenRowPageByFile
 }: DatabaseFileTreeProps) {
@@ -268,7 +281,10 @@ function DatabaseFileTree({
             label="pages/"
             expandable
             expanded={pagesOpen}
-            onToggle={() => onTogglePath(pagesPath)}
+            onToggle={() => {
+              onTogglePath(pagesPath);
+              if (!pagesOpen) onLoadRowPageFiles(databaseId);
+            }}
           />
           {pagesOpen && rowFiles.map((fileName) => (
             <FileTreeRow
@@ -377,12 +393,40 @@ export function Sidebar(props: SidebarProps) {
   // and uses path-based keys so each nested folder remembers its own
   // state regardless of where it appears.
   const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(new Set());
+  const [rowFilesByDatabase, setRowFilesByDatabase] = useState<Map<string, string[]>>(new Map());
   const [importOpen, setImportOpen] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pageContextMenu, setPageContextMenu] = useState<SidebarPageContextMenu | null>(null);
+  const [liveDatabaseViews, setLiveDatabaseViews] = useState<Map<string, NonNullable<DatabaseSummary["views"]>>>(new Map());
+  const [directoryHydrated, setDirectoryHydrated] = useState(false);
+  const [, setPluginRevision] = useState(0);
   const quickCreateRef = useRef<HTMLDivElement>(null);
   const settingsSummaryRef = useRef<HTMLElement>(null);
+  const rowFilesLoadingRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    const refreshPlugins = () => setPluginRevision((revision) => revision + 1);
+    window.addEventListener("lotion:builtin-plugins-ready", refreshPlugins);
+    return () => window.removeEventListener("lotion:builtin-plugins-ready", refreshPlugins);
+  }, []);
+
+  useEffect(() => {
+    rowFilesLoadingRef.current.clear();
+    setRowFilesByDatabase(new Map());
+    setDirectoryHydrated(false);
+  }, [props.state.manifest?.spaceId]);
+
+  useEffect(() => {
+    if (props.state.isLoading || directoryHydrated) return;
+    const hydrate = () => setDirectoryHydrated(true);
+    if ("requestIdleCallback" in window) {
+      const handle = window.requestIdleCallback(hydrate, { timeout: 500 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = globalThis.setTimeout(hydrate, 50);
+    return () => globalThis.clearTimeout(handle);
+  }, [directoryHydrated, props.state.isLoading]);
 
   useEffect(() => {
     if (!quickCreateOpen) return;
@@ -424,6 +468,16 @@ export function Sidebar(props: SidebarProps) {
     window.requestAnimationFrame(() => settingsSummaryRef.current?.focus());
   }, [props.settingsOpenRequest]);
 
+  useEffect(() => {
+    function updateDatabaseViews(event: Event) {
+      const detail = (event as CustomEvent<{ databaseId?: string; views?: NonNullable<DatabaseSummary["views"]> }>).detail;
+      if (!detail?.databaseId || !detail.views) return;
+      setLiveDatabaseViews((current) => new Map(current).set(detail.databaseId!, detail.views!));
+    }
+    window.addEventListener("lotion:database-views-changed", updateDatabaseViews);
+    return () => window.removeEventListener("lotion:database-views-changed", updateDatabaseViews);
+  }, []);
+
   function toggleTreePath(path: string) {
     setExpandedTreePaths((current) => {
       const next = new Set(current);
@@ -432,8 +486,26 @@ export function Sidebar(props: SidebarProps) {
       return next;
     });
   }
+
+  function loadRowPageFiles(databaseId: string) {
+    if (rowFilesByDatabase.has(databaseId) || rowFilesLoadingRef.current.has(databaseId)) return;
+    rowFilesLoadingRef.current.add(databaseId);
+    void window.lotion.workspace.listRowPageFiles(databaseId)
+      .then((fileNames) => {
+        setRowFilesByDatabase((current) => {
+          const next = new Map(current);
+          next.set(databaseId, fileNames);
+          return next;
+        });
+      })
+      .catch((error) => console.warn("[lotion] failed to load row-page files:", error))
+      .finally(() => rowFilesLoadingRef.current.delete(databaseId));
+  }
   const pages = props.state.pages;
-  const databases = props.state.databases;
+  const databases = props.state.databases.map((database) => ({
+    ...database,
+    views: liveDatabaseViews.get(database.id) ?? database.views
+  }));
   const tree = props.state.pagesTree;
   const active = props.state.activeItem;
   const sidebarTagOptions = collectSidebarTagOptions(pages, databases);
@@ -533,6 +605,7 @@ export function Sidebar(props: SidebarProps) {
           <SidebarTagSection
             key={section.key}
             section={section}
+            directoryHydrated={directoryHydrated}
             active={active}
             onOpenPage={actions.selectPage}
             onOpenDatabase={actions.selectDatabase}
@@ -551,6 +624,8 @@ export function Sidebar(props: SidebarProps) {
           onSelectPage={actions.selectPage}
           onSelectDatabase={actions.selectDatabase}
           onOpenRowPageByFile={actions.openRowPageByFile}
+          onLoadRowPageFiles={loadRowPageFiles}
+          rowFilesByDatabase={rowFilesByDatabase}
           filesLabel={t("sidebar.files")}
         />
       </div>
@@ -758,8 +833,12 @@ export function Sidebar(props: SidebarProps) {
           selectedTags={sidebarTags}
           onChange={setSidebarTags}
         />
-        <ShortcutSettings />
-        <BackupButton />
+        {settingsOpen && (
+          <Suspense fallback={null}>
+            <ShortcutSettings />
+            <BackupButton />
+          </Suspense>
+        )}
           </div>
         </details>
       </div>
@@ -778,7 +857,11 @@ export function Sidebar(props: SidebarProps) {
           onDelete={() => void deleteContextPage(pageContextMenu.page)}
         />
       )}
-      {importOpen && <NotionImportDialog onClose={() => setImportOpen(false)} />}
+      {importOpen && (
+        <Suspense fallback={null}>
+          <NotionImportDialog onClose={() => setImportOpen(false)} />
+        </Suspense>
+      )}
     </aside>
   );
 }
@@ -852,6 +935,7 @@ function buildSidebarSections(
 
 function SidebarTagSection({
   section,
+  directoryHydrated,
   active,
   onOpenPage,
   onOpenDatabase,
@@ -861,6 +945,7 @@ function SidebarTagSection({
   onPageContextMenu
 }: {
   section: SidebarTagSectionModel;
+  directoryHydrated: boolean;
   active: SidebarProps["state"]["activeItem"];
   onOpenPage: (id: string) => void;
   onOpenDatabase: (id: string) => void;
@@ -886,6 +971,15 @@ function SidebarTagSection({
     () => section.key === "page" ? buildSidebarPageTree(section.pages) : [],
     [section.key, section.pages]
   );
+  const renderedPageTree = directoryHydrated
+    ? pageTree
+    : pageTree.slice(0, STARTUP_DIRECTORY_RENDER_LIMIT);
+  const renderedPages = directoryHydrated
+    ? section.pages
+    : section.pages.slice(0, STARTUP_DIRECTORY_RENDER_LIMIT);
+  const renderedDatabases = directoryHydrated
+    ? section.databases
+    : section.databases.slice(0, STARTUP_DIRECTORY_RENDER_LIMIT);
   const [collapsedPageIds, togglePageNode] = useCollapsedPageTreeNodes(section.key);
 
   return (
@@ -946,7 +1040,7 @@ function SidebarTagSection({
           <span className="nav-item-count">{section.pages.length + section.databases.length}</span>
         </button>
       )}
-      {!collapsed && section.key === "page" && pageTree.map((node) => (
+      {!collapsed && section.key === "page" && renderedPageTree.map((node) => (
         <SidebarPageTreeItem
           key={`page-tree-${node.page.id}`}
           node={node}
@@ -958,7 +1052,7 @@ function SidebarTagSection({
           onPageContextMenu={onPageContextMenu}
         />
       ))}
-      {!collapsed && section.key !== "page" && section.pages.map((page) => (
+      {!collapsed && section.key !== "page" && renderedPages.map((page) => (
         <button
           key={`page-${section.key}-${page.id}`}
           className={active?.type === "page" && active.id === page.id ? "nav-item active" : "nav-item"}
@@ -970,16 +1064,32 @@ function SidebarTagSection({
           <span className="nav-item-label">{page.title}</span>
         </button>
       ))}
-      {!collapsed && section.databases.map((database) => (
-        <button
-          key={`database-${section.key}-${database.id}`}
-          className={activeDatabaseId === database.id ? "nav-item active" : "nav-item"}
-          onClick={() => onOpenDatabase(database.id)}
-          title={databasePathLabel(database) || database.name}
-        >
-          <span className="nav-item-icon"><EntityIcon kind="database" icon={database.icon} /></span>
-          <span className="nav-item-label">{database.name}</span>
-        </button>
+      {!collapsed && renderedDatabases.map((database) => (
+        <div key={`database-${section.key}-${database.id}`} className="sidebar-database-tree">
+          <button
+            className={activeDatabaseId === database.id ? "nav-item active" : "nav-item"}
+            onClick={() => onOpenDatabase(database.id)}
+            title={databasePathLabel(database) || database.name}
+          >
+            <span className="nav-item-icon"><EntityIcon kind="database" icon={database.icon} /></span>
+            <span className="nav-item-label">{database.name}</span>
+          </button>
+          {section.key === "database" && activeDatabaseId === database.id && database.views?.map((view) => (
+            <button
+              key={view.id}
+              type="button"
+              className="nav-item sidebar-database-view"
+              onClick={() => {
+                window.localStorage.setItem(`lotion.database.lastActiveView.${database.id}`, view.id);
+                onOpenDatabase(database.id);
+                window.dispatchEvent(new CustomEvent("lotion:select-database-view", { detail: { databaseId: database.id, viewId: view.id } }));
+              }}
+            >
+              <span className="nav-item-icon">↳</span>
+              <span className="nav-item-label">{view.name}</span>
+            </button>
+          ))}
+        </div>
       ))}
     </section>
   );

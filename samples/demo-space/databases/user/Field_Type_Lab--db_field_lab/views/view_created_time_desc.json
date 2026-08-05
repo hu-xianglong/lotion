@@ -1,0 +1,46 @@
+{
+  "id": "view_created_time_desc",
+  "databaseId": "db_field_lab",
+  "name": "Created date desc",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "created_time",
+    "reference_url",
+    "labels",
+    "target_date",
+    "status",
+    "enabled",
+    "computed_count",
+    "count"
+  ],
+  "fieldOrder": [
+    "title",
+    "created_time",
+    "reference_url",
+    "labels",
+    "target_date",
+    "status",
+    "enabled",
+    "computed_count",
+    "count"
+  ],
+  "wrapFieldIds": [
+    "title",
+    "created_time",
+    "reference_url",
+    "labels",
+    "target_date",
+    "status",
+    "enabled",
+    "computed_count",
+    "count"
+  ],
+  "sorts": [
+    {
+      "fieldId": "created_time",
+      "direction": "desc"
+    }
+  ],
+  "filters": []
+}

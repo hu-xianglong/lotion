@@ -1089,7 +1089,7 @@ function collectionResolveContext(collection: NhpElement): NotionCollectionResol
     const hash = normalizeNotionHash(row.getAttribute("id") ?? "");
     if (hash) rowHashes.add(hash);
   }
-  for (const link of collection.querySelectorAll("tbody a[href]")) {
+  for (const link of collection.querySelectorAll("a[href]")) {
     const href = link.getAttribute("href") ?? "";
     if (!href) continue;
     rowHrefs.add(href);

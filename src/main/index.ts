@@ -1,7 +1,6 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { isAbsolute } from "node:path";
 import { createMainWindow } from "./window.js";
-import { registerIpc } from "./ipc.js";
 import { registerPrivilegedSchemes, registerProtocolHandlers } from "./protocols.js";
 import { WorkspaceService } from "./services/workspace-service.js";
 import { AppConfigService } from "./services/app-config-service.js";
@@ -19,17 +18,48 @@ registerPrivilegedSchemes();
 
 const appConfig = new AppConfigService();
 const workspace = new WorkspaceService(appConfig);
-registerIpc(workspace, appConfig);
+let primaryWindow: BrowserWindow | undefined;
+let isQuitting = false;
+let ipcReady: Promise<void> | undefined;
+function ensureIpcReady(): Promise<void> {
+  ipcReady ??= import("./ipc.js").then(({ registerIpc }) => {
+    registerIpc(workspace, appConfig);
+  });
+  return ipcReady;
+}
+ipcMain.handle("runtime:ready", () => ensureIpcReady());
+
+function createPrimaryWindow(): BrowserWindow {
+  const window = createMainWindow();
+  primaryWindow = window;
+  window.on("close", (event) => {
+    if (process.platform !== "darwin" || isQuitting) return;
+    event.preventDefault();
+    window.hide();
+  });
+  window.on("closed", () => {
+    if (primaryWindow === window) primaryWindow = undefined;
+  });
+  return window;
+}
 
 app.whenReady().then(() => {
   registerProtocolHandlers(workspace);
-  createMainWindow();
+  createPrimaryWindow();
+  void ensureIpcReady();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+    if (primaryWindow && !primaryWindow.isDestroyed()) {
+      primaryWindow.show();
+      primaryWindow.focus();
+    } else {
+      createPrimaryWindow();
     }
   });
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("window-all-closed", () => {

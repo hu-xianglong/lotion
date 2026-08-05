@@ -60,7 +60,7 @@ for (const pageId of manifest.pages) {
   assert(Boolean(meta?.title), `page ${pageId} has title`);
   assert(Boolean(meta?.created_time), `page ${pageId} has created_time`);
   assert(Boolean(meta?.updated_time), `page ${pageId} has updated_time`);
-  assert(meta?.kind === "row_page", `page ${pageId} is stored as a default database row page`);
+  assert(meta?.kind === "page", `page ${pageId} is stored as a page entity`);
   assert(meta?.database_id === "pages", `page ${pageId} belongs to default pages database`);
   assert(meta?.row_id === pageId, `page ${pageId} default row id matches page id`);
   const expectedPageFile = pageMarkdownFileName(pageId, meta?.title);

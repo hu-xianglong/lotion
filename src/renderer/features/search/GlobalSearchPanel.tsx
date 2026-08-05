@@ -138,7 +138,7 @@ const SEARCH_COPY = {
       "lotion.toggle-vim-mode": "Toggle Vim mode",
       "lotion.toggle-raw-markdown": "Toggle raw Markdown",
       "lotion.toggle-embed-source": "Toggle embed source",
-      "lotion.toggle-favorite": "Toggle favorite for current item",
+      "lotion.toggle-favorite": "Toggle favorite for current page",
       "lotion.toggle-full-width": "Toggle full width for current page",
       "lotion.toggle-small-text": "Toggle small text for current page",
       "lotion.open-current-in-new-window": "Open current item in new window"
@@ -191,7 +191,7 @@ const SEARCH_COPY = {
       "lotion.toggle-vim-mode": "切换 Vim 模式",
       "lotion.toggle-raw-markdown": "切换原文模式",
       "lotion.toggle-embed-source": "切换嵌入源码显示",
-      "lotion.toggle-favorite": "收藏/取消收藏当前内容",
+      "lotion.toggle-favorite": "收藏/取消收藏当前页面",
       "lotion.toggle-full-width": "切换当前页面全宽",
       "lotion.toggle-small-text": "切换当前页面小字号",
       "lotion.open-current-in-new-window": "在新窗口打开当前项目"
@@ -785,9 +785,7 @@ function buildBuiltinCommandIndex(actions: LotionActions, locale: Locale): Comma
       id: "lotion.new-page",
       title: titles["lotion.new-page"],
       category: "Lotion",
-      run: async () => {
-        await actions.createPage();
-      }
+      run: async () => { await actions.createPage(); }
     },
     {
       id: "lotion.new-database",

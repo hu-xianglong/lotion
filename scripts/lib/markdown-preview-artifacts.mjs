@@ -1,7 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 
 const DEFAULT_EXPECTED_VIEWPORTS = ["desktop", "compact"];
-const REQUIRED_SNAPSHOT_PHASES = ["initial", "widgets"];
+const REQUIRED_SNAPSHOT_PHASES = [
+  "initial",
+  "selected-imported-highlight",
+  "imported-toggle",
+  "widgets"
+];
 
 export function requiredMarkdownPreviewKeys() {
   return [
@@ -27,31 +32,45 @@ export async function assertMarkdownPreviewArtifactContract(result, options = {}
     throw new Error(`Markdown preview smoke status must be passed, received ${JSON.stringify(result.status)}`);
   }
   const expectedViewportNames = options.expectedViewportNames ?? DEFAULT_EXPECTED_VIEWPORTS;
-  const viewports = Array.isArray(result.viewports) ? result.viewports : [];
-  const observedViewportNames = viewports.map((entry) => viewportName(entry)).filter(Boolean);
+  const requiredPerceptualBaselineViewportNames = options.requiredPerceptualBaselineViewportNames ?? [];
+  const entries = Array.isArray(result.viewports) ? result.viewports : [];
+  const observedViewportNames = entries.map((entry) => viewportName(entry)).filter(Boolean);
   for (const expected of expectedViewportNames) {
     if (!observedViewportNames.includes(expected)) {
       throw new Error(`Markdown preview artifact contract missing viewport ${expected}`);
     }
   }
 
-  const snapshots = [];
+  const viewports = [];
   for (const expected of expectedViewportNames) {
-    const entry = viewports.find((candidate) => viewportName(candidate) === expected);
+    const entry = entries.find((candidate) => viewportName(candidate) === expected);
     if (!entry) continue;
-    snapshots.push(await validateViewport(entry, expected));
+    viewports.push(await validateViewport(entry, expected, {
+      requirePerceptualBaseline: requiredPerceptualBaselineViewportNames.includes(expected)
+    }));
   }
+
+  const snapshots = [
+    ...viewports.flatMap((entry) => entry.phaseSnapshots
+      .filter((snapshot) => snapshot.phase === "selected-imported-highlight")
+      .map((snapshot) => ({ viewport: entry.viewport, ...snapshot }))),
+    ...viewports.flatMap((entry) => entry.phaseSnapshots
+      .filter((snapshot) => snapshot.phase !== "selected-imported-highlight")
+      .map((snapshot) => ({ viewport: entry.viewport, ...snapshot })))
+  ];
 
   return {
     status: "passed",
     expectedViewportNames,
     observedViewportNames,
     snapshotCount: snapshots.length,
-    snapshots
+    imageBytesTotal: snapshots.reduce((total, snapshot) => total + snapshot.imageBytes, 0),
+    snapshots,
+    viewports
   };
 }
 
-async function validateViewport(entry, expectedViewportName) {
+async function validateViewport(entry, expectedViewportName, { requirePerceptualBaseline }) {
   const visualSnapshots = Array.isArray(entry.visualSnapshots) ? entry.visualSnapshots : [];
   const phaseSummaries = [];
   for (const phase of REQUIRED_SNAPSHOT_PHASES) {
@@ -59,7 +78,9 @@ async function validateViewport(entry, expectedViewportName) {
     if (!snapshot) {
       throw new Error(`Markdown preview ${expectedViewportName} missing ${phase} snapshot`);
     }
-    phaseSummaries.push(await validateSnapshot(snapshot, expectedViewportName, phase));
+    phaseSummaries.push(await validateSnapshot(snapshot, expectedViewportName, phase, {
+      requirePerceptualBaseline: phase === "selected-imported-highlight" && requirePerceptualBaseline
+    }));
   }
 
   const rendered = entry.rendered;
@@ -81,7 +102,9 @@ async function validateViewport(entry, expectedViewportName) {
       phase: item.phase,
       imagePath: item.imagePath,
       metadataPath: item.metadataPath,
-      imageBytes: item.imageBytes
+      imageBytes: item.imageBytes,
+      ...(item.selectedSourceState ? { selectedSourceState: item.selectedSourceState } : {}),
+      ...(item.perceptualBaseline ? { perceptualBaseline: item.perceptualBaseline } : {})
     })),
     previews: {
       callout: true,
@@ -100,7 +123,7 @@ async function validateViewport(entry, expectedViewportName) {
   };
 }
 
-async function validateSnapshot(snapshot, expectedViewportName, phase) {
+async function validateSnapshot(snapshot, expectedViewportName, phase, { requirePerceptualBaseline }) {
   const imagePath = stringValue(snapshot.imagePath, `Markdown preview ${expectedViewportName} ${phase} imagePath`);
   const metadataPath = stringValue(snapshot.metadataPath, `Markdown preview ${expectedViewportName} ${phase} metadataPath`);
   const imageStats = await stat(imagePath);
@@ -115,12 +138,135 @@ async function validateSnapshot(snapshot, expectedViewportName, phase) {
   if (metadata?.metadata?.phase !== phase) {
     throw new Error(`Markdown preview ${expectedViewportName} ${phase} metadata phase mismatch: ${metadata?.metadata?.phase}`);
   }
+  validatePhaseMetadata(metadata.metadata, expectedViewportName, phase);
+  let selectedSourceState = null;
+  let perceptualBaseline = null;
+  if (phase === "selected-imported-highlight") {
+    validateSelectedSourceState(snapshot.selectedSourceState, expectedViewportName, "entry");
+    validateSelectedSourceState(metadata.metadata?.selectedSourceState, expectedViewportName, "metadata");
+    selectedSourceState = snapshot.selectedSourceState;
+    perceptualBaseline = await assertPerceptualBaseline(
+      snapshot.perceptualBaseline,
+      { imagePath, metadataPath },
+      expectedViewportName,
+      { required: requirePerceptualBaseline }
+    );
+  }
   return {
     phase,
     imagePath,
     metadataPath,
-    imageBytes: imageStats.size
+    imageBytes: imageStats.size,
+    ...(selectedSourceState ? { selectedSourceState } : {}),
+    ...(perceptualBaseline ? { perceptualBaseline } : {})
   };
+}
+
+function validateSelectedSourceState(state, viewportName, phase) {
+  for (const key of ["editorRect", "scrollerRect", "lineRect", "highlightRect", "editSourceRect", "selectionRect"]) {
+    const rect = state?.[key];
+    if (!rect || Number(rect.width) <= 0 || Number(rect.height) <= 0) {
+      throw new Error(`Markdown preview ${viewportName} missing ${phase} selected-source ${key} geometry: ${JSON.stringify(rect)}`);
+    }
+  }
+  if (
+    !String(state.rawSourceText || "").includes('data-lotion-bg="yellow"')
+    || !String(state.rawSourceText || "").includes("**")
+    || !String(state.rawSourceText || "").includes("From now on, make it a personal commitment")
+    || state.selectedText !== "Selection probe"
+    || Number(state.selectedRangeCount) < 1
+    || state.editSourceText !== "Edit source"
+    || state.lineInsideEditor !== true
+    || state.lineIntersectsScroller !== true
+    || state.highlightInsideLine !== true
+    || state.selectionInsideLine !== true
+    || state.selectionIntersectsScroller !== true
+    || state.editSourceInsideLine !== true
+    || state.editSourceIntersectsScroller !== true
+    || state.selectionOverlapsEditSource !== false
+    || state.highlightOverlapsEditSource !== false
+    || state.lineVisibility !== "visible"
+    || Number(state.lineOpacity) < 0.99
+    || state.highlightVisibility !== "visible"
+    || Number(state.highlightOpacity) < 0.99
+    || state.editSourceVisibility !== "visible"
+    || Number(state.editSourceOpacity) < 0.99
+    || Number(state.documentHorizontalOverflow) > 2
+    || Number(state.editorHorizontalOverflow) > 2
+  ) {
+    throw new Error(`Markdown preview ${viewportName} found clipped, hidden, or incomplete ${phase} selected source: ${JSON.stringify(state)}`);
+  }
+}
+
+async function assertPerceptualBaseline(baseline, snapshot, viewportName, { required }) {
+  if (!baseline) {
+    if (required) throw new Error(`Markdown preview artifact contract missing committed selected-source baseline for ${viewportName}`);
+    return null;
+  }
+  if (
+    baseline.kind !== "lotion-png-visual-diff"
+    || baseline.status !== "passed"
+    || baseline.actualPath !== snapshot.imagePath
+    || !baseline.dimensionsMatch
+    || baseline.diffPixels > baseline.maxDiffPixels
+    || baseline.diffRatio > baseline.maxDiffRatio
+  ) {
+    throw new Error(`Markdown preview artifact contract selected-source baseline failed for ${viewportName}: ${JSON.stringify(baseline)}`);
+  }
+  for (const [label, path] of Object.entries({
+    expected: baseline.expectedPath,
+    diff: baseline.diffPath,
+    metadata: baseline.metadataPath,
+    policy: baseline.policyPath
+  })) {
+    if (!path || (await stat(path)).size <= 0) {
+      throw new Error(`Markdown preview artifact contract missing ${label} selected-source baseline evidence for ${viewportName}: ${path ?? "missing"}`);
+    }
+  }
+  const diffMetadata = JSON.parse(await readFile(baseline.metadataPath, "utf8"));
+  if (diffMetadata.status !== "passed" || diffMetadata.actualPath !== baseline.actualPath || diffMetadata.expectedPath !== baseline.expectedPath) {
+    throw new Error(`Markdown preview artifact contract selected-source diff metadata mismatch for ${viewportName}: ${JSON.stringify(diffMetadata)}`);
+  }
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA,
+    policy: baseline.policy
+  };
+}
+
+function validatePhaseMetadata(metadata, viewportName, phase) {
+  if (phase === "selected-imported-highlight") {
+    if (
+      metadata?.selectionBackgroundTransparent !== true ||
+      metadata?.sourceEditable !== true ||
+      !Number.isFinite(metadata?.blockBackgroundAlpha) ||
+      metadata.blockBackgroundAlpha >= 1
+    ) {
+      throw new Error(`Markdown preview ${viewportName} selected highlight metadata is incomplete`);
+    }
+  }
+  if (phase === "imported-toggle") {
+    if (
+      metadata?.importedToggleSummary !== "收据" ||
+      metadata?.importedToggleOpen !== true ||
+      metadata?.importedToggleBodyTextPreserved !== true ||
+      !(Number(metadata?.importedToggleImageCount) >= 1)
+    ) {
+      throw new Error(`Markdown preview ${viewportName} imported toggle metadata is incomplete`);
+    }
+  }
 }
 
 function validateInlineMarkdown(rendered, viewportName) {

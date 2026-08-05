@@ -3,12 +3,29 @@
   "databaseId": "db_view_lab",
   "name": "Active by rank",
   "type": "table",
-  "visibleFieldIds": ["title", "status", "rank", "owner"],
-  "fieldOrder": ["title", "status", "rank", "owner"],
+  "visibleFieldIds": [
+    "title",
+    "status",
+    "rank",
+    "owner"
+  ],
+  "fieldOrder": [
+    "title",
+    "status",
+    "owner",
+    "rank"
+  ],
   "sorts": [
-    { "fieldId": "rank", "direction": "asc" }
+    {
+      "fieldId": "rank",
+      "direction": "asc"
+    }
   ],
   "filters": [
-    { "fieldId": "status", "operator": "is", "value": "Active" }
+    {
+      "fieldId": "status",
+      "operator": "is",
+      "value": "Active"
+    }
   ]
 }

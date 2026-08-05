@@ -34,7 +34,7 @@ doing something.
   - Enter activates either navigation or command execution;
   - Escape closes and restores prior focus.
 - Keep shortcut display labels compatible with the future shortcut registry in
-  `tasks/todo/keyboard-shortcut-settings-and-registry.md`.
+  `tasks/done/keyboard-shortcut-settings-and-registry.md`.
 - Keep command execution confirmation out of this task unless a command is
   destructive; destructive command confirmation should be handled per command.
 - Preserve the existing global search API and search backend unless a small

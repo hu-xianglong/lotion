@@ -137,7 +137,7 @@ function createRendererWorkspace(): WorkspaceAPI {
       const rowPage = await lotion().rowPages.open(databaseId, rowId);
       return { meta: rowPage.meta, markdown: rowPage.markdown };
     },
-    addRow: (databaseId) => lotion().databases.addRow(databaseId),
+    addRow: (databaseId, initialValues) => lotion().databases.addRow(databaseId, undefined, initialValues),
     updateCell: (input) => lotion().databases.updateCell(input),
     deleteRow: (databaseId, rowId) =>
       lotion().databases.deleteRow({ databaseId, rowId }),
@@ -146,6 +146,8 @@ function createRendererWorkspace(): WorkspaceAPI {
     createView: (input) => lotion().views.create(input),
     duplicateView: (databaseId, viewId, name) => lotion().views.duplicate({ databaseId, viewId, name }),
     updateView: (input) => lotion().views.update(input),
+    patchView: (input) => lotion().views.patch(input),
+    reorderViews: (input) => lotion().views.reorder(input),
     deleteView: (databaseId, viewId) => lotion().views.delete({ databaseId, viewId }),
     setDefaultView: (databaseId, viewId) => lotion().views.setDefault({ databaseId, viewId }),
 

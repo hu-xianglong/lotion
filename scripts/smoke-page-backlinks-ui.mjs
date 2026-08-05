@@ -43,6 +43,7 @@ const result = await withLotionUIHarness("page-backlinks-ui", async ({ artifactR
 
     const rendered = await readBacklinksPanel(page);
     assertBacklinksPanel(rendered, fixture);
+    const externalRefresh = await exerciseExternalBacklinkRefresh(page, fixture);
     await assertNoDocumentHorizontalOverflow(page, `page backlinks initial ${viewport.name}`);
     const initialPanelRect = await rectForLocator(panel);
 
@@ -70,6 +71,7 @@ const result = await withLotionUIHarness("page-backlinks-ui", async ({ artifactR
       panelRect,
       phase: "page-backlinks",
       rendered,
+      externalRefresh,
       itemLayout: refreshedItemLayout,
       repeatedPageOpens,
       seededPageOpens,
@@ -92,6 +94,7 @@ const result = await withLotionUIHarness("page-backlinks-ui", async ({ artifactR
       initialPanelRect,
       initialItemLayout,
       rendered,
+      externalRefresh,
       openedPropertyRow,
       opened,
       repeatedPageOpens,
@@ -122,6 +125,23 @@ async function openTargetPage(page, fixture) {
     fixture.targetTitle,
     { timeout: 8_000 }
   );
+}
+
+async function exerciseExternalBacklinkRefresh(page, fixture) {
+  const sourceItem = page.locator(".page-backlink-title").filter({ hasText: fixture.sourceTitle }).first();
+  const unlinkedMarkdown = `# ${fixture.sourceTitle}\n\nSource page for backlinks smoke.\n\nExternal edit removed the target link.\n`;
+  await writeFile(join(fixture.root, fixture.sourcePath), unlinkedMarkdown, "utf8");
+  await sourceItem.waitFor({ state: "detached", timeout: 8_000 });
+  const removed = await readBacklinksPanel(page);
+  await writeFile(join(fixture.root, fixture.sourcePath), fixture.sourceMarkdown, "utf8");
+  await page.locator(".page-backlink-title").filter({ hasText: fixture.sourceTitle }).first().waitFor({ timeout: 8_000 });
+  const restored = await readBacklinksPanel(page);
+  return {
+    removedWithoutNavigation: !removed.items.some((item) => item.sourceTitle === fixture.sourceTitle),
+    restoredWithoutNavigation: restored.items.some((item) => item.sourceTitle === fixture.sourceTitle),
+    removedCount: Number(removed.count),
+    restoredCount: Number(restored.count)
+  };
 }
 
 async function expandPageDetails(page) {
@@ -534,7 +554,10 @@ function assertBacklinksPanel(rendered, fixture) {
   if (!markdownBacklink.context.includes("L5")) {
     throw new Error(`Backlinks panel did not show markdown line context: ${JSON.stringify(rendered)}`);
   }
-  if (!markdownBacklink.excerpt.includes(`See [${fixture.targetTitle}]`)) {
+  if (
+    !markdownBacklink.excerpt.includes(`See ${fixture.targetTitle}.`) ||
+    markdownBacklink.excerpt.includes(fixture.targetPageId)
+  ) {
     throw new Error(`Backlinks panel did not show source excerpt: ${JSON.stringify(rendered)}`);
   }
   if (!propertyBacklink) {
@@ -699,6 +722,7 @@ async function createBacklinksFixture() {
   const stressSourcePaths = stressSourcePageIds.map((pageId, index) =>
     workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(pageId, stressSourceTitles[index]))
   );
+  const sourceMarkdown = `# ${sourceTitle}\n\nSource page for backlinks smoke.\n\nSee [${targetTitle}](${targetPath}).\n\nRepeated [${targetTitle}](${targetPath}).\n`;
 
   await mkdir(join(pagesDir, "pages"), { recursive: true });
   await mkdir(join(pagesDir, "views"), { recursive: true });
@@ -782,7 +806,7 @@ async function createBacklinksFixture() {
   await writeFile(join(root, targetPath), `# ${targetTitle}\n\nTarget page for backlinks smoke.\n`, "utf8");
   await writeFile(
     join(root, sourcePath),
-    `# ${sourceTitle}\n\nSource page for backlinks smoke.\n\nSee [${targetTitle}](${targetPath}).\n\nRepeated [${targetTitle}](${targetPath}).\n`,
+    sourceMarkdown,
     "utf8"
   );
   await writeFile(
@@ -828,6 +852,8 @@ async function createBacklinksFixture() {
     propertyFieldName,
     stressSourcePageIds,
     stressSourceTitles,
+    sourcePath,
+    sourceMarkdown,
     expectedTargetBacklinkCount: stressSourceCount + 2
   };
 }

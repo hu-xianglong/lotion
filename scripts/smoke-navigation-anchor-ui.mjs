@@ -189,30 +189,32 @@ async function waitForScrollableEditor(page) {
 }
 
 async function clickVisibleAnchorLine(page) {
-  const lineText = await page.waitForFunction(() => {
-    const lines = Array.from(document.querySelectorAll('[data-testid="markdown-editor"] .cm-line'))
-      .map((line) => line.textContent ?? "")
-      .filter((text) => /^Anchor paragraph \d+/.test(text));
-    const middle = lines.find((text) => {
+  const target = await page.waitForFunction(() => {
+    const scroller = document.querySelector('[data-testid="markdown-editor"] .cm-scroller');
+    if (!(scroller instanceof HTMLElement)) return false;
+    const viewport = scroller.getBoundingClientRect();
+    const line = Array.from(scroller.querySelectorAll(".cm-line")).find((candidate) => {
+      const text = candidate.textContent ?? "";
       const match = /^Anchor paragraph (\d+)/.exec(text);
-      return match && Number(match[1]) > 20;
+      if (!match || Number(match[1]) <= 20) return false;
+      const rect = candidate.getBoundingClientRect();
+      return rect.top >= viewport.top + 8 && rect.bottom <= viewport.bottom - 8;
     });
-    return middle || false;
+    if (!(line instanceof HTMLElement)) return false;
+    const rect = line.getBoundingClientRect();
+    return {
+      text: line.textContent ?? "",
+      x: Math.min(rect.right - 8, rect.left + 80),
+      y: rect.top + Math.min(12, rect.height / 2)
+    };
   }, null, { timeout: 8_000 }).then((handle) => handle.jsonValue());
-  let clicked = false;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const line = page.locator('[data-testid="markdown-editor"] .cm-line').filter({ hasText: lineText }).first();
-    await line.click({ force: true, position: { x: 80, y: 12 }, timeout: 2_000 }).catch(() => undefined);
-    clicked = await page.waitForFunction(
-      ({ expectedText }) => document.querySelector('[data-testid="markdown-editor"] .cm-activeLine')
-        ?.textContent?.includes(expectedText) ?? false,
-      { expectedText: lineText },
-      { timeout: 1_500 }
-    ).then(() => true).catch(() => false);
-    if (clicked) break;
-    await page.waitForTimeout(100);
-  }
-  if (!clicked) throw new Error(`Could not activate virtualized anchor line: ${lineText}`);
+  const lineText = target.text;
+  await page.mouse.click(target.x, target.y);
+  await page.waitForFunction(
+    ({ expectedText }) => document.querySelector('[data-testid="markdown-editor"] .cm-activeLine')?.textContent?.includes(expectedText),
+    { expectedText: lineText },
+    { timeout: 5_000 }
+  );
   await nextAnimationFrame(page);
   await nextAnimationFrame(page);
   return lineText;

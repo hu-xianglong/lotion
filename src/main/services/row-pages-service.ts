@@ -1,4 +1,4 @@
-import { relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import type {
   DatabaseBundle,
   DatabaseRecord,
@@ -31,9 +31,10 @@ export class RowPagesService {
 
   constructor(
     private readonly workspace: WorkspaceService,
-    private readonly databases: DatabaseService
+    private readonly databases: DatabaseService,
+    pageRecords?: PagesDatabaseService
   ) {
-    this.pageRecords = new PagesDatabaseService(workspace);
+    this.pageRecords = pageRecords ?? new PagesDatabaseService(workspace);
   }
 
   async openByFilename(databaseId: string, fileName: string): Promise<RowPageDocument> {
@@ -156,6 +157,43 @@ export class RowPagesService {
     return this.open(databaseId, rowId);
   }
 
+  async duplicate(
+    databaseId: string,
+    schema: DatabaseBundle["schema"],
+    sourceRecord: DatabaseRecord,
+    targetRecord: DatabaseRecord,
+    now: string
+  ): Promise<void> {
+    const targetId = String(targetRecord.id ?? "");
+    if (!targetId) throw new Error("Duplicated row is missing an id.");
+    const targetTitle = String(targetRecord.title ?? "").trim() || "Untitled";
+    const sourceMeta = await this.rowPageMeta(schema, sourceRecord);
+    const targetBodyPath = await this.copyBodyForDuplicate(databaseId, sourceRecord, targetId, targetTitle);
+    try {
+      await this.pageRecords.upsert({
+        meta: {
+          ...sourceMeta,
+          id: targetId,
+          title: targetTitle,
+          created_time: now,
+          updated_time: now,
+          path: sourceMeta.path?.length
+            ? [...sourceMeta.path.slice(0, -1), targetTitle]
+            : sourceMeta.path
+        },
+        kind: "page",
+        bodyPath: targetBodyPath,
+        databaseId,
+        rowId: targetId
+      });
+    } catch (error) {
+      if (targetBodyPath) {
+        await fileService.remove(join(this.workspace.requirePaths().root, targetBodyPath), { force: true }).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
   /** Hook: invoked by DatabaseService when a row's title cell changes. */
   async handleTitleChanged(databaseId: string, rowId: string, newTitle: string): Promise<void> {
     const bundle = await this.databases.get(databaseId);
@@ -166,10 +204,10 @@ export class RowPagesService {
   }
 
   /** Hook: invoked by DatabaseService when a row is about to be deleted. */
-  async handleRowDeleted(databaseId: string, record: DatabaseRecord): Promise<void> {
+  async handleRowDeleted(databaseId: string, record: DatabaseRecord, preservedBodyPath?: string): Promise<void> {
     const rowId = String(record.id ?? "");
     if (!rowId) return;
-    const bodyPath = await this.pageRecords.getBodyPath(rowId);
+    const bodyPath = preservedBodyPath ?? await this.pageRecords.getBodyPath(rowId);
     if (bodyPath) await fileService.remove(`${this.workspace.requirePaths().root}/${bodyPath}`, { force: true });
     const legacyFileName = String(record.page_file ?? "");
     if (legacyFileName) await fileService.remove(this.workspace.requirePaths().rowPage(databaseId, legacyFileName), { force: true });
@@ -219,7 +257,8 @@ export class RowPagesService {
 
   private async readMarkdown(databaseId: string, record: DatabaseRecord): Promise<string> {
     const candidates = [
-      this.bodyPathFromRecord(databaseId, record)
+      this.bodyPathFromRecord(databaseId, record),
+      this.legacyBodyPathFromRecord(databaseId, record)
     ].filter((candidate): candidate is string => Boolean(candidate));
 
     const paths = this.workspace.requirePaths();
@@ -256,6 +295,35 @@ export class RowPagesService {
     return "";
   }
 
+  private async copyBodyForDuplicate(
+    databaseId: string,
+    sourceRecord: DatabaseRecord,
+    targetId: string,
+    targetTitle: string
+  ): Promise<string | undefined> {
+    const storedBodyPath = await this.pageRecords.getBodyPath(String(sourceRecord.id ?? ""));
+    const candidates = [
+      this.bodyPathFromRecord(databaseId, sourceRecord),
+      this.legacyBodyPathFromRecord(databaseId, sourceRecord),
+      storedBodyPath
+    ].filter((candidate, index, all): candidate is string => Boolean(candidate) && all.indexOf(candidate) === index);
+    if (candidates.length === 0) return undefined;
+
+    const paths = this.workspace.requirePaths();
+    const targetBodyPath = pageBodyPath(targetId, targetTitle);
+    const targetAbsPath = join(paths.root, targetBodyPath);
+    for (const candidate of candidates) {
+      const sourceAbsPath = candidate.startsWith(paths.root) ? candidate : join(paths.root, candidate);
+      try {
+        await fileService.copy(sourceAbsPath, targetAbsPath);
+        return targetBodyPath;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return undefined;
+  }
+
   private bodyPathFromRecord(databaseId: string, record: DatabaseRecord): string | undefined {
     const bodyPath = String(record.body_path ?? "").trim();
     if (bodyPath) return bodyPath;
@@ -263,6 +331,16 @@ export class RowPagesService {
     if (!legacyFileName) return undefined;
     const paths = this.workspace.requirePaths();
     return relative(paths.root, paths.rowPage(databaseId, legacyFileName)).split("\\").join("/");
+  }
+
+  private legacyBodyPathFromRecord(databaseId: string, record: DatabaseRecord): string | undefined {
+    const fileName = String(record.page_file ?? "").trim();
+    if (!fileName || basename(fileName) !== fileName) return undefined;
+    const paths = this.workspace.requirePaths();
+    // Early Notion imports stored row bodies separately from their database at
+    // pages/db_<databaseId>/<page_file>. Keep the current database-local path
+    // first, then fall back to this read-compatible legacy layout.
+    return relative(paths.root, join(paths.pagesDir(), `db_${databaseId}`, fileName)).split("\\").join("/");
   }
 
   private async rowPageMeta(schema: DatabaseBundle["schema"], record: DatabaseRecord): Promise<PageMeta> {

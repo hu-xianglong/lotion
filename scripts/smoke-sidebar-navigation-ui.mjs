@@ -220,7 +220,14 @@ async function assertCreateChildPageFromTree(page, fixture, viewport) {
   }
   await page.keyboard.press("Enter");
   const childPageId = await waitForNewPageId(page, pageIdsBeforeCreate);
-  await page.locator(".title-input").first().waitFor({ timeout: 8_000 });
+  await page.waitForFunction(
+    () => {
+      const input = document.querySelector(".title-input");
+      return input instanceof HTMLInputElement && /^(Untitled|未命名)$/.test(input.value);
+    },
+    null,
+    { timeout: 8_000 }
+  );
   const childTitle = await page.locator(".title-input").first().inputValue();
   if (!/^(Untitled|未命名)$/.test(childTitle)) {
     throw new Error(`Created child page should open as Untitled, saw ${JSON.stringify(childTitle)}`);
@@ -565,8 +572,10 @@ async function assertQuickCreateActions(page) {
 
 async function waitForNewPageId(page, previousIds) {
   const previous = new Set(previousIds);
-  const handle = await page.waitForFunction(
-    async (idsBefore) => {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const createdId = await page.evaluate(
+      async (idsBefore) => {
       const pages = await window.lotion.pages.list();
       const previousIds = new Set(idsBefore);
       const created = pages.find((item) => (
@@ -574,12 +583,14 @@ async function waitForNewPageId(page, previousIds) {
         item.id.startsWith("pg_") &&
         !previousIds.has(item.id)
       ));
-      return created?.id || false;
-    },
-    Array.from(previous),
-    { timeout: 8_000 }
-  );
-  return handle.jsonValue();
+        return created?.id;
+      },
+      Array.from(previous)
+    );
+    if (typeof createdId === "string" && createdId.startsWith("pg_")) return createdId;
+    await page.waitForTimeout(50);
+  }
+  throw new Error("Timed out waiting for a newly persisted page id");
 }
 
 async function assertFirstRecentIncludes(page, expectedText) {

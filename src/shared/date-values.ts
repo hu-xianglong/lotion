@@ -1,6 +1,14 @@
 import { format, isValid, parse, parseISO } from "date-fns";
 import type { DateDisplayFormat, FieldSchema, FieldType, TimeDisplayFormat } from "./types.js";
 
+export interface DateTimeDisplayDefaults {
+  dateFormat: DateDisplayFormat;
+  timeFormat: TimeDisplayFormat;
+}
+
+export const DEFAULT_DATE_DISPLAY_FORMAT: DateDisplayFormat = "month_day_year";
+export const DEFAULT_TIME_DISPLAY_FORMAT: TimeDisplayFormat = "h12";
+
 const DATE_FORMATS = [
   "yyyy-MM-dd",
   "yyyy/M/d",
@@ -21,6 +29,7 @@ const DATE_FORMATS = [
 ];
 
 export function normalizeDateValue(value: unknown): string {
+  if (!isValidDateValue(value)) return "";
   const date = parseDateValue(value);
   return date ? format(date, "yyyy-MM-dd") : "";
 }
@@ -28,11 +37,27 @@ export function normalizeDateValue(value: unknown): string {
 export function parseDateValue(value: unknown): Date | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
+  return parseDateSegment(firstDateSegment(raw));
+}
 
-  const segment = firstDateSegment(raw);
+export function isValidDateValue(value: unknown): boolean {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  const segments = raw.split(DATE_RANGE_SEPARATOR).map(normalizeDateSegmentInput).filter(Boolean);
+  return segments.length > 0 && segments.length <= 2 && segments.every((segment) => Boolean(parseDateTimeSegment(segment)));
+}
+
+function parseDateSegment(segment: string): Date | null {
   const isoDate = segment.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]|$)/);
   if (isoDate) {
-    return new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]));
+    const year = Number(isoDate[1]);
+    const month = Number(isoDate[2]);
+    const day = Number(isoDate[3]);
+    if (!isValidCalendarDate(year, month, day)) return null;
+    const date = new Date(0);
+    date.setHours(0, 0, 0, 0);
+    date.setFullYear(year, month - 1, day);
+    return date;
   }
 
   const iso = parseISO(segment);
@@ -46,17 +71,32 @@ export function parseDateValue(value: unknown): Date | null {
   return null;
 }
 
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (month < 1 || month > 12 || day < 1) return false;
+  const daysInMonth = month === 2
+    ? (isLeapYear(year) ? 29 : 28)
+    : ([4, 6, 9, 11].includes(month) ? 30 : 31);
+  return day <= daysInMonth;
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
 export function parseDateTimeValue(value: unknown): Date | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
+  return parseDateTimeSegment(firstDateSegment(raw));
+}
 
-  const segment = firstDateSegment(raw);
+function parseDateTimeSegment(segment: string): Date | null {
   if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(segment)) {
     const iso = parseISO(segment.replace(" ", "T"));
-    if (isValid(iso)) return iso;
+    return isValid(iso) ? iso : null;
   }
 
-  return parseDateValue(segment);
+  return parseDateSegment(segment);
 }
 
 export function isDateLikeFieldType(type: FieldType | string): boolean {
@@ -64,18 +104,40 @@ export function isDateLikeFieldType(type: FieldType | string): boolean {
 }
 
 export function defaultDateFormatForField(type: FieldType | string): DateDisplayFormat {
-  return isDateLikeFieldType(type) ? "month_day_year" : "iso";
+  return isDateLikeFieldType(type) ? DEFAULT_DATE_DISPLAY_FORMAT : "iso";
 }
 
 export function defaultTimeFormatForField(type: FieldType | string): TimeDisplayFormat {
-  return type === "created_time" || type === "updated_time" ? "h12" : "none";
+  return type === "created_time" || type === "updated_time" ? DEFAULT_TIME_DISPLAY_FORMAT : "none";
 }
 
-export function formatDateForField(value: unknown, field: Pick<FieldSchema, "type" | "dateFormat" | "timeFormat">): string {
+export function resolveDateFormatForField(
+  field: Pick<FieldSchema, "type" | "dateFormat">,
+  defaults?: Partial<DateTimeDisplayDefaults>
+): DateDisplayFormat {
+  return field.dateFormat ?? defaults?.dateFormat ?? defaultDateFormatForField(field.type);
+}
+
+export function resolveTimeFormatForField(
+  field: Pick<FieldSchema, "type" | "timeFormat">,
+  defaults?: Partial<DateTimeDisplayDefaults>
+): TimeDisplayFormat {
+  if (field.timeFormat) return field.timeFormat;
+  if (field.type === "created_time" || field.type === "updated_time") {
+    return defaults?.timeFormat ?? defaultTimeFormatForField(field.type);
+  }
+  return defaultTimeFormatForField(field.type);
+}
+
+export function formatDateForField(
+  value: unknown,
+  field: Pick<FieldSchema, "type" | "dateFormat" | "timeFormat">,
+  defaults?: Partial<DateTimeDisplayDefaults>
+): string {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
-  const dateFormat = field.dateFormat ?? defaultDateFormatForField(field.type);
-  const timeFormat = field.timeFormat ?? defaultTimeFormatForField(field.type);
+  const dateFormat = resolveDateFormatForField(field, defaults);
+  const timeFormat = resolveTimeFormatForField(field, defaults);
   const shouldShowTime = timeFormat !== "none" && (field.type !== "date" || hasExplicitTime(raw));
   const date = shouldShowTime ? parseDateTimeValue(raw) : parseDateValue(raw);
   if (!date) return raw;
@@ -86,11 +148,16 @@ export function formatDateForField(value: unknown, field: Pick<FieldSchema, "typ
 }
 
 function firstDateSegment(value: string): string {
+  return normalizeDateSegmentInput(value.split(DATE_RANGE_SEPARATOR, 1)[0]);
+}
+
+function normalizeDateSegmentInput(value: string): string {
   return value
-    .split(/\s+(?:→|->|–|—|to)\s+/i, 1)[0]
     .replace(/\s+at\s+/i, " ")
     .trim();
 }
+
+const DATE_RANGE_SEPARATOR = /\s+(?:→|->|–|—|to)\s+/i;
 
 function datePattern(formatId: DateDisplayFormat): string {
   if (formatId === "full") return "EEEE, MMMM d, yyyy";

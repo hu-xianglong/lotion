@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DatabaseRowTemplate, FieldSchema, RecordValue, TableView, ViewFilter } from "../../../shared/types";
 import type { ConfigField, ConfigSchema, DatabaseViewProvider } from "../../../shared/plugin-api";
 import { useI18n } from "../../lib/i18n";
+import { legacyFiltersToExpression } from "../../../shared/filter-expression";
 
 interface ViewSettingsDialogProps {
   view: TableView;
@@ -15,6 +16,49 @@ interface ViewSettingsDialogProps {
   onDuplicate?: (view: TableView) => Promise<void>;
   onDelete?: (view: TableView) => Promise<void>;
   onSetDefault?: (view: TableView) => Promise<void>;
+}
+
+export type ViewSettingsAction = "save" | "duplicate" | "delete" | "set-default";
+export type ViewSettingsActionStatus = "submitted" | "failed" | "ignored";
+
+export function dismissViewSettingsIfIdle(guard: { current: boolean }, onClose: () => void): boolean {
+  if (guard.current) return false;
+  onClose();
+  return true;
+}
+
+export function shouldHydrateViewSettingsDraft(activeViewId: string, nextViewId: string, preserveDraft: boolean): boolean {
+  return activeViewId !== nextViewId || !preserveDraft;
+}
+
+export async function runViewSettingsAction({
+  guard,
+  onError,
+  onPendingChange,
+  onSuccess,
+  operation
+}: {
+  guard: { current: boolean };
+  onError: (message: string) => void;
+  onPendingChange: (pending: boolean) => void;
+  onSuccess: () => void;
+  operation: () => Promise<void>;
+}): Promise<ViewSettingsActionStatus> {
+  if (guard.current) return "ignored";
+  guard.current = true;
+  onError("");
+  onPendingChange(true);
+  try {
+    await operation();
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return "failed";
+  } finally {
+    guard.current = false;
+    onPendingChange(false);
+  }
+  onSuccess();
+  return "submitted";
 }
 
 export function ViewSettingsDialog({ view, fields, templates, viewProviders, canDelete = false, isDefault = false, onClose, onSave, onDuplicate, onDelete, onSetDefault }: ViewSettingsDialogProps) {
@@ -33,12 +77,18 @@ export function ViewSettingsDialog({ view, fields, templates, viewProviders, can
   const [filterValue, setFilterValue] = useState(String(view.filters[0]?.value ?? ""));
   const [defaultTemplateId, setDefaultTemplateId] = useState(view.defaultTemplateId ?? "");
   const [pageSize, setPageSize] = useState<number>(view.pageSize ?? 0);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isDuplicating, setIsDuplicating] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isSettingDefault, setIsSettingDefault] = useState(false);
+  const [pendingAction, setPendingAction] = useState<ViewSettingsAction | null>(null);
+  const [actionError, setActionError] = useState("");
+  const actionRef = useRef(false);
+  const retryRef = useRef<{ action: ViewSettingsAction; operation: () => Promise<void> } | null>(null);
+  const draftViewIdRef = useRef(view.id);
+  const preserveDraftRef = useRef(false);
+  const pending = pendingAction !== null;
 
   useEffect(() => {
+    if (!shouldHydrateViewSettingsDraft(draftViewIdRef.current, view.id, preserveDraftRef.current)) return;
+    draftViewIdRef.current = view.id;
+    preserveDraftRef.current = false;
     setName(view.name);
     setViewType(view.type);
     setConfig(withConfigDefaults(
@@ -59,10 +109,32 @@ export function ViewSettingsDialog({ view, fields, templates, viewProviders, can
     setPageSize(view.pageSize ?? 0);
   }, [fields, view, viewProviders]);
 
-  async function save() {
-    setIsSaving(true);
+  function closeIfIdle() {
+    dismissViewSettingsIfIdle(actionRef, onClose);
+  }
+
+  function runAction(action: ViewSettingsAction, operation: () => Promise<void>) {
+    if (!actionRef.current) {
+      retryRef.current = { action, operation };
+      preserveDraftRef.current = true;
+    }
+    return runViewSettingsAction({
+      guard: actionRef,
+      onError: setActionError,
+      onPendingChange: (nextPending) => setPendingAction(nextPending ? action : null),
+      onSuccess: () => {
+        retryRef.current = null;
+        preserveDraftRef.current = false;
+        onClose();
+      },
+      operation
+    });
+  }
+
+  function save() {
     const orderedVisibleFields = fieldOrder.filter((id) => visibleFieldIds.includes(id));
     const missingVisibleFields = visibleFieldIds.filter((id) => !orderedVisibleFields.includes(id));
+    const filters = buildFilters();
     const next: TableView = {
       ...view,
       name: name.trim() || view.name,
@@ -73,47 +145,28 @@ export function ViewSettingsDialog({ view, fields, templates, viewProviders, can
       visibleFieldIds,
       fieldOrder: [...orderedVisibleFields, ...missingVisibleFields],
       sorts: sortFieldId ? [{ fieldId: sortFieldId, direction: sortDirection }] : [],
-      filters: buildFilters(),
+      filters,
+      filterExpression: legacyFiltersToExpression(filters),
       defaultTemplateId: defaultTemplateId || undefined,
       pageSize: pageSize > 0 ? pageSize : 0
     };
-    await onSave(next);
-    setIsSaving(false);
-    onClose();
+    return runAction("save", () => onSave(next));
   }
 
-  async function remove() {
+  function remove() {
     if (!onDelete || !canDelete) return;
     if (!window.confirm(t("view.deleteConfirm"))) return;
-    setIsDeleting(true);
-    try {
-      await onDelete(view);
-      onClose();
-    } finally {
-      setIsDeleting(false);
-    }
+    return runAction("delete", () => onDelete(view));
   }
 
-  async function duplicate() {
+  function duplicate() {
     if (!onDuplicate) return;
-    setIsDuplicating(true);
-    try {
-      await onDuplicate(view);
-      onClose();
-    } finally {
-      setIsDuplicating(false);
-    }
+    return runAction("duplicate", () => onDuplicate(view));
   }
 
-  async function setAsDefault() {
+  function setAsDefault() {
     if (!onSetDefault || isDefault) return;
-    setIsSettingDefault(true);
-    try {
-      await onSetDefault(view);
-      onClose();
-    } finally {
-      setIsSettingDefault(false);
-    }
+    return runAction("set-default", () => onSetDefault(view));
   }
 
   function buildFilters(): ViewFilter[] {
@@ -169,16 +222,33 @@ export function ViewSettingsDialog({ view, fields, templates, viewProviders, can
   const activeProvider = viewProviders.find((provider) => provider.type === viewType);
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="view-dialog" role="dialog" aria-modal="true" aria-label="View settings" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={closeIfIdle}>
+      <div className="view-dialog" role="dialog" aria-modal="true" aria-label="View settings" aria-busy={pending} onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <div>
             <h2>{t("view.settings")}</h2>
             <p>{view.id}</p>
           </div>
-          <button onClick={onClose}>{t("common.close")}</button>
+          <button disabled={pending} onClick={closeIfIdle}>{t("common.close")}</button>
         </div>
 
+        {actionError && (
+          <div className="dialog-error view-settings-action-error" role="alert">
+            <span>{actionError}</span>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                const retry = retryRef.current;
+                if (retry) void runAction(retry.action, retry.operation);
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        <fieldset className="view-settings-controls" disabled={pending}>
         <label className="form-row">
           <span>{t("field.name")}</span>
           <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -348,37 +418,37 @@ export function ViewSettingsDialog({ view, fields, templates, viewProviders, can
           {onSetDefault && (
             <button
               type="button"
-              disabled={isSaving || isDuplicating || isDeleting || isSettingDefault || isDefault}
+              disabled={isDefault}
               onClick={setAsDefault}
             >
-              {isDefault ? t("view.defaultView") : t("view.setDefault")}
+              {pendingAction === "set-default" ? t("common.saving") : isDefault ? t("view.defaultView") : t("view.setDefault")}
             </button>
           )}
           {onDuplicate && (
             <button
               type="button"
-              disabled={isSaving || isDuplicating || isDeleting || isSettingDefault}
               onClick={duplicate}
             >
-              {isDuplicating ? t("common.duplicating") : t("view.duplicate")}
+              {pendingAction === "duplicate" ? t("common.duplicating") : t("view.duplicate")}
             </button>
           )}
           {onDelete && (
             <button
               type="button"
               className="danger-button"
-              disabled={isSaving || isDuplicating || isDeleting || !canDelete}
+              disabled={!canDelete}
               onClick={remove}
               title={!canDelete ? t("view.cannotDeleteLast") : undefined}
             >
-              {isDeleting ? t("common.deleting") : t("common.delete")}
+              {pendingAction === "delete" ? t("common.deleting") : t("common.delete")}
             </button>
           )}
-          <button onClick={onClose}>{t("common.cancel")}</button>
-          <button disabled={isSaving || isDuplicating || isDeleting || isSettingDefault || visibleFieldIds.length === 0 || !name.trim()} onClick={save}>
-            {isSaving ? t("common.saving") : t("common.saveView")}
+          <button onClick={closeIfIdle}>{t("common.cancel")}</button>
+          <button disabled={visibleFieldIds.length === 0 || !name.trim()} onClick={save}>
+            {pendingAction === "save" ? t("common.saving") : t("common.saveView")}
           </button>
         </div>
+        </fieldset>
       </div>
     </div>
   );

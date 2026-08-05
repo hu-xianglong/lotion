@@ -1,5 +1,7 @@
 import type {
   AddFieldInput,
+  BatchRowsInput,
+  BatchRowsResult,
   CopyFieldToSystemTimeInput,
   CopyFieldToSystemTimeResult,
   CreateDatabaseInput,
@@ -11,6 +13,7 @@ import type {
   DatabaseSummary,
   DeleteDatabaseTemplateInput,
   DeleteRowInput,
+  DuplicateRowInput,
   DeleteViewInput,
   DuplicateViewInput,
   EntityBacklink,
@@ -25,6 +28,15 @@ import type {
   GitSyncSettingsInput,
   NotionAuditInput,
   NotionAuditResult,
+  PatchViewInput,
+  PatchViewResult,
+  ReorderFieldsInput,
+  RecordValue,
+  RestoreFieldInput,
+  RestoreRowInput,
+  PermanentlyDeleteFieldInput,
+  PermanentlyDeleteRowInput,
+  ReorderViewsInput,
   PageDocument,
   PageMeta,
   PagesTree,
@@ -36,6 +48,7 @@ import type {
   SetRowPageFullWidthInput,
   SetRowPageSmallTextInput,
   SpaceManifest,
+  StartupWorkspaceIndex,
   TableView,
   UpdateCellInput,
   UpdateDatabaseMetaInput,
@@ -55,11 +68,16 @@ export interface RecentWorkspace {
 }
 
 export interface LotionApi {
+  runtime: {
+    ready(): Promise<void>;
+  };
   workspace: {
     create(input: CreateWorkspaceInput): Promise<SpaceManifest>;
     open(path?: string): Promise<SpaceManifest>;
     getManifest(): Promise<SpaceManifest>;
     getPagesTree(): Promise<PagesTree>;
+    getStartupIndex(): Promise<StartupWorkspaceIndex>;
+    listRowPageFiles(databaseId: string): Promise<string[]>;
     /** Recently opened workspaces, MRU first. */
     listRecent(): Promise<RecentWorkspace[]>;
     /** Remove a workspace from the recents list. */
@@ -95,10 +113,17 @@ export interface LotionApi {
     addField(id: string, input: AddFieldInput): Promise<DatabaseBundle>;
     updateField(input: UpdateFieldInput): Promise<DatabaseBundle>;
     copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult>;
+    reorderFields(input: ReorderFieldsInput): Promise<DatabaseBundle>;
     deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle>;
+    restoreField(input: RestoreFieldInput): Promise<DatabaseBundle>;
+    permanentlyDeleteField(input: PermanentlyDeleteFieldInput): Promise<DatabaseBundle>;
     updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
-    addRow(databaseId: string, templateId?: string): Promise<DatabaseBundle>;
+    addRow(databaseId: string, templateId?: string, initialValues?: Record<string, RecordValue>): Promise<DatabaseBundle>;
     deleteRow(input: DeleteRowInput): Promise<DatabaseBundle>;
+    duplicateRow(input: DuplicateRowInput): Promise<DatabaseBundle>;
+    restoreRow(input: RestoreRowInput): Promise<DatabaseBundle>;
+    permanentlyDeleteRow(input: PermanentlyDeleteRowInput): Promise<DatabaseBundle>;
+    batchRows(input: BatchRowsInput): Promise<BatchRowsResult>;
     saveTemplate(input: SaveDatabaseTemplateInput): Promise<DatabaseBundle>;
     deleteTemplate(input: DeleteDatabaseTemplateInput): Promise<DatabaseBundle>;
   };
@@ -106,6 +131,8 @@ export interface LotionApi {
     create(input: CreateViewInput): Promise<DatabaseBundle>;
     duplicate(input: DuplicateViewInput): Promise<DatabaseBundle>;
     update(input: UpdateViewInput): Promise<DatabaseBundle>;
+    patch(input: PatchViewInput): Promise<PatchViewResult>;
+    reorder(input: ReorderViewsInput): Promise<DatabaseBundle>;
     delete(input: DeleteViewInput): Promise<DatabaseBundle>;
     setDefault(input: SetDefaultViewInput): Promise<DatabaseBundle>;
   };
@@ -154,6 +181,7 @@ export interface LotionApi {
   entities: {
     resolve(id: string): Promise<EntityLookupResult | null>;
     backlinks(id: string): Promise<EntityBacklink[]>;
+    onBacklinksUpdated(handler: () => void): () => void;
   };
   icons: {
     /** Pops a file picker, copies the chosen image into the workspace,
@@ -210,11 +238,15 @@ export interface LotionApi {
     setShellOpenDryRun(enabled: boolean): Promise<{ enabled: boolean; requests: string[] }>;
     getShellOpenRequests(): Promise<string[]>;
     clearShellOpenRequests(): Promise<string[]>;
+    failNextDatabaseViewWrite(message?: string): Promise<{ armed: boolean }>;
+    failNextDatabaseBundleWrite(message?: string): Promise<{ armed: boolean }>;
+    failNextDatabaseMetaWrite(message?: string): Promise<{ armed: boolean }>;
+    failNextPageMetadataWrite(message?: string): Promise<{ armed: boolean }>;
   };
   notion: {
-    pickFolder(kind?: "markdown_csv" | "html"): Promise<string | null>;
+    pickFolder(): Promise<string | null>;
     pickTarget(): Promise<string | null>;
-    scan(sourcePaths: string | string[]): Promise<NotionScanSummary>;
+    scan(folderPaths: string | string[]): Promise<NotionScanSummary>;
     runImport(payload: {
       sourcePath?: string;
       sourcePaths?: string[];
@@ -278,6 +310,7 @@ export interface NotionImportStats {
 
 export interface NotionScanSummary {
   sources: string[];
+  formats: { markdown: number; html: number; csv: number };
   databasesRaw: number;
   databasesKept: number;
   databases: Array<{ title: string; rows: number; userFields: number }>;
@@ -289,69 +322,7 @@ export interface NotionScanSummary {
 export interface NotionImportSummary {
   workspaceRoot: string;
   reportPageId: string;
-  report: NotionImportReportSummary;
   scan: NotionScanSummary;
-}
-
-export interface NotionImportNameConflictEntry {
-  id: string;
-  notionId?: string;
-  name: string;
-  kind: "page" | "database";
-  source: string;
-  target: string;
-}
-
-export interface NotionImportNameConflictGroup {
-  name: string;
-  kinds: Array<"page" | "database">;
-  entries: NotionImportNameConflictEntry[];
-}
-
-export interface NotionImportReportSummary {
-  status: "complete" | "complete_with_warnings";
-  generatedAt: string;
-  durationMs: number;
-  counts: {
-    sources: number;
-    pages: number;
-    databases: number;
-    rows: number;
-    attachments: number;
-    warnings: number;
-    reviewItems: number;
-  };
-  nameConflicts: {
-    pageGroups: number;
-    databaseGroups: number;
-    crossTypeGroups: number;
-    groups: NotionImportNameConflictGroup[];
-  };
-  icons: {
-    pagesWithIcon: number;
-    pagesWithoutIcon: number;
-    databasesWithIcon: number;
-    databasesWithoutIcon: number;
-    rowsWithIcon: number;
-    rowsWithoutIcon: number;
-  };
-  performance: {
-    prepareTargetMs: number;
-    resolveSourcesMs: number;
-    indexSourcesMs: number;
-    selectDatabasesMs: number;
-    planAndParseMs: number;
-    writeWorkspaceMs: number;
-    totalMs: number;
-  };
-  warnings: string[];
-  artifacts: {
-    directory: string;
-    markdown: string;
-    json: string;
-    warningsCsv: string;
-    manifest: string;
-  };
 }
 
 export interface HitRange {

@@ -94,6 +94,11 @@ export async function writeCsvFile(path: string, headers: string[], records: Dat
   await writeTextFile(path, content);
 }
 
+export async function appendCsvRecord(path: string, headers: string[], record: DatabaseRecord): Promise<void> {
+  const row = headers.map((header) => escapeCsvCell(serializeCell(record[header]))).join(",");
+  await fileService.appendTextAtomic(path, `${row}\n`);
+}
+
 let stdoutErrorHandlerInstalled = false;
 
 function safeLog(message: string): void {

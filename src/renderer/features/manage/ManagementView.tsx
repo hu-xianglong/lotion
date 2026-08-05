@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   DatabaseStats,
   DatabaseSummary,
+  DateDisplayFormat,
   FavoriteItem,
   PageMeta,
-  RecentItem
+  RecentItem,
+  TimeDisplayFormat
 } from "../../../shared/types";
+import { formatDateForField } from "../../../shared/date-values";
 import type { PluginHostInspection, PluginProviderInspection } from "../../../shared/plugin-host";
 import type { PluginManifestInspection, PluginKeyedInspection } from "../../../shared/plugin-host";
 import type { SettingsTab } from "../../../shared/plugin-api";
@@ -14,7 +17,7 @@ import { useI18n } from "../../lib/i18n";
 import { useLotionActions } from "../../context/lotion-actions";
 import { useDatabaseCache } from "../../context/database-cache";
 import { rowPageDisplay } from "../../lib/row-page-display";
-import { useSettings } from "../../lib/settings";
+import { useDateTimeDisplayDefaults, useSettings } from "../../lib/settings";
 import { tagFromManageKind, type ManageKind } from "../../state/app-store";
 import { pluginHost } from "../../plugin-host";
 import { listBuiltinPluginControls, setBuiltinPluginEnabled } from "../../plugin-host/builtin-plugins";
@@ -174,8 +177,8 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "general",
     title: "General",
     eyebrow: "App",
-    description: "Language and editor interaction defaults.",
-    terms: ["language", "editor", "vim", "raw markdown", "embed source", "general"]
+    description: "Language, date and time, and editor interaction defaults.",
+    terms: ["language", "date", "time", "clock", "editor", "vim", "raw markdown", "embed source", "general"]
   },
   {
     id: "appearance",
@@ -242,7 +245,7 @@ function SettingsCenter({
   recents: RecentItem[];
   settingsOpenRequest?: SettingsOpenRequest;
 }) {
-  const { locale, setLocale } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const actions = useLotionActions();
   const {
     vimMode,
@@ -254,7 +257,11 @@ function SettingsCenter({
     iconTheme,
     setIconTheme,
     sidebarTags,
-    setSidebarTags
+    setSidebarTags,
+    defaultDateFormat,
+    setDefaultDateFormat,
+    defaultTimeFormat,
+    setDefaultTimeFormat
   } = useSettings();
   const initialSection = normalizeSettingsSectionId(settingsOpenRequest?.section) ?? "general";
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
@@ -339,6 +346,30 @@ function SettingsCenter({
                 { value: "zh", label: "中文" }
               ]}
               onChange={(value) => setLocale(value as "en" | "zh")}
+            />
+            <SettingsSelectRow
+              label={t("settings.defaultDateFormat")}
+              description={t("settings.defaultDateFormatDescription")}
+              value={defaultDateFormat}
+              options={[
+                { value: "full", label: t("field.dateFormat.full") },
+                { value: "month_day_year", label: t("field.dateFormat.monthDayYear") },
+                { value: "day_month_year", label: t("field.dateFormat.dayMonthYear") },
+                { value: "year_month_day", label: t("field.dateFormat.yearMonthDay") },
+                { value: "iso", label: t("field.dateFormat.iso") }
+              ]}
+              onChange={(value) => setDefaultDateFormat(value as DateDisplayFormat)}
+            />
+            <SettingsSelectRow
+              label={t("settings.defaultTimeFormat")}
+              description={t("settings.defaultTimeFormatDescription")}
+              value={defaultTimeFormat}
+              options={[
+                { value: "none", label: t("field.timeFormat.none") },
+                { value: "h12", label: t("field.timeFormat.h12") },
+                { value: "h24", label: t("field.timeFormat.h24") }
+              ]}
+              onChange={(value) => setDefaultTimeFormat(value as TimeDisplayFormat)}
             />
             <SettingsSegmentRow
               label="Vim mode"
@@ -573,6 +604,35 @@ function SettingsSegmentRow({
           </button>
         ))}
       </div>
+    </SettingsRow>
+  );
+}
+
+function SettingsSelectRow({
+  description,
+  label,
+  onChange,
+  options,
+  value
+}: {
+  description: string;
+  label: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  value: string;
+}) {
+  return (
+    <SettingsRow label={label} description={description}>
+      <select
+        className="settings-select"
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
     </SettingsRow>
   );
 }
@@ -1224,7 +1284,7 @@ function DatabasesTable({
               <td className="manage-table-number">{formatStat(stats?.pageCount, statsLoading || statsRefreshing)}</td>
               <td className="manage-table-number">{formatStat(stats?.nonEmptyPageCount, statsLoading || statsRefreshing)}</td>
               <td className="manage-table-number">{formatStat(stats?.fieldCount, statsLoading || statsRefreshing)}</td>
-              <td className="manage-table-updated">{activity.lastOpenedAt ? formatDate(activity.lastOpenedAt) : t("manage.neverOpened")}</td>
+              <td className="manage-table-updated">{activity.lastOpenedAt ? <FormattedDateTime value={activity.lastOpenedAt} /> : t("manage.neverOpened")}</td>
               <td className="manage-table-number">{activity.openCount}</td>
               <td className="manage-table-id">{db.id}</td>
             </tr>
@@ -1354,7 +1414,7 @@ function PagesTable({
               <EntityIcon kind="page" icon={page.icon} size={18} />
               <span>{page.title}</span>
             </td>
-            <td className="manage-table-updated">{formatDate(page.updated_time)}</td>
+            <td className="manage-table-updated"><FormattedDateTime value={page.updated_time} /></td>
           </tr>
         ))}
       </tbody>
@@ -1440,7 +1500,7 @@ function TagItemsTable({
               </td>
               <td className="manage-table-kind">{row.kind === "database" ? t("page.backlinkSourceDatabase") : t("page.backlinkSourcePage")}</td>
               <td className="manage-table-path">{row.path || "—"}</td>
-              <td className="manage-table-updated">{formatDate(row.updated)}</td>
+              <td className="manage-table-updated"><FormattedDateTime value={row.updated} /></td>
             </tr>
           ))}
         </tbody>
@@ -1497,7 +1557,7 @@ function RecentsTable({
                   <span>{page?.title ?? r.id}</span>
                 </td>
                 <td>页面</td>
-                <td className="manage-table-updated">{formatDate(r.at)}</td>
+                <td className="manage-table-updated"><FormattedDateTime value={r.at} /></td>
               </tr>
             );
           }
@@ -1510,7 +1570,7 @@ function RecentsTable({
                   <span>{db?.name ?? r.id}</span>
                 </td>
                 <td>数据库</td>
-                <td className="manage-table-updated">{formatDate(r.at)}</td>
+                <td className="manage-table-updated"><FormattedDateTime value={r.at} /></td>
               </tr>
             );
           }
@@ -1525,7 +1585,7 @@ function RecentsTable({
                 <span>{display.title}</span>
               </td>
               <td>行的页面</td>
-              <td className="manage-table-updated">{formatDate(r.at)}</td>
+              <td className="manage-table-updated"><FormattedDateTime value={r.at} /></td>
             </tr>
           );
         })}
@@ -1637,15 +1697,7 @@ function FavoritesTable({
   );
 }
 
-function formatDate(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  // Locale-free YYYY/MM/DD HH:mm so the column stays narrow.
-  const yy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${yy}/${mm}/${dd} ${hh}:${mi}`;
+function FormattedDateTime({ value }: { value: string }) {
+  const defaults = useDateTimeDisplayDefaults();
+  return <>{formatDateForField(value, { type: "updated_time" }, defaults)}</>;
 }

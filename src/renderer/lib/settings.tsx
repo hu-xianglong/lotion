@@ -1,12 +1,20 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import {
+  DEFAULT_DATE_DISPLAY_FORMAT,
+  DEFAULT_TIME_DISPLAY_FORMAT,
+  type DateTimeDisplayDefaults
+} from "../../shared/date-values";
 import { SHORTCUT_STORAGE_KEY, readShortcutOverrides, type ShortcutOverrides } from "../../shared/shortcuts";
+import type { DateDisplayFormat, TimeDisplayFormat } from "../../shared/types";
 
 const VIM_KEY = "lotion.settings.vimMode";
 const RAW_KEY = "lotion.settings.rawMarkdown";
 const EMBED_SOURCE_KEY = "lotion.settings.showEmbedSource";
 const ICON_THEME_KEY = "lotion.settings.iconTheme";
 const SIDEBAR_TAGS_KEY = "lotion.settings.sidebarTags";
+const DEFAULT_DATE_FORMAT_KEY = "lotion.settings.defaultDateFormat";
+const DEFAULT_TIME_FORMAT_KEY = "lotion.settings.defaultTimeFormat";
 export const DEFAULT_SIDEBAR_TAGS = ["page", "database"] as const;
 
 /** Icon theme — minimal is the stroke-only line work; the rest are
@@ -29,6 +37,14 @@ const VALID_THEMES = new Set<IconTheme>([
   "saffron",
   "plum"
 ]);
+const VALID_DATE_FORMATS = new Set<DateDisplayFormat>([
+  "full",
+  "month_day_year",
+  "day_month_year",
+  "year_month_day",
+  "iso"
+]);
+const VALID_TIME_FORMATS = new Set<TimeDisplayFormat>(["none", "h12", "h24"]);
 
 interface SettingsContextValue {
   vimMode: boolean;
@@ -41,6 +57,10 @@ interface SettingsContextValue {
   setIconTheme: (next: IconTheme) => void;
   sidebarTags: string[];
   setSidebarTags: (next: string[]) => void;
+  defaultDateFormat: DateDisplayFormat;
+  setDefaultDateFormat: (next: DateDisplayFormat) => void;
+  defaultTimeFormat: TimeDisplayFormat;
+  setDefaultTimeFormat: (next: TimeDisplayFormat) => void;
   shortcutOverrides: ShortcutOverrides;
   setShortcutOverrides: (next: ShortcutOverrides | ((current: ShortcutOverrides) => ShortcutOverrides)) => void;
 }
@@ -56,6 +76,10 @@ const SettingsContext = createContext<SettingsContextValue>({
   setIconTheme: () => {},
   sidebarTags: [...DEFAULT_SIDEBAR_TAGS],
   setSidebarTags: () => {},
+  defaultDateFormat: DEFAULT_DATE_DISPLAY_FORMAT,
+  setDefaultDateFormat: () => {},
+  defaultTimeFormat: DEFAULT_TIME_DISPLAY_FORMAT,
+  setDefaultTimeFormat: () => {},
   shortcutOverrides: {},
   setShortcutOverrides: () => {}
 });
@@ -85,6 +109,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [sidebarTags, setSidebarTagsState] = useState<string[]>(() => {
     if (typeof window === "undefined") return [...DEFAULT_SIDEBAR_TAGS];
     return normalizeSidebarTags(window.localStorage.getItem(SIDEBAR_TAGS_KEY));
+  });
+  const [defaultDateFormat, setDefaultDateFormatState] = useState<DateDisplayFormat>(() => {
+    if (typeof window === "undefined") return DEFAULT_DATE_DISPLAY_FORMAT;
+    return normalizeDateFormat(window.localStorage.getItem(DEFAULT_DATE_FORMAT_KEY));
+  });
+  const [defaultTimeFormat, setDefaultTimeFormatState] = useState<TimeDisplayFormat>(() => {
+    if (typeof window === "undefined") return DEFAULT_TIME_DISPLAY_FORMAT;
+    return normalizeTimeFormat(window.localStorage.getItem(DEFAULT_TIME_FORMAT_KEY));
   });
   const [shortcutOverrides, setShortcutOverridesState] = useState<ShortcutOverrides>(() => {
     if (typeof window === "undefined") return {};
@@ -136,6 +168,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    window.localStorage.setItem(DEFAULT_DATE_FORMAT_KEY, defaultDateFormat);
+  }, [defaultDateFormat]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(DEFAULT_TIME_FORMAT_KEY, defaultTimeFormat);
+  }, [defaultTimeFormat]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutOverrides));
   }, [shortcutOverrides]);
 
@@ -152,6 +194,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setIconTheme: setIconThemeState,
         sidebarTags,
         setSidebarTags: (next) => setSidebarTagsState(normalizeSidebarTags(next)),
+        defaultDateFormat,
+        setDefaultDateFormat: (next) => setDefaultDateFormatState(normalizeDateFormat(next)),
+        defaultTimeFormat,
+        setDefaultTimeFormat: (next) => setDefaultTimeFormatState(normalizeTimeFormat(next)),
         shortcutOverrides,
         setShortcutOverrides: (next) => {
           setShortcutOverridesState((current) => {
@@ -168,6 +214,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
 export function useSettings(): SettingsContextValue {
   return useContext(SettingsContext);
+}
+
+export function useDateTimeDisplayDefaults(): DateTimeDisplayDefaults {
+  const { defaultDateFormat, defaultTimeFormat } = useSettings();
+  return useMemo(
+    () => ({ dateFormat: defaultDateFormat, timeFormat: defaultTimeFormat }),
+    [defaultDateFormat, defaultTimeFormat]
+  );
+}
+
+export function normalizeDateFormat(value: unknown): DateDisplayFormat {
+  return typeof value === "string" && VALID_DATE_FORMATS.has(value as DateDisplayFormat)
+    ? value as DateDisplayFormat
+    : DEFAULT_DATE_DISPLAY_FORMAT;
+}
+
+export function normalizeTimeFormat(value: unknown): TimeDisplayFormat {
+  return typeof value === "string" && VALID_TIME_FORMATS.has(value as TimeDisplayFormat)
+    ? value as TimeDisplayFormat
+    : DEFAULT_TIME_DISPLAY_FORMAT;
 }
 
 function normalizeSidebarTags(value: unknown): string[] {

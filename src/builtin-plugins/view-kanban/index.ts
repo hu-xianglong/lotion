@@ -23,8 +23,10 @@ import type {
   DatabaseRecord,
   FieldSchema,
   RecordValue,
-  SelectOption
+  SelectOption,
+  ViewGroup
 } from "../../shared/types.js";
+import { EMPTY_GROUP_KEY, groupDatabaseRecords } from "../../shared/database-grouping.js";
 
 // ── The provider ──────────────────────────────────────────────────
 
@@ -57,8 +59,8 @@ const kanbanProvider: DatabaseViewProvider = {
     // select field as a fallback so the view renders something
     // sensible before the user configures anything.
     const config = (view.config ?? {}) as { groupBy?: string };
-    const groupByFieldId =
-      config.groupBy ?? bundle.schema.fields.find(isGroupable)?.id;
+    const sharedGroup = view.groups?.[0];
+    const groupByFieldId = sharedGroup?.fieldId ?? config.groupBy ?? bundle.schema.fields.find(isGroupable)?.id;
 
     if (!groupByFieldId) {
       const msg = document.createElement("div");
@@ -109,75 +111,39 @@ const kanbanProvider: DatabaseViewProvider = {
     board.style.cssText = boardCss;
     shell.appendChild(board);
 
-    // One column per option of the groupBy field. If the schema
-    // doesn't declare options explicitly (common for imported
-    // Notion DBs), infer them from the distinct values across all
-    // rows. Empty-valued rows always go into a trailing "(empty)"
-    // column.
-    const columns: KanbanColumn[] = [];
-    const knownLabels = new Set<string>();
-    if (groupByField.options && groupByField.options.length > 0) {
-      for (const opt of groupByField.options) {
-        knownLabels.add(opt.name);
-        columns.push({
-          value: opt.id,
-          label: opt.name,
-          color: opt.color,
-          records: []
-        });
-      }
-    }
-
-    const distinct = new Set<string>();
-    for (const r of bundle.records) {
-      const v = r[groupByField.id];
-      if (v != null && String(v).trim() !== "") distinct.add(String(v));
-    }
-    for (const label of Array.from(distinct).sort()) {
-      if (!knownLabels.has(label)) {
-        columns.push({ value: label, label, records: [] });
-      }
-    }
-    columns.push({ value: "", label: "(empty)", records: [] });
-
-    // Distribute records into columns.
-    for (const record of bundle.records) {
-      const rawValue = record[groupByField.id];
-      const valueString = rawValue == null ? "" : String(rawValue);
-      // The select field stores by option NAME in CSV, not option ID.
-      // Normalize: try matching by name OR by id.
-      const matchingCol =
-        columns.find((c) => c.label === valueString || c.value === valueString) ??
-        columns[columns.length - 1];
-      matchingCol.records.push(record);
-    }
+    const groupConfig: ViewGroup = sharedGroup ?? {
+      version: 1,
+      id: "group-primary",
+      fieldId: groupByField.id,
+      order: "manual"
+    };
+    const optionsByKey = new Map((groupByField.options ?? []).map((option) => [`option:${option.id}`, option]));
+    const columns: KanbanColumn[] = groupDatabaseRecords(bundle.records, groupByField, groupConfig).map((bucket) => ({
+      key: bucket.key,
+      value: bucket.key,
+      label: bucket.label,
+      color: optionsByKey.get(bucket.key)?.color,
+      records: bucket.records,
+      collapsed: Boolean(groupConfig.collapsedGroupKeys?.includes(bucket.key))
+    }));
 
     for (const col of columns) {
       const el = makeColumn(col, async () => {
-        const beforeIds = new Set(bundle.records.map((record) => String(record.id)));
-        let nextBundle = await workspace.addRow(bundle.schema.id);
-        const newRecord =
-          nextBundle.records.find((record) => !beforeIds.has(String(record.id))) ??
-          nextBundle.records[nextBundle.records.length - 1];
-        if (newRecord && col.label !== "(empty)") {
-          nextBundle = await workspace.updateCell({
-            databaseId: bundle.schema.id,
-            rowId: String(newRecord.id),
-            fieldId: groupByField.id,
-            value: col.label
-          });
-        }
+        const initialValues = col.key === EMPTY_GROUP_KEY
+          ? undefined
+          : { [groupByField.id]: groupCellValue(groupByField, col) };
+        const nextBundle = await workspace.addRow(bundle.schema.id, initialValues);
         kanbanProvider.render({ ...ctx, bundle: nextBundle });
       });
       board.appendChild(el);
       const body = el.querySelector(".kanban-col-body");
-      for (const record of col.records) {
-        const card = makeCard(record, titleField, metaFields);
+      for (const record of col.collapsed ? [] : col.records) {
+        const card = makeCard(record, titleField, metaFields, ctx.openRow);
         attachDragHandlers(card, record, col);
         body?.appendChild(card);
       }
       attachDropHandlers(el, col, async (record) => {
-        const newValue = col.label === "(empty)" ? "" : col.label;
+        const newValue = col.key === EMPTY_GROUP_KEY ? "" : groupCellValue(groupByField, col);
         try {
           const updated = await workspace.updateCell({
             databaseId: bundle.schema.id,
@@ -201,10 +167,12 @@ const kanbanProvider: DatabaseViewProvider = {
 // ── DOM helpers ───────────────────────────────────────────────────
 
 interface KanbanColumn {
+  key: string;
   value: string;
   label: string;
   color?: string;
   records: DatabaseRecord[];
+  collapsed?: boolean;
   el?: HTMLElement;
 }
 
@@ -215,6 +183,8 @@ function isGroupable(field: FieldSchema): boolean {
 function makeColumn(column: KanbanColumn, onAddRecord: () => Promise<void>): HTMLElement {
   const col = document.createElement("div");
   col.className = "kanban-col";
+  col.dataset.groupKey = column.key;
+  if (column.collapsed) col.classList.add("collapsed");
   col.style.cssText = columnCss;
   column.el = col;
 
@@ -237,6 +207,7 @@ function makeColumn(column: KanbanColumn, onAddRecord: () => Promise<void>): HTM
   const body = document.createElement("div");
   body.className = "kanban-col-body";
   body.style.cssText = columnBodyCss;
+  body.hidden = Boolean(column.collapsed);
   col.appendChild(body);
 
   const add = document.createElement("button");
@@ -244,24 +215,66 @@ function makeColumn(column: KanbanColumn, onAddRecord: () => Promise<void>): HTM
   add.className = "kanban-add-card";
   add.textContent = "+ New";
   add.style.cssText = addCardCss;
-  add.addEventListener("click", async () => {
+  add.hidden = Boolean(column.collapsed);
+  const feedback = document.createElement("div");
+  feedback.className = "kanban-add-card-error";
+  feedback.role = "alert";
+  feedback.style.cssText = "display:flex;align-items:center;gap:6px;padding:8px 10px;margin:0 8px 8px;border:1px solid var(--danger,#c44);border-radius:6px;color:var(--danger,#a33);font-size:12px;";
+  feedback.hidden = true;
+  const errorText = document.createElement("span");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.textContent = "Retry";
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.textContent = "×";
+  dismiss.ariaLabel = "Dismiss row creation error";
+  feedback.append(errorText, retry, dismiss);
+  let pending = false;
+  async function submit() {
+    if (pending) return;
+    pending = true;
     add.disabled = true;
+    retry.disabled = true;
+    dismiss.disabled = true;
     try {
       await onAddRecord();
+      feedback.hidden = true;
+      errorText.textContent = "";
+    } catch (error) {
+      errorText.textContent = `Row creation failed: ${error instanceof Error ? error.message : String(error)}`;
+      feedback.hidden = false;
     } finally {
-      add.disabled = false;
+      pending = false;
+      retry.disabled = false;
+      dismiss.disabled = false;
+      add.disabled = !feedback.hidden;
     }
+  }
+  add.addEventListener("click", () => { void submit(); });
+  retry.addEventListener("click", () => { void submit(); });
+  dismiss.addEventListener("click", () => {
+    feedback.hidden = true;
+    errorText.textContent = "";
+    add.disabled = false;
   });
-  col.appendChild(add);
+  col.append(add, feedback);
 
   return col;
 }
 
-function makeCard(record: DatabaseRecord, titleField: FieldSchema | undefined, metaFields: FieldSchema[]): HTMLElement {
+function groupCellValue(field: FieldSchema, column: KanbanColumn): RecordValue {
+  if (field.type === "checkbox") return column.key === "boolean:true";
+  return column.label;
+}
+
+function makeCard(record: DatabaseRecord, titleField: FieldSchema | undefined, metaFields: FieldSchema[], onOpenRow?: (rowId: string, origin?: HTMLElement) => void): HTMLElement {
   const card = document.createElement("div");
   card.className = "kanban-card";
   card.style.cssText = cardCss;
   card.draggable = true;
+  card.tabIndex = 0;
+  card.role = "button";
   const title =
     titleField && record[titleField.id] != null
       ? String(record[titleField.id])
@@ -292,6 +305,16 @@ function makeCard(record: DatabaseRecord, titleField: FieldSchema | undefined, m
   }
   if (meta.childElementCount > 0) card.appendChild(meta);
   card.dataset.rowId = String(record.id);
+  card.ariaLabel = `Open ${title.trim() || "Untitled"}`;
+  card.addEventListener("click", () => {
+    card.focus?.({ preventScroll: true });
+    onOpenRow?.(String(record.id), card);
+  });
+  card.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onOpenRow?.(String(record.id), card);
+  });
   return card;
 }
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { DEFAULT_VIEW_ID, ENTITIES_DATABASE_ID, isSystemDatabaseId, PAGES_DATABASE_ID } from "../../shared/constants.js";
 import { parsePathValue, serializePathValue } from "../../shared/path-values.js";
 import { databaseFolderName } from "../../shared/workspace-paths.js";
@@ -53,10 +53,25 @@ interface BacklinkGraphCache {
   markdownLinkCount: number;
   propertyCellCount: number;
   buildMs: number;
+  sourceContributions: Map<string, BacklinkSourceContribution>;
+}
+
+interface IndexedBacklink {
+  targetId: string;
+  backlink: EntityBacklink;
+}
+
+interface BacklinkSourceContribution {
+  kind: "markdown" | "table";
+  path: string;
+  signature?: string;
+  backlinks: IndexedBacklink[];
+  markdownLinkCount: number;
+  propertyCellCount: number;
 }
 
 interface SerializedBacklinkGraphCache {
-  version: 1;
+  version: 3;
   fingerprint: string;
   builtAt: string;
   sourceCount: number;
@@ -64,6 +79,7 @@ interface SerializedBacklinkGraphCache {
   propertyCellCount: number;
   buildMs: number;
   byTargetId: Record<string, EntityBacklink[]>;
+  sourceContributions: Record<string, BacklinkSourceContribution>;
 }
 
 interface BacklinkCacheStats {
@@ -75,7 +91,7 @@ interface BacklinkCacheStats {
   buildMs: number;
 }
 
-const BACKLINK_CACHE_VERSION = 1;
+const BACKLINK_CACHE_VERSION = 3;
 const BACKLINK_CACHE_PATH = ".lotion-cache/backlinks.json";
 
 export function createEntitiesSchema(now: string): DatabaseSchema {
@@ -174,8 +190,21 @@ export class EntitiesDatabaseService {
   private cacheRoot?: string;
   private recordsCache?: DatabaseRecord[];
   private backlinkCache?: BacklinkGraphCache;
+  private backlinkWatchers: Array<{ close(): void }> = [];
+  private backlinkWatcherRoot?: string;
+  private backlinkWatcherTimer?: NodeJS.Timeout;
+  private pendingBacklinkPaths = new Set<string>();
+  private backlinkRefreshTimer?: NodeJS.Timeout;
+  private backlinkRefreshPromise?: Promise<void>;
+  private readonly backlinkUpdateListeners = new Set<() => void>();
+  private readonly unsubscribeFileMutations: () => void;
 
-  constructor(private readonly workspace: WorkspaceService) {}
+  constructor(private readonly workspace: WorkspaceService) {
+    this.unsubscribeFileMutations = fileService.subscribeMutations(({ path }) => {
+      const root = this.currentWorkspaceRoot();
+      if (root && isBacklinkSourcePath(root, path)) this.queueBacklinkSourceRefresh(path);
+    });
+  }
 
   async resolve(id: string): Promise<EntityLookupResult | null> {
     const index = await this.readEntityIndex();
@@ -184,7 +213,9 @@ export class EntitiesDatabaseService {
 
   async backlinks(id: string): Promise<EntityBacklink[]> {
     const startedAt = performance.now();
+    await this.flushBacklinkSourceRefresh();
     const { graph, source } = await this.readBacklinkGraph();
+    if (this.backlinkUpdateListeners.size > 0) this.ensureBacklinkWatchers(graph);
     const results = graph.knownIds.has(id)
       ? [...(graph.byTargetId.get(id) ?? [])]
       : [];
@@ -196,6 +227,23 @@ export class EntitiesDatabaseService {
       totalMs: elapsedMs(startedAt)
     });
     return results;
+  }
+
+  subscribeBacklinkUpdates(listener: () => void): () => void {
+    this.backlinkUpdateListeners.add(listener);
+    if (this.backlinkCache) this.ensureBacklinkWatchers(this.backlinkCache);
+    return () => {
+      this.backlinkUpdateListeners.delete(listener);
+      if (this.backlinkUpdateListeners.size === 0) this.resetBacklinkWatchers();
+    };
+  }
+
+  dispose(): void {
+    this.unsubscribeFileMutations();
+    this.resetBacklinkWatchers();
+    if (this.backlinkRefreshTimer) clearTimeout(this.backlinkRefreshTimer);
+    this.backlinkRefreshTimer = undefined;
+    this.backlinkUpdateListeners.clear();
   }
 
   backlinkCacheStats(): BacklinkCacheStats | null {
@@ -211,6 +259,254 @@ export class EntitiesDatabaseService {
     };
   }
 
+  private currentWorkspaceRoot(): string | undefined {
+    try {
+      return this.workspace.requirePaths().root;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private ensureBacklinkWatchers(graph: BacklinkGraphCache): void {
+    const root = this.currentWorkspaceRoot();
+    if (!root || this.backlinkWatcherRoot === root) return;
+    for (const watcher of this.backlinkWatchers) watcher.close();
+    this.backlinkWatchers = [];
+    this.backlinkWatcherRoot = root;
+    const install = () => {
+      this.backlinkWatcherTimer = undefined;
+      if (this.backlinkWatcherRoot !== root) return;
+      this.installBacklinkWatchers(root);
+    };
+    if (graph.sourceContributions.size > 1_000) {
+      this.backlinkWatcherTimer = setTimeout(install, 0);
+      this.backlinkWatcherTimer.unref();
+      return;
+    }
+    install();
+  }
+
+  private installBacklinkWatchers(root: string): void {
+    const graph = this.backlinkCache;
+    if (!graph || graph.root !== root) return;
+    let polling = false;
+    const poll = async (): Promise<void> => {
+      if (polling || this.backlinkCache !== graph || this.backlinkWatcherRoot !== root) return;
+      polling = true;
+      try {
+        for (const contribution of graph.sourceContributions.values()) {
+          if (!contribution.signature) continue;
+          const candidate = resolve(root, contribution.path);
+          if (await fileSignature(candidate) === contribution.signature) continue;
+          fileService.noteExternalMutation(candidate);
+        }
+      } catch (error) {
+        console.warn("[lotion backlinks] external source poll failed", error);
+      } finally {
+        polling = false;
+      }
+    };
+    this.backlinkWatcherTimer = setInterval(() => void poll(), 100);
+    this.backlinkWatcherTimer.unref();
+  }
+
+  private async noteChangedBacklinkCandidate(graph: BacklinkGraphCache, root: string, candidate: string): Promise<void> {
+    if (this.backlinkCache !== graph || graph.root !== root) return;
+    const workspacePath = workspaceRelativePath(root, candidate);
+    const contribution = workspacePath.endsWith(".md")
+      ? graph.sourceContributions.get(markdownContributionKey(workspacePath))
+      : graph.sourceContributions.get(tableContributionKey(workspacePath));
+    if (!contribution?.signature) {
+      fileService.noteExternalMutation(candidate);
+      return;
+    }
+    let signature = await fileSignature(candidate);
+    if (signature === contribution.signature) {
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 40));
+      if (this.backlinkCache !== graph || graph.root !== root) return;
+      signature = await fileSignature(candidate);
+    }
+    if (signature !== contribution.signature) fileService.noteExternalMutation(candidate);
+  }
+
+  private queueBacklinkSourceRefresh(path: string): void {
+    this.pendingBacklinkPaths.add(resolve(path));
+    if (this.backlinkRefreshTimer) clearTimeout(this.backlinkRefreshTimer);
+    this.backlinkRefreshTimer = setTimeout(() => {
+      this.backlinkRefreshTimer = undefined;
+      void this.flushBacklinkSourceRefresh().catch((error) => {
+        console.warn("[lotion backlinks] incremental refresh failed", error);
+      });
+    }, 40);
+    this.backlinkRefreshTimer.unref();
+  }
+
+  private async flushBacklinkSourceRefresh(): Promise<void> {
+    if (this.backlinkRefreshTimer) {
+      clearTimeout(this.backlinkRefreshTimer);
+      this.backlinkRefreshTimer = undefined;
+    }
+    if (this.backlinkRefreshPromise) {
+      await this.backlinkRefreshPromise;
+      if (this.pendingBacklinkPaths.size > 0) await this.flushBacklinkSourceRefresh();
+      return;
+    }
+    if (!this.backlinkCache || this.pendingBacklinkPaths.size === 0) return;
+    const refresh = (async () => {
+      while (this.backlinkCache && this.pendingBacklinkPaths.size > 0) {
+        const changedPaths = [...this.pendingBacklinkPaths];
+        this.pendingBacklinkPaths.clear();
+        await this.refreshBacklinkSources(changedPaths);
+      }
+    })();
+    this.backlinkRefreshPromise = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (this.backlinkRefreshPromise === refresh) this.backlinkRefreshPromise = undefined;
+    }
+    if (this.pendingBacklinkPaths.size > 0) await this.flushBacklinkSourceRefresh();
+  }
+
+  private async refreshBacklinkSources(changedPaths: string[]): Promise<void> {
+    const startedAt = performance.now();
+    const paths = this.workspace.requirePaths();
+    const graph = this.backlinkCache;
+    if (!graph || graph.root !== paths.root) return;
+    const index = await this.readEntityIndex();
+    const tableFiles = await this.readDatabaseTableFiles();
+    let requiresFullRebuild = graph.sourceContributions.size === 0;
+
+    for (const changedPath of changedPaths) {
+      const workspacePath = workspaceRelativePath(paths.root, changedPath);
+      if (workspacePath.endsWith(".md")) {
+        await this.refreshMarkdownContribution(graph, index, workspacePath);
+        continue;
+      }
+      const tableFile = tableFiles.find((file) => resolve(file.dataPath) === resolve(changedPath) || resolve(file.schemaPath) === resolve(changedPath));
+      if (!tableFile || isEntityIndexTablePath(paths, changedPath)) {
+        requiresFullRebuild = true;
+        continue;
+      }
+      await this.refreshTableContribution(graph, index, tableFile);
+    }
+
+    if (requiresFullRebuild) {
+      this.backlinkCache = await this.buildStableBacklinkGraph();
+    } else {
+      materializeBacklinkContributions(graph);
+      graph.knownIds = new Set(index.byId.keys());
+      graph.fileRevision = backlinkSourceRevision(paths);
+      graph.fingerprint = await this.buildBacklinkFingerprint(index, tableFiles);
+      graph.buildMs = elapsedMs(startedAt);
+    }
+    const refreshedGraph = this.backlinkCache;
+    if (!refreshedGraph) return;
+    await this.writeBacklinkCacheFile(paths.root, refreshedGraph);
+    this.resetBacklinkWatchers();
+    this.ensureBacklinkWatchers(refreshedGraph);
+    for (const listener of this.backlinkUpdateListeners) listener();
+  }
+
+  private async refreshMarkdownContribution(graph: BacklinkGraphCache, index: EntityIndex, workspacePath: string): Promise<void> {
+    const key = markdownContributionKey(workspacePath);
+    const source = [...index.byId.values()].find((candidate) => normalizeWorkspacePath(candidate.bodyPath ?? "") === workspacePath);
+    if (!source?.bodyPath) {
+      graph.sourceContributions.delete(key);
+      return;
+    }
+    let markdown = "";
+    try {
+      markdown = await fileService.readText(join(graph.root, source.bodyPath));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      graph.sourceContributions.delete(key);
+      return;
+    }
+    const targetsByPath = backlinkTargetsByPath(index);
+    const backlinks: IndexedBacklink[] = [];
+    const seen = new Set<string>();
+    let markdownLinkCount = 0;
+    for (const link of markdownLinkTargets(markdown)) {
+      const targets = targetsByPath.get(link.target);
+      if (!targets) continue;
+      markdownLinkCount += 1;
+      for (const target of targets) {
+        if (source.entityId === target.entityId) continue;
+        const dedupeKey = `${source.entityId}:${target.entityId}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        backlinks.push({
+          targetId: target.entityId,
+          backlink: {
+            type: "markdown",
+            source,
+            sourceBodyPath: source.bodyPath,
+            line: link.line,
+            excerpt: link.excerpt
+          }
+        });
+      }
+    }
+    graph.sourceContributions.set(key, {
+      kind: "markdown",
+      path: workspacePath,
+      signature: await fileSignature(join(graph.root, source.bodyPath)),
+      backlinks,
+      markdownLinkCount,
+      propertyCellCount: 0
+    });
+  }
+
+  private async refreshTableContribution(graph: BacklinkGraphCache, index: EntityIndex, file: DatabaseTableFile): Promise<void> {
+    const workspacePath = workspaceRelativePath(graph.root, file.dataPath);
+    const key = tableContributionKey(workspacePath);
+    const [table] = await this.readDatabaseTables([file]);
+    if (!table) {
+      graph.sourceContributions.delete(key);
+      return;
+    }
+    const backlinks: IndexedBacklink[] = [];
+    const seen = new Set<string>();
+    let propertyCellCount = 0;
+    for (const record of table.records) {
+      const sourceId = stringValue(record.id);
+      if (!sourceId) continue;
+      const source = index.byId.get(sourceId) ?? fallbackRowEntity(table.schema, record);
+      for (const field of table.schema.fields) {
+        const value = record[field.id];
+        for (const targetId of cellReferencedEntityIds(value)) {
+          const target = index.byId.get(targetId);
+          if (!target || sourceId === target.entityId) continue;
+          propertyCellCount += 1;
+          const dedupeKey = `${source.entityId}:${table.schema.id}:${field.id}:${target.entityId}`;
+          if (seen.has(dedupeKey)) continue;
+          seen.add(dedupeKey);
+          backlinks.push({
+            targetId: target.entityId,
+            backlink: {
+              type: "property",
+              source,
+              databaseId: table.schema.id,
+              databaseName: table.schema.name,
+              fieldId: field.id,
+              fieldName: field.name,
+              excerpt: previewPropertyCell(value, target)
+            }
+          });
+        }
+      }
+    }
+    graph.sourceContributions.set(key, {
+      kind: "table",
+      path: workspacePath,
+      signature: await fileSignature(file.dataPath),
+      backlinks,
+      markdownLinkCount: 0,
+      propertyCellCount
+    });
+  }
+
   private async readBacklinkGraph(): Promise<{ graph: BacklinkGraphCache; source: "memory" | "disk" | "rebuilt" }> {
     const paths = this.workspace.requirePaths();
     const sourceRevision = backlinkSourceRevision(paths);
@@ -218,26 +514,99 @@ export class EntitiesDatabaseService {
       return { graph: this.backlinkCache, source: "memory" };
     }
 
-    const index = await this.readEntityIndex();
-    const tableFiles = await this.readDatabaseTableFiles();
-    const fingerprint = await this.buildBacklinkFingerprint(index, tableFiles);
+    if (!this.backlinkCache || this.backlinkCache.root !== paths.root) {
+      const persisted = await this.readPersistedBacklinkCache(paths.root);
+      if (persisted) {
+        this.backlinkCache = persisted;
+        return { graph: persisted, source: "disk" };
+      }
+    }
+
+    const { index, tableFiles, fingerprint, revision } = await this.readStableBacklinkInputs();
 
     if (this.backlinkCache?.root === paths.root && this.backlinkCache.fingerprint === fingerprint) {
-      this.backlinkCache.fileRevision = backlinkSourceRevision(paths);
+      if (backlinkSourceRevision(paths) !== revision) return this.readBacklinkGraph();
+      this.backlinkCache.fileRevision = revision;
       return { graph: this.backlinkCache, source: "memory" };
     }
 
     const diskCache = await this.readBacklinkCacheFile(paths.root, fingerprint, index);
     if (diskCache) {
-      diskCache.fileRevision = backlinkSourceRevision(paths);
+      if (backlinkSourceRevision(paths) !== revision) return this.readBacklinkGraph();
+      diskCache.fileRevision = revision;
       this.backlinkCache = diskCache;
       return { graph: diskCache, source: "disk" };
     }
 
     const graph = await this.buildBacklinkGraph(index, tableFiles, fingerprint);
+    if (backlinkSourceRevision(paths) !== revision) return this.readBacklinkGraph();
+    this.pendingBacklinkPaths.clear();
     this.backlinkCache = graph;
     await this.writeBacklinkCacheFile(paths.root, graph);
     return { graph, source: "rebuilt" };
+  }
+
+  private async readStableBacklinkInputs(): Promise<{
+    index: EntityIndex;
+    tableFiles: DatabaseTableFile[];
+    fingerprint: string;
+    revision: number;
+  }> {
+    const paths = this.workspace.requirePaths();
+    while (true) {
+      const revision = backlinkSourceRevision(paths);
+      const index = await this.readEntityIndex();
+      const tableFiles = await this.readDatabaseTableFiles();
+      const fingerprint = await this.buildBacklinkFingerprint(index, tableFiles);
+      if (backlinkSourceRevision(paths) === revision) return { index, tableFiles, fingerprint, revision };
+    }
+  }
+
+  private async buildStableBacklinkGraph(): Promise<BacklinkGraphCache> {
+    const paths = this.workspace.requirePaths();
+    while (true) {
+      const { index, tableFiles, fingerprint, revision } = await this.readStableBacklinkInputs();
+      const graph = await this.buildBacklinkGraph(index, tableFiles, fingerprint);
+      if (backlinkSourceRevision(paths) === revision) return graph;
+    }
+  }
+
+  private async readPersistedBacklinkCache(root: string): Promise<BacklinkGraphCache | null> {
+    let raw = "";
+    try {
+      raw = await fileService.readText(join(root, BACKLINK_CACHE_PATH));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return null;
+    }
+    let parsed: SerializedBacklinkGraphCache;
+    try {
+      parsed = JSON.parse(raw) as SerializedBacklinkGraphCache;
+    } catch {
+      return null;
+    }
+    if (parsed.version !== BACKLINK_CACHE_VERSION || !parsed.sourceContributions) return null;
+    const byTargetId = new Map(Object.entries(parsed.byTargetId ?? {}));
+    return {
+      root,
+      fingerprint: parsed.fingerprint,
+      fileRevision: backlinkSourceRevision(this.workspace.requirePaths()),
+      knownIds: new Set(byTargetId.keys()),
+      byTargetId,
+      sourceCount: parsed.sourceCount,
+      markdownLinkCount: parsed.markdownLinkCount,
+      propertyCellCount: parsed.propertyCellCount,
+      buildMs: parsed.buildMs,
+      sourceContributions: new Map(Object.entries(parsed.sourceContributions))
+    };
+  }
+
+  private resetBacklinkWatchers(): void {
+    if (this.backlinkWatcherTimer) clearTimeout(this.backlinkWatcherTimer);
+    this.backlinkWatcherTimer = undefined;
+    for (const watcher of this.backlinkWatchers) watcher.close();
+    this.backlinkWatchers = [];
+    this.backlinkWatcherRoot = undefined;
   }
 
   private async buildBacklinkGraph(index: EntityIndex, tableFiles: DatabaseTableFile[], fingerprint: string): Promise<BacklinkGraphCache> {
@@ -247,6 +616,7 @@ export class EntitiesDatabaseService {
     const knownIds = new Set(index.byId.keys());
     const seen = new Set<string>();
     const targetsByPath = new Map<string, EntityIndexEntry[]>();
+    const sourceContributions = new Map<string, BacklinkSourceContribution>();
     let markdownLinkCount = 0;
     let propertyCellCount = 0;
 
@@ -260,6 +630,8 @@ export class EntitiesDatabaseService {
 
     for (const source of index.byId.values()) {
       if (!source.bodyPath) continue;
+      const contributionBacklinks: IndexedBacklink[] = [];
+      let contributionLinkCount = 0;
       let markdown = "";
       try {
         markdown = await fileService.readText(join(paths.root, source.bodyPath));
@@ -272,23 +644,36 @@ export class EntitiesDatabaseService {
         const targets = targetsByPath.get(link.target);
         if (!targets) continue;
         markdownLinkCount += 1;
+        contributionLinkCount += 1;
         for (const target of targets) {
           if (source.entityId === target.entityId) continue;
           const key = `markdown:${source.entityId}:${target.entityId}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          appendBacklink(byTargetId, target.entityId, {
+          const backlink: EntityBacklink = {
             type: "markdown",
             source,
             sourceBodyPath: source.bodyPath,
             line: link.line,
             excerpt: link.excerpt
-          });
+          };
+          appendBacklink(byTargetId, target.entityId, backlink);
+          contributionBacklinks.push({ targetId: target.entityId, backlink });
         }
       }
+      sourceContributions.set(markdownContributionKey(source.bodyPath), {
+        kind: "markdown",
+        path: source.bodyPath,
+        signature: await fileSignature(join(paths.root, source.bodyPath)),
+        backlinks: contributionBacklinks,
+        markdownLinkCount: contributionLinkCount,
+        propertyCellCount: 0
+      });
     }
 
     for (const table of await this.readDatabaseTables(tableFiles)) {
+      const contributionBacklinks: IndexedBacklink[] = [];
+      let contributionCellCount = 0;
       for (const record of table.records) {
         const sourceId = stringValue(record.id);
         if (!sourceId) continue;
@@ -299,10 +684,11 @@ export class EntitiesDatabaseService {
             const target = index.byId.get(targetId);
             if (!target || sourceId === target.entityId) continue;
             propertyCellCount += 1;
+            contributionCellCount += 1;
             const key = `property:${source.entityId}:${table.schema.id}:${field.id}:${target.entityId}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            appendBacklink(byTargetId, target.entityId, {
+            const backlink: EntityBacklink = {
               type: "property",
               source,
               databaseId: table.schema.id,
@@ -310,10 +696,21 @@ export class EntitiesDatabaseService {
               fieldId: field.id,
               fieldName: field.name,
               excerpt: previewPropertyCell(value, target)
-            });
+            };
+            appendBacklink(byTargetId, target.entityId, backlink);
+            contributionBacklinks.push({ targetId: target.entityId, backlink });
           }
         }
       }
+      const contributionPath = workspaceRelativePath(paths.root, table.dataPath);
+      sourceContributions.set(tableContributionKey(contributionPath), {
+        kind: "table",
+        path: contributionPath,
+        signature: await fileSignature(table.dataPath),
+        backlinks: contributionBacklinks,
+        markdownLinkCount: 0,
+        propertyCellCount: contributionCellCount
+      });
     }
 
     for (const [targetId, backlinks] of byTargetId) {
@@ -329,7 +726,8 @@ export class EntitiesDatabaseService {
       sourceCount: [...index.byId.values()].filter((source) => source.bodyPath).length,
       markdownLinkCount,
       propertyCellCount,
-      buildMs: elapsedMs(startedAt)
+      buildMs: elapsedMs(startedAt),
+      sourceContributions
     };
   }
 
@@ -370,7 +768,8 @@ export class EntitiesDatabaseService {
       sourceCount: parsed.sourceCount,
       markdownLinkCount: parsed.markdownLinkCount,
       propertyCellCount: parsed.propertyCellCount,
-      buildMs: parsed.buildMs
+      buildMs: parsed.buildMs,
+      sourceContributions: new Map(Object.entries(parsed.sourceContributions ?? {}))
     };
   }
 
@@ -383,7 +782,8 @@ export class EntitiesDatabaseService {
       markdownLinkCount: graph.markdownLinkCount,
       propertyCellCount: graph.propertyCellCount,
       buildMs: graph.buildMs,
-      byTargetId: Object.fromEntries(graph.byTargetId)
+      byTargetId: Object.fromEntries(graph.byTargetId),
+      sourceContributions: Object.fromEntries(graph.sourceContributions)
     };
     await fileService.writeTextAtomic(join(root, BACKLINK_CACHE_PATH), `${JSON.stringify(payload, null, 2)}\n`);
   }
@@ -447,8 +847,8 @@ export class EntitiesDatabaseService {
     return files;
   }
 
-  private async readDatabaseTables(files?: DatabaseTableFile[]): Promise<Array<{ schema: DatabaseSchema; records: DatabaseRecord[] }>> {
-    const tables: Array<{ schema: DatabaseSchema; records: DatabaseRecord[] }> = [];
+  private async readDatabaseTables(files?: DatabaseTableFile[]): Promise<Array<{ schema: DatabaseSchema; records: DatabaseRecord[]; schemaPath: string; dataPath: string }>> {
+    const tables: Array<{ schema: DatabaseSchema; records: DatabaseRecord[]; schemaPath: string; dataPath: string }> = [];
     for (const file of files ?? await this.readDatabaseTableFiles()) {
       let schema: DatabaseSchema;
       try {
@@ -459,7 +859,7 @@ export class EntitiesDatabaseService {
       }
       if (schema.id === ENTITIES_DATABASE_ID) continue;
       const records = await readCsvFile(file.dataPath);
-      tables.push({ schema, records });
+      tables.push({ schema, records, schemaPath: file.schemaPath, dataPath: file.dataPath });
     }
     return tables;
   }
@@ -654,6 +1054,60 @@ function compareBacklinks(a: EntityBacklink, b: EntityBacklink): number {
     (a.fieldName ?? "").localeCompare(b.fieldName ?? "");
 }
 
+function backlinkTargetsByPath(index: EntityIndex): Map<string, EntityIndexEntry[]> {
+  const targetsByPath = new Map<string, EntityIndexEntry[]>();
+  for (const target of index.byId.values()) {
+    for (const candidate of targetWorkspaceLinkCandidates(target)) {
+      const targets = targetsByPath.get(candidate) ?? [];
+      targets.push(target);
+      targetsByPath.set(candidate, targets);
+    }
+  }
+  return targetsByPath;
+}
+
+function materializeBacklinkContributions(graph: BacklinkGraphCache): void {
+  const byTargetId = new Map<string, EntityBacklink[]>();
+  let markdownLinkCount = 0;
+  let propertyCellCount = 0;
+  let sourceCount = 0;
+  for (const contribution of graph.sourceContributions.values()) {
+    if (contribution.kind === "markdown") sourceCount += 1;
+    markdownLinkCount += contribution.markdownLinkCount;
+    propertyCellCount += contribution.propertyCellCount;
+    for (const entry of contribution.backlinks) appendBacklink(byTargetId, entry.targetId, entry.backlink);
+  }
+  for (const [targetId, backlinks] of byTargetId) byTargetId.set(targetId, backlinks.sort(compareBacklinks));
+  graph.byTargetId = byTargetId;
+  graph.sourceCount = sourceCount;
+  graph.markdownLinkCount = markdownLinkCount;
+  graph.propertyCellCount = propertyCellCount;
+}
+
+function markdownContributionKey(path: string): string {
+  return `markdown:${normalizeWorkspacePath(path)}`;
+}
+
+function tableContributionKey(path: string): string {
+  return `table:${normalizeWorkspacePath(path)}`;
+}
+
+function workspaceRelativePath(root: string, path: string): string {
+  return normalizeWorkspacePath(relative(resolve(root), resolve(path)));
+}
+
+function isBacklinkSourcePath(root: string, path: string): boolean {
+  const workspacePath = workspaceRelativePath(root, path);
+  if (workspacePath.startsWith("../") || !workspacePath.startsWith("databases/")) return false;
+  return workspacePath.endsWith(".md") || workspacePath.endsWith("/data.csv") || workspacePath.endsWith("/schema.json");
+}
+
+function isEntityIndexTablePath(paths: WorkspacePaths, path: string): boolean {
+  const absolutePath = resolve(path);
+  return absolutePath === resolve(paths.data(PAGES_DATABASE_ID, "pages")) ||
+    absolutePath === resolve(paths.data(ENTITIES_DATABASE_ID, "entities"));
+}
+
 function appendBacklink(byTargetId: Map<string, EntityBacklink[]>, targetId: string, backlink: EntityBacklink): void {
   const backlinks = byTargetId.get(targetId) ?? [];
   backlinks.push(backlink);
@@ -689,3 +1143,37 @@ function openLog(label: string, detail: Record<string, unknown>) {
 function elapsedMs(start: number): number {
   return Number((performance.now() - start).toFixed(1));
 }
+
+// Entity and backlink parsing helpers are exposed only as an internal test
+// contract. EntitiesDatabaseService remains the production API.
+export const entitiesDatabaseTestInternals = {
+  parseEntityKind,
+  parsePath,
+  stringValue,
+  entityFromRecord,
+  entityFromPageRecord,
+  fallbackRowEntity,
+  targetWorkspaceLinkCandidates,
+  markdownLinkTargets,
+  normalizeMarkdownTarget,
+  normalizeWorkspacePath,
+  safeDecode,
+  cellReferencedEntityIds,
+  previewCell,
+  previewPropertyCell,
+  previewEntityRefCell,
+  entityRefPreviewLabel,
+  compareBacklinks,
+  backlinkTargetsByPath,
+  materializeBacklinkContributions,
+  markdownContributionKey,
+  tableContributionKey,
+  workspaceRelativePath,
+  isBacklinkSourcePath,
+  isEntityIndexTablePath,
+  appendBacklink,
+  backlinkSourceRevision,
+  fileSignature,
+  stableHash,
+  elapsedMs
+};

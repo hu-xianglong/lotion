@@ -10,6 +10,8 @@ import {
   parseNotionHtmlBody,
   parseNotionHtmlMetadata
 } from "./notion-html-converter.js";
+import { notionShortIdFromHash } from "./notion-short-id.js";
+import { resolveNotionCollectionRewrite } from "./notion-collection-resolver.js";
 import type {
   NotionCollectionResolveContext,
   NotionCollectionRow,
@@ -18,7 +20,7 @@ import type {
   NotionLinkResolver
 } from "./notion-html-converter.js";
 import type { AppConfigService } from "./app-config-service.js";
-import { normalizeDateValue, parseDateTimeValue } from "../../shared/date-values.js";
+import { normalizeDateValue } from "../../shared/date-values.js";
 import { formatEmojiIcon } from "../../shared/entity-icons.js";
 import { orderFieldIdsByContentRichness } from "../../shared/field-order.js";
 import { workspaceAttachmentPath } from "../../shared/attachments.js";
@@ -34,6 +36,8 @@ import { fileService } from "./file-service.js";
 // dialog before they commit to overwriting their workspace.
 export interface NotionScanResult {
   sources: string[];
+  /** Raw source files by export format, before hash-based deduplication. */
+  formats: { markdown: number; html: number; csv: number };
   /** All non-`_all.csv` files seen, before dedup. */
   databasesRaw: number;
   /** Surviving databases after we drop empties + dedup by title. */
@@ -222,22 +226,13 @@ export class NotionImportService {
    * if cancelled. The renderer can't open dialogs in modern Electron,
    * so this lives in main.
    */
-  async pickFolder(kind?: "markdown_csv" | "html"): Promise<string | null> {
+  async pickFolder(): Promise<string | null> {
     const dialog = await getElectronDialog();
-    const title = kind === "markdown_csv"
-      ? "Choose your Notion Markdown & CSV export"
-      : kind === "html"
-        ? "Choose your Notion HTML export"
-        : "Choose your Notion export folder";
-    const message = kind === "markdown_csv"
-      ? "Pick the folder extracted from Notion's Markdown & CSV export."
-      : kind === "html"
-        ? "Pick the folder extracted from Notion's HTML export."
-        : "Pick the folder containing your Notion `Export-…` subfolders, or a single Export folder.";
     const result = await dialog.showOpenDialog({
-      title,
+      title: "Choose your Notion export folder",
       properties: ["openDirectory"],
-      message
+      message:
+        "Pick the folder containing your Notion `Export-…` subfolders, or a single Export folder."
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
@@ -261,12 +256,13 @@ export class NotionImportService {
   }
 
   /** Inspect the folder and report what an import would produce. */
-  async scan(sourcePaths: string | string[]): Promise<NotionScanResult> {
-    const sources = await resolveSourceParts(sourcePaths);
+  async scan(folderPaths: string | string[]): Promise<NotionScanResult> {
+    const sources = await resolveSourceRoots(folderPaths);
     const inventory = await buildInventory(sources);
     const choice = await chooseDatabasesByTitle(inventory.databasesByHash);
     return {
       sources,
+      formats: inventory.formats,
       databasesRaw: inventory.databasesByHash.size,
       databasesKept: choice.kept.length,
       databases: choice.preview.slice(0, 64),
@@ -283,7 +279,7 @@ export class NotionImportService {
    * and picks it up.
    */
   async runImport(
-    sourcePaths: string | string[],
+    folderPaths: string | string[],
     targetPath: string,
     force = false,
     optionsOrProgress?: NotionImportOptions | NotionImportProgressCallback,
@@ -296,10 +292,8 @@ export class NotionImportService {
       typeof optionsOrProgress === "function" ? optionsOrProgress : maybeOnProgress;
     const startedAt = Date.now();
     const emitProgress = createProgressReporter(onProgress, startedAt);
-    const normalizedSourcePaths = normalizeSourcePathInput(sourcePaths);
-    if (normalizedSourcePaths.length === 0) throw new Error("At least one Notion export folder is required");
     console.log(
-      `[lotion main] notion import start sources=${JSON.stringify(normalizedSourcePaths)} target=${targetPath} ` +
+      `[lotion main] notion import start sources=${JSON.stringify(normalizeSourceRoots(folderPaths))} target=${targetPath} ` +
       `force=${force} options=${JSON.stringify(options)}`
     );
     if (!targetPath) throw new Error("targetPath is required");
@@ -317,37 +311,31 @@ export class NotionImportService {
         throw new Error(`Target folder is not empty: ${targetPath}`);
       }
       if (existing.length > 0) {
-        console.log(
-          `[lotion main] notion import target contains disposable entries only: ${existing.join(", ")}`
-        );
+        console.log(`[lotion main] notion import target contains disposable entries only: ${existing.join(", ")}`);
       }
     } else {
       await fileService.remove(targetPath, { recursive: true, force: true });
     }
-    const prepareTargetMs = Date.now() - tTarget;
-    console.log(`[lotion main] notion import prepare target elapsed=${formatDuration(prepareTargetMs)} total=${formatDuration(Date.now() - startedAt)}`);
+    console.log(`[lotion main] notion import prepare target elapsed=${formatDuration(Date.now() - tTarget)} total=${formatDuration(Date.now() - startedAt)}`);
 
     emitProgress({ phase: "scanning", message: "Indexing source files" });
     const tResolve = Date.now();
-    const sources = await resolveSourceParts(normalizedSourcePaths);
-    const resolveSourcesMs = Date.now() - tResolve;
-    console.log(`[lotion main] notion import sources count=${sources.length} elapsed=${formatDuration(resolveSourcesMs)}`);
+    const sources = await resolveSourceRoots(folderPaths);
+    console.log(`[lotion main] notion import sources count=${sources.length} elapsed=${formatDuration(Date.now() - tResolve)}`);
     const tInventory = Date.now();
     const inventory = await buildInventory(sources, emitProgress);
-    const indexSourcesMs = Date.now() - tInventory;
     console.log(
       `[lotion main] notion import indexed rawDbs=${inventory.databasesByHash.size} ` +
       `rowPages=${inventory.rowsByKey.size} freePages=${inventory.pagesByHash.size} ` +
       `attachments=${inventory.attachments.size} attachmentSources=${attachmentSourceCount(inventory)} ` +
-      `elapsed=${formatDuration(indexSourcesMs)} total=${formatDuration(Date.now() - startedAt)}`
+      `elapsed=${formatDuration(Date.now() - tInventory)} total=${formatDuration(Date.now() - startedAt)}`
     );
     const tChoice = Date.now();
     const choice = await chooseDatabasesByTitle(inventory.databasesByHash);
-    const selectDatabasesMs = Date.now() - tChoice;
     const stats = makeImportStats(sources, inventory, choice);
     console.log(
       `[lotion main] notion import selected keptDbs=${stats.databasesKept}/${stats.databasesRaw} ` +
-      `totalRows=${stats.totalRows} elapsed=${formatDuration(selectDatabasesMs)} total=${formatDuration(Date.now() - startedAt)}`
+      `totalRows=${stats.totalRows} elapsed=${formatDuration(Date.now() - tChoice)} total=${formatDuration(Date.now() - startedAt)}`
     );
     console.log(
       `[lotion main] notion import top databases ` +
@@ -364,10 +352,10 @@ export class NotionImportService {
     const tEmit = Date.now();
     const emitted = await emitWorkspace(targetPath, sources, inventory, choice, emitProgress, options, {
       startedAt,
-      prepareTargetMs,
-      resolveSourcesMs,
-      indexSourcesMs,
-      selectDatabasesMs
+      prepareTargetMs: tResolve - tTarget,
+      resolveSourcesMs: tInventory - tResolve,
+      indexSourcesMs: tChoice - tInventory,
+      selectDatabasesMs: tEmit - tChoice
     });
     console.log(`[lotion main] notion import emitted workspace elapsed=${formatDuration(Date.now() - tEmit)} total=${formatDuration(Date.now() - startedAt)}`);
 
@@ -390,6 +378,7 @@ export class NotionImportService {
       report: emitted.report,
       scan: {
         sources,
+        formats: inventory.formats,
         databasesRaw: inventory.databasesByHash.size,
         databasesKept: choice.kept.length,
         databases: choice.preview.slice(0, 64),
@@ -611,42 +600,6 @@ function markdownCsvWrapperTarget(raw: string): string | null {
     return null;
   }
   return notionFileHash(decoded) ? decoded : null;
-}
-
-function htmlCsvWrapperTarget(raw: string): string | null {
-  const root = parseHtml(raw, { lowerCaseTagName: true });
-  const body = root.querySelector("div.page-body");
-  if (!body) return null;
-
-  let csvTarget: string | null = null;
-  for (const node of body.childNodes) {
-    const element = node as NhpElement;
-    const tag = element.tagName?.toLowerCase();
-    if (!tag) {
-      if ((node as { rawText?: string }).rawText?.trim()) return null;
-      continue;
-    }
-    if (tag === "br") continue;
-    if (tag === "a") {
-      if (csvTarget) return null;
-      const href = element.getAttribute("href")?.trim() ?? "";
-      if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
-      let decoded = href;
-      try {
-        decoded = decodeURIComponent(href);
-      } catch {
-        return null;
-      }
-      if (!/\.csv$/i.test(decoded) || !notionFileHash(decoded)) return null;
-      csvTarget = decoded;
-      continue;
-    }
-    if (tag === "div" && /^Metadata:\s*Filters\s*&\s*Sorts\b/i.test(element.text.trim())) {
-      continue;
-    }
-    return null;
-  }
-  return csvTarget;
 }
 
 interface OriginalSourceFile {
@@ -1061,25 +1014,8 @@ function makeBodyResolveLink(sourcePath: string, rewrites: Map<string, string>):
 function makeBodyResolveCollection(
   rewrites: Map<string, string>
 ): (hashNoDashes: string, title: string, context?: NotionCollectionResolveContext) => string | null {
-  return (hashNoDashes, title, context) => {
-    const directId = rewrites.get(`notion-db-id:${hashNoDashes}`);
-    if (directId) return `lotion-db:${directId}`;
-    const direct = rewrites.get(`notion-db:${hashNoDashes}`);
-    if (direct) return direct;
-    const dbIdsByRows = new Set<string>();
-    for (const rowHash of context?.rowHashes ?? []) {
-      const dbId = rewrites.get(`notion-row-db-id:${rowHash.toLowerCase()}`);
-      if (dbId) dbIdsByRows.add(dbId);
-    }
-    if (dbIdsByRows.size === 1) {
-      return `lotion-db:${Array.from(dbIdsByRows)[0]!}`;
-    }
-    if (!title) return null;
-    const titleEnc = Buffer.from(title).toString("base64").replace(/=+$/, "");
-    const titleId = rewrites.get(`notion-db-title-id:${titleEnc}`);
-    if (titleId) return `lotion-db:${titleId}`;
-    return rewrites.get(`notion-db-title:${titleEnc}`) ?? null;
-  };
+  return (hashNoDashes, title, context) =>
+    resolveNotionCollectionRewrite(rewrites, hashNoDashes, title, context);
 }
 
 function attachmentSourceCount(inventory: Inventory): number {
@@ -1114,25 +1050,26 @@ function makeImportStats(
  * If the user picked the parent of `Export-…` folders, gather all of
  * them. If they picked a single export, treat it as one source.
  */
-async function resolveSourceParts(sourcePaths: string | string[]): Promise<string[]> {
-  const roots = normalizeSourcePathInput(sourcePaths);
-  if (roots.length === 0) throw new Error("At least one Notion export folder is required");
-
-  const sources: string[] = [];
-  for (const rootPath of roots) {
-    const entries = await fileService.readDir(rootPath, { withFileTypes: true });
-    const parts = entries
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith("Export-"))
-      .map((entry) => resolve(rootPath, entry.name))
-      .sort();
-    sources.push(...(parts.length > 0 ? parts : [resolve(rootPath)]));
-  }
-  return [...new Set(sources)];
+async function resolveSourceParts(rootPath: string): Promise<string[]> {
+  const entries = await fileService.readDir(rootPath, { withFileTypes: true });
+  const parts = entries
+    .filter((e) => e.isDirectory() && e.name.startsWith("Export-"))
+    .map((e) => join(rootPath, e.name))
+    .sort();
+  if (parts.length > 0) return parts;
+  return [rootPath];
 }
 
-function normalizeSourcePathInput(sourcePaths: string | string[]): string[] {
-  const candidates = Array.isArray(sourcePaths) ? sourcePaths : [sourcePaths];
-  return [...new Set(candidates.map((source) => String(source ?? "").trim()).filter(Boolean).map((source) => resolve(source)))];
+function normalizeSourceRoots(rootPaths: string | string[]): string[] {
+  const values = Array.isArray(rootPaths) ? rootPaths : [rootPaths];
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean).map((value) => resolve(value)))];
+}
+
+async function resolveSourceRoots(rootPaths: string | string[]): Promise<string[]> {
+  const roots = normalizeSourceRoots(rootPaths);
+  if (roots.length === 0) throw new Error("At least one Notion export folder is required");
+  const parts = await Promise.all(roots.map((root) => resolveSourceParts(root)));
+  return [...new Set(parts.flat().map((part) => resolve(part)))];
 }
 
 // ── inventory pass ────────────────────────────────────────────────────
@@ -1147,6 +1084,7 @@ interface Inventory {
   databasesByHash: Map<string, DatabaseEntry>;
   rowsByKey: Map<string, RowEntry>;
   attachments: Map<string, AttachmentEntry>;
+  formats: { markdown: number; html: number; csv: number };
 }
 
 async function buildInventory(
@@ -1157,6 +1095,7 @@ async function buildInventory(
   const databasesByHash = new Map<string, DatabaseEntry>();
   const rowsByKey = new Map<string, RowEntry>();
   const attachments = new Map<string, AttachmentEntry>();
+  const formats = { markdown: 0, html: 0, csv: 0 };
   let attachmentIndexCount = 0;
 
   // Pass 1: every CSV, so .md classification later can see all db
@@ -1184,7 +1123,7 @@ async function buildInventory(
     const { title: dbFolderName } = stripHash(csvStem);
     if (!dbFolderName) continue;
     const csvDir = dirname(db.csvPath);
-    const rowFolderKey = logicalPath(join(csvDir, dbFolderName));
+    const rowFolderKey = notionRelativePath(join(csvDir, dbFolderName), sources);
     if (!dbHashByRowFolder.has(rowFolderKey)) dbHashByRowFolder.set(rowFolderKey, hash);
   }
 
@@ -1206,7 +1145,7 @@ async function buildInventory(
     });
   }
 
-  return { pagesByHash, databasesByHash, rowsByKey, attachments };
+  return { pagesByHash, databasesByHash, rowsByKey, attachments, formats };
 
   async function walk(dir: string, phase: "csv" | "rest"): Promise<void> {
     let entries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>;
@@ -1229,6 +1168,7 @@ async function buildInventory(
 
       if (phase === "csv") {
         if (ext !== ".csv") continue;
+        formats.csv += 1;
         // Notion exports each database as TWO CSVs:
         //   `<title> <hash>.csv`        current view (often filtered)
         //   `<title> <hash>_all.csv`    every row, no filter
@@ -1266,6 +1206,8 @@ async function buildInventory(
       // ".html" (HTML export). Treat them interchangeably — the rest
       // of the importer dispatches on file extension when reading.
       if (ext === ".md" || ext === ".html" || ext === ".htm") {
+        if (ext === ".md") formats.markdown += 1;
+        else formats.html += 1;
         const { title, hash } = stripHash(stem);
         if (!hash) {
           if (ext === ".html" || ext === ".htm") await indexAttachment(fullPath, ext);
@@ -1309,7 +1251,7 @@ async function buildInventory(
     // (as a logical path, with the Notion part-split prefix stripped).
     // We require an EXACT match so a nested inline DB with a name
     // colliding with a top-level DB doesn't get misclassified.
-    return dbHashByRowFolder.get(logicalPath(dir)) ?? null;
+    return dbHashByRowFolder.get(notionRelativePath(dir, sources)) ?? null;
   }
 
   async function indexAttachment(sourcePath: string, ext: string): Promise<void> {
@@ -1691,7 +1633,7 @@ function buildNameConflictSummary(
   databases: ImportReportDatabaseSummary[]
 ): NotionImportReportSummary["nameConflicts"] {
   const byName = new Map<string, { name: string; entries: NotionImportNameConflictEntry[] }>();
-  const add = (name: string, entry: NotionImportNameConflictEntry) => {
+  const add = (name: string, entry: NotionImportNameConflictEntry): void => {
     const displayName = name.replace(/\s+/g, " ").trim() || "Untitled";
     const key = displayName.toLocaleLowerCase();
     const group = byName.get(key) ?? { name: displayName, entries: [] };
@@ -1775,7 +1717,7 @@ function buildImportReportSummary(input: {
   }
   const nameConflicts = buildNameConflictSummary(input.importedPages, input.databases);
   const artifactDir = `reports/import-${input.now.replace(/[:.]/g, "-")}`;
-  const report: NotionImportReportSummary = {
+  return {
     status: warnings.length > 0 ? "complete_with_warnings" : "complete",
     generatedAt: input.now,
     durationMs: input.timings.totalMs,
@@ -1807,7 +1749,6 @@ function buildImportReportSummary(input: {
       manifest: join(input.target, artifactDir, "manifest.json")
     }
   };
-  return report;
 }
 
 function buildImportReportMarkdown(input: BuildImportReportInput): string {
@@ -1818,7 +1759,18 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
   const outputFields = input.databases.reduce((sum, db) => sum + db.fields, 0);
   const outputUserFields = input.databases.reduce((sum, db) => sum + db.userFields, 0);
   const duplicateRowCount = input.duplicateRows.reduce((sum, group) => sum + group.count, 0);
-  const warnings = [...input.report.warnings];
+  const warnings: string[] = [];
+  if (stats.totalRows !== outputRows) {
+    warnings.push(
+      `Fast scan row estimate (${reportNumber(stats.totalRows)}) differs from parsed CSV rows (${reportNumber(outputRows)}). ` +
+      "This is expected when CSV cells contain embedded newlines; parsed CSV rows are the emitted source of truth."
+    );
+  }
+  if (input.parsedRowsDone !== input.parsedRowsTotal) {
+    warnings.push(
+      `Only parsed ${reportNumber(input.parsedRowsDone)} of ${reportNumber(input.parsedRowsTotal)} row HTML metadata files.`
+    );
+  }
   const sourceLines = input.sources.length > 0
     ? input.sources.map((source) => `- ${markdownInlineCode(source)}`).join("\n")
     : "- None";
@@ -1834,38 +1786,6 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     `Workspace: ${markdownInlineCode(basename(input.target) || "Notion Import")}`,
     `Target: ${markdownInlineCode(input.target)}`,
     `Report page: ${markdownInlineCode(input.reportPageId)} (${markdownInlineCode(input.reportBodyPath)})`,
-    "",
-    "## Same-name Pages And Databases",
-    "",
-    "Names are labels, not identity. Lotion only merges matching stable Notion IDs; every object that merely shares a name is retained.",
-    "",
-    formatMarkdownTable(
-      ["Conflict type", "Groups"],
-      [
-        ["Same-name pages", reportNumber(input.report.nameConflicts.pageGroups)],
-        ["Same-name databases", reportNumber(input.report.nameConflicts.databaseGroups)],
-        ["Page and database share a name", reportNumber(input.report.nameConflicts.crossTypeGroups)]
-      ]
-    ),
-    "",
-    formatNameConflictTable(input.report.nameConflicts.groups),
-    "",
-    "## Icon Coverage",
-    "",
-    formatMarkdownTable(
-      ["Object", "With icon", "Without icon"],
-      [
-        ["Pages", reportNumber(input.report.icons.pagesWithIcon), reportNumber(input.report.icons.pagesWithoutIcon)],
-        ["Databases", reportNumber(input.report.icons.databasesWithIcon), reportNumber(input.report.icons.databasesWithoutIcon)],
-        ["Database rows", reportNumber(input.report.icons.rowsWithIcon), reportNumber(input.report.icons.rowsWithoutIcon)]
-      ]
-    ),
-    "",
-    "_Without icon means no icon was emitted. It can be intentional; the importer does not treat it as data loss by itself._",
-    "",
-    "### Objects Without An Emitted Icon",
-    "",
-    formatObjectsWithoutIconTable(input.importedPages, input.databases, input.importedRows),
     "",
     "## Summary",
     "",
@@ -1891,6 +1811,42 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
         ["Attachment source files", reportNumber(attachmentSourceCount(input.inventory))],
         ["Fields emitted", reportNumber(outputFields)],
         ["User fields emitted", reportNumber(outputUserFields)]
+      ]
+    ),
+    "",
+    "## Data Integrity",
+    "",
+    formatMarkdownTable(
+      ["Metric", "Value"],
+      [
+        ["Source rows parsed", reportNumber(input.databases.reduce((sum, db) => sum + db.sourceRows, 0))],
+        ["Rows emitted", reportNumber(input.report.counts.rows)],
+        ["Warnings", reportNumber(input.report.counts.warnings)],
+        ["Review items", reportNumber(input.report.counts.reviewItems)]
+      ]
+    ),
+    "",
+    "## Same-name Pages And Databases",
+    "",
+    input.report.nameConflicts.groups.length > 0
+      ? formatMarkdownTable(
+          ["Name", "Kinds", "Entries"],
+          input.report.nameConflicts.groups.map((group) => [
+            group.name,
+            group.kinds.join(", "),
+            reportNumber(group.entries.length)
+          ])
+        )
+      : "_No same-name page or database groups were found._",
+    "",
+    "## Icon Coverage",
+    "",
+    formatMarkdownTable(
+      ["Entity", "With icon", "Without icon"],
+      [
+        ["Pages", reportNumber(input.report.icons.pagesWithIcon), reportNumber(input.report.icons.pagesWithoutIcon)],
+        ["Databases", reportNumber(input.report.icons.databasesWithIcon), reportNumber(input.report.icons.databasesWithoutIcon)],
+        ["Rows", reportNumber(input.report.icons.rowsWithIcon), reportNumber(input.report.icons.rowsWithoutIcon)]
       ]
     ),
     "",
@@ -1951,36 +1907,6 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     "",
     ...formatHumanReviewSummary(input),
     "",
-    "## Data Integrity",
-    "",
-    formatMarkdownTable(
-      ["Check", "Result"],
-      [
-        ["Source export modified", "No — source folders are read-only inputs"],
-        ["Identity rule", "Stable Notion ID; names never overwrite another object"],
-        ["Parsed database rows", reportNumber(input.databases.reduce((sum, database) => sum + database.sourceRows, 0))],
-        ["Rows emitted", reportNumber(outputRows)],
-        ["Blank rows intentionally skipped", reportNumber(skippedEmptyRowPages)],
-        ["Core workspace manifest", "Written"],
-        ["Detailed source-to-target manifest", "Written"]
-      ]
-    ),
-    "",
-    "## Performance",
-    "",
-    formatMarkdownTable(
-      ["Stage", "Time"],
-      [
-        ["Prepare target", formatDuration(input.report.performance.prepareTargetMs)],
-        ["Resolve export folders", formatDuration(input.report.performance.resolveSourcesMs)],
-        ["Index sources", formatDuration(input.report.performance.indexSourcesMs)],
-        ["Select databases", formatDuration(input.report.performance.selectDatabasesMs)],
-        ["Plan and parse", formatDuration(input.report.performance.planAndParseMs)],
-        ["Write workspace", formatDuration(input.report.performance.writeWorkspaceMs)],
-        ["Total", formatDuration(input.report.performance.totalMs)]
-      ]
-    ),
-    "",
     "## Sources",
     "",
     sourceLines,
@@ -1990,13 +1916,6 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     warnings.length > 0
       ? warnings.map((warning) => `- ${warning}`).join("\n")
       : "_No import warnings were generated._",
-    "",
-    "## Report Files",
-    "",
-    `- Markdown: ${markdownInlineCode(input.report.artifacts.markdown)}`,
-    `- JSON: ${markdownInlineCode(input.report.artifacts.json)}`,
-    `- Warnings CSV: ${markdownInlineCode(input.report.artifacts.warningsCsv)}`,
-    `- Source-to-target manifest: ${markdownInlineCode(input.report.artifacts.manifest)}`,
     "",
     "## Largest Databases",
     "",
@@ -2023,52 +1942,6 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
     "- Empty databases reconstructed from Notion links are emitted so existing links still open inside Lotion.",
     ""
   ].join("\n");
-}
-
-function formatNameConflictTable(groups: NotionImportNameConflictGroup[]): string {
-  if (groups.length === 0) return "_No same-name pages or databases were found._";
-  const rows: string[][] = [];
-  for (const group of groups.slice(0, IMPORT_REPORT_SUMMARY_LIMIT)) {
-    for (const entry of group.entries) {
-      rows.push([
-        group.name,
-        entry.kind === "page" ? "Page" : "Database",
-        entry.notionId ?? "—",
-        entry.target,
-        basename(entry.source)
-      ]);
-    }
-  }
-  const table = formatMarkdownTable(["Name", "Type", "Notion ID", "Imported target", "Source"], rows);
-  if (groups.length <= IMPORT_REPORT_SUMMARY_LIMIT) return table;
-  return `${table}\n\n_Showing ${IMPORT_REPORT_SUMMARY_LIMIT} of ${reportNumber(groups.length)} conflict groups. The JSON report contains every group._`;
-}
-
-function formatObjectsWithoutIconTable(
-  pages: ImportReportImportedPage[],
-  databases: ImportReportDatabaseSummary[],
-  rows: ImportReportImportedRow[]
-): string {
-  const objects = [
-    ...pages.filter((page) => !page.icon).map((page) => ({ type: "Page", name: page.title, target: page.target })),
-    ...databases.filter((database) => !database.icon).map((database) => ({
-      type: "Database",
-      name: database.name,
-      target: databaseWorkspacePathWithName(database.id, false, database.name)
-    })),
-    ...rows.filter((row) => !row.icon).map((row) => ({
-      type: "Database row",
-      name: `${row.database} / ${row.title}`,
-      target: row.target
-    }))
-  ];
-  if (objects.length === 0) return "_Every imported page, database, and database row has an emitted icon._";
-  const table = formatMarkdownTable(
-    ["Type", "Object", "Imported target"],
-    objects.slice(0, IMPORT_REPORT_SUMMARY_LIMIT).map((object) => [object.type, object.name, object.target])
-  );
-  if (objects.length <= IMPORT_REPORT_SUMMARY_LIMIT) return table;
-  return `${table}\n\n_Showing ${IMPORT_REPORT_SUMMARY_LIMIT} of ${reportNumber(objects.length)} objects. The source-to-target manifest contains the complete list._`;
 }
 
 interface ImportReportGroupedSummary {
@@ -2536,9 +2409,6 @@ async function emitWorkspace(
     /** Workspace-relative path or remote URL for the page cover image. */
     cover?: string;
     coverOffset?: number;
-    /** Original Notion timestamps when the export exposes them. */
-    createdTime?: string;
-    updatedTime?: string;
   }
   interface RowPlan {
     rowId: string;
@@ -2556,8 +2426,6 @@ async function emitWorkspace(
   interface DbPlan {
     id: string;
     name: string;
-    /** Name before Lotion adds a short Notion-id suffix to avoid a path collision. */
-    originalName?: string;
     path?: string[];
     csvPath?: string;
     originalCsvAttachment?: string;
@@ -2572,8 +2440,6 @@ async function emitWorkspace(
     cover?: string;
     coverOffset?: number;
     fields: Array<{ id: string; name: string; type: string; system?: boolean; hidden?: boolean; options?: SelectOption[] }>;
-    /** Parsed CSV/inline rows before the optional blank-row filter. */
-    sourceRows: number;
     records: Array<Record<string, string>>;
     view: {
       id: string;
@@ -2614,15 +2480,6 @@ async function emitWorkspace(
   }
   const markdownWrapperTargetDbHash = (raw: string, sourcePath: string): string | undefined => {
     const csvTarget = markdownCsvWrapperTarget(raw);
-    if (!csvTarget) return undefined;
-    const resolved = normalizeAbs(resolve(dirname(sourcePath), csvTarget));
-    const dbHash = dbHashByCsvSourceAbs.get(resolved);
-    if (dbHash) return dbHash;
-    const hash = notionFileHash(csvTarget);
-    return hash && keptDbHashes.has(hash) ? hash : undefined;
-  };
-  const htmlWrapperTargetDbHash = (raw: string, sourcePath: string): string | undefined => {
-    const csvTarget = htmlCsvWrapperTarget(raw);
     if (!csvTarget) return undefined;
     const resolved = normalizeAbs(resolve(dirname(sourcePath), csvTarget));
     const dbHash = dbHashByCsvSourceAbs.get(resolved);
@@ -2827,8 +2684,6 @@ async function emitWorkspace(
     let icon: string | undefined;
     let cover: string | undefined;
     let coverOffset: number | undefined;
-    let createdTime: string | undefined;
-    let updatedTime: string | undefined;
     let title = entry.title || "Untitled";
     let rawHtmlForDedupe: string | undefined;
     if (isHtmlSource(entry.sourcePath)) {
@@ -2866,16 +2721,6 @@ async function emitWorkspace(
       const parsedCover = resolveParsedCover(parsed, dirname(entry.sourcePath));
       cover = parsedCover.cover;
       coverOffset = parsedCover.coverOffset;
-      const importedTimes = notionSystemTimes(parsed.properties, parsed.propertyTypes);
-      createdTime = importedTimes.createdTime;
-      updatedTime = importedTimes.updatedTime;
-      const directDatabaseHash = databaseIdByHash.has(hash) ? hash : undefined;
-      const csvWrapperTargetHash = htmlWrapperTargetDbHash(headerRead.sampleHtml, entry.sourcePath);
-      const metadataTargetHash = directDatabaseHash ?? csvWrapperTargetHash;
-      if (metadataTargetHash) {
-        if (icon) dbIconByHash.set(metadataTargetHash, icon);
-        if (cover) dbCoverByHash.set(metadataTargetHash, { cover, coverOffset });
-      }
       // Notion's HTML export emits a standalone page for every inline
       // database — these pages are identical to the database itself
       // and showed up in the sidebar as "phantom" pages. Skip the page
@@ -2883,11 +2728,10 @@ async function emitWorkspace(
       // a database with the same title in the sidebar. We carry the
       // page's icon forward to the database so the DB sidebar entry
       // doesn't end up iconless.
-      const targetHashForLink = directDatabaseHash
-        ?? csvWrapperTargetHash
-        ?? dbHashByRawTitle.get(entry.title)
-        ?? dbHashByTitle.get(entry.title);
-      if ((parsed.isCollectionWrapperOnly || csvWrapperTargetHash) && targetHashForLink) {
+      const targetHashForLink = databaseIdByHash.has(hash)
+        ? hash
+        : dbHashByRawTitle.get(entry.title) ?? dbHashByTitle.get(entry.title);
+      if (parsed.isCollectionWrapperOnly && targetHashForLink) {
         if (icon) {
           dbIconByHash.set(targetHashForLink, icon);
         }
@@ -2983,9 +2827,7 @@ async function emitWorkspace(
       sourcePath: entry.sourcePath,
       icon,
       cover,
-      coverOffset,
-      createdTime,
-      updatedTime
+      coverOffset
     });
   }
   if (skippedDuplicateStandalonePages > 0) {
@@ -3508,7 +3350,6 @@ async function emitWorkspace(
     dbPlans.push({
       id: dbId,
       name: db.title,
-      originalName: displayDatabaseName(db.rawTitle),
       path: db.path,
       csvPath: db.csvPath,
       originalCsvAttachment,
@@ -3517,7 +3358,6 @@ async function emitWorkspace(
       cover: dbCover?.cover,
       coverOffset: dbCover?.coverOffset,
       fields,
-      sourceRows: records.length,
       records,
       view,
       rowPlans
@@ -3588,12 +3428,10 @@ async function emitWorkspace(
     return {
       id: dbId,
       name: db.title,
-      originalName: db.title,
       path: db.path,
       sourceHash: hash,
       icon: db.icon,
       fields,
-      sourceRows: 0,
       records: [],
       view: {
         id: DEFAULT_VIEW_ID,
@@ -3633,18 +3471,10 @@ async function emitWorkspace(
       userFieldIds.push(ORIGINAL_NOTION_HTML_FIELD_ID);
     }
     const fieldIdByName = new Map<string, string>();
-    const systemTimeFieldByName = new Map<string, "created_time" | "updated_time">();
     for (const fieldName of rawFieldNames.slice(1)) {
       const fieldId = uniqueFieldId(fieldName, fields);
-      const systemTimeFieldId = notionSystemTimeField(fieldName, undefined);
-      const fieldType = systemTimeFieldId === "created_time"
-        ? "created_time"
-        : systemTimeFieldId === "updated_time"
-          ? "updated_time"
-          : "text";
-      fields.push({ id: fieldId, name: fieldName, type: fieldType });
+      fields.push({ id: fieldId, name: fieldName, type: "text" });
       fieldIdByName.set(fieldName, fieldId);
-      if (systemTimeFieldId) systemTimeFieldByName.set(fieldName, systemTimeFieldId);
       userFieldIds.push(fieldId);
     }
 
@@ -3677,12 +3507,7 @@ async function emitWorkspace(
         [ORIGINAL_NOTION_HTML_FIELD_ID]: originalHtmlAttachmentForSource(row.sourcePath)
       };
       for (const [fieldName, fieldId] of fieldIdByName) {
-        const rawValue = values[fieldName] ?? "";
-        const fieldType = fields.find((field) => field.id === fieldId)?.type;
-        const normalizedValue = normalizeImportedCellValue(fieldType, rawValue);
-        record[fieldId] = normalizedValue;
-        const systemTimeFieldId = systemTimeFieldByName.get(fieldName);
-        if (systemTimeFieldId && normalizedValue) record[systemTimeFieldId] = normalizedValue;
+        record[fieldId] = values[fieldName] ?? "";
       }
       records.push(record);
       rowPlans.push({
@@ -3700,12 +3525,10 @@ async function emitWorkspace(
     return {
       id: dbId,
       name: db.title,
-      originalName: db.title,
       path: db.path,
       sourceHash: hash,
       icon: db.icon,
       fields,
-      sourceRows: records.length,
       records,
       view: {
         id: DEFAULT_VIEW_ID,
@@ -3758,8 +3581,29 @@ async function emitWorkspace(
   }
   const uniqueDbPlanIdByName = new Map<string, string>();
   const ambiguousDbPlanNames = new Set<string>();
+  const uniqueDbPlanIdByShortHash = new Map<string, string>();
+  const ambiguousDbPlanShortHashes = new Set<string>();
   for (const dbPlan of dbPlans) {
     rememberUnique(uniqueDbPlanIdByName, ambiguousDbPlanNames, dbPlan.name, dbPlan.id);
+    const sourceShortId = notionShortIdFromHash(dbPlan.sourceHash);
+    if (sourceShortId) {
+      rememberUnique(
+        uniqueDbPlanIdByShortHash,
+        ambiguousDbPlanShortHashes,
+        sourceShortId,
+        dbPlan.id
+      );
+    }
+    const csvHash = /\s([0-9a-f]{32})(?:_all)?\.csv$/i.exec(basename(dbPlan.csvPath ?? ""))?.[1];
+    const csvShortId = notionShortIdFromHash(csvHash);
+    if (csvShortId) {
+      rememberUnique(
+        uniqueDbPlanIdByShortHash,
+        ambiguousDbPlanShortHashes,
+        csvShortId,
+        dbPlan.id
+      );
+    }
   }
   for (const att of inventory.attachments.values()) {
     const rel = workspaceAttachmentPath(att.fileName);
@@ -3857,6 +3701,9 @@ async function emitWorkspace(
     rewrites.set(`notion-db-title:${titleEnc}`, dbPathFor(dbId));
     rewrites.set(`notion-db-title-id:${titleEnc}`, dbId);
   }
+  for (const [shortHash, dbId] of uniqueDbPlanIdByShortHash) {
+    rewrites.set(`notion-db-short-id:${shortHash}`, dbId);
+  }
   for (const [viewHash, dbHash] of linkedCollectionViewDbHashByViewHash) {
     const dbId = databaseIdByHash.get(dbHash);
     if (!dbId) continue;
@@ -3880,8 +3727,7 @@ async function emitWorkspace(
 
   rewriteRecordNotionLinks(dbPlans, rewrites);
   const entityTargetMap = buildImportEntityTargetMap(pagePlans, dbPlans, dbPathFor);
-  const entityPathIndex = buildImportEntityPathIndex(pagePlans, dbPlans, sources);
-  canonicalizeImportEntityPagePaths(entityPathIndex, pagePlans);
+  const entityPathIndex = buildImportEntityPathIndex(pagePlans, dbPlans);
 
   // Pass C: write everything. For HTML sources, this is where the
   // body→markdown conversion actually happens — `parseNotionHtml` is
@@ -3934,26 +3780,7 @@ async function emitWorkspace(
     title: string,
     context?: NotionCollectionResolveContext
   ): string | null => {
-    const directId = rewrites.get(`notion-db-id:${hashNoDashes}`);
-    if (directId) return `lotion-db:${directId}`;
-    const direct = rewrites.get(`notion-db:${hashNoDashes}`);
-    if (direct) return direct;
-    const dbIdsByRows = new Set<string>();
-    for (const rowHash of context?.rowHashes ?? []) {
-      const dbId = rewrites.get(`notion-row-db-id:${rowHash.toLowerCase()}`);
-      if (dbId) dbIdsByRows.add(dbId);
-    }
-    if (dbIdsByRows.size === 1) {
-      return `lotion-db:${Array.from(dbIdsByRows)[0]!}`;
-    }
-    if (title) {
-      const titleEnc = Buffer.from(title).toString("base64").replace(/=+$/, "");
-      const titleId = rewrites.get(`notion-db-title-id:${titleEnc}`);
-      if (titleId) return `lotion-db:${titleId}`;
-      const titleFallback = rewrites.get(`notion-db-title:${titleEnc}`);
-      if (titleFallback) return titleFallback;
-    }
-    return null;
+    return resolveNotionCollectionRewrite(rewrites, hashNoDashes, title, context);
   };
 
   const bodyPool = new NotionBodyWorkerPool(rewrites);
@@ -3991,7 +3818,7 @@ async function emitWorkspace(
     originalSourceArchive.files.length +
     pagePlans.length +
     dbPlans.reduce((sum, plan) => sum + plan.rowPlans.length + 3, 0) +
-    19; // system DBs, review DB, report page, workspace manifest, and four detailed report artifacts
+    14; // three system DBs + import review DB (schema/data/view each) + import report + manifest
   let writeCurrent = 0;
   const tWrite = Date.now();
   const markWrite = (message: string, amount = 1) => {
@@ -4064,18 +3891,13 @@ async function emitWorkspace(
       continue;
     }
     const plan = result.plan;
-    const rawPagePathSegments = normalizePathSegments(plan.path, plan.title.trim() || "Untitled");
-    const parent = importEntityParent(entityPathIndex, rawPagePathSegments, plan.id);
-    const pagePathSegments = canonicalImportEntityPath(
-      rawPagePathSegments,
-      plan.title.trim() || "Untitled",
-      parent
-    );
+    const pagePathSegments = normalizePathSegments(plan.path, plan.title.trim() || "Untitled");
+    const parent = importEntityParent(entityPathIndex, pagePathSegments, plan.id);
     pageIds.push(plan.id);
     pageRecords.push({
       id: plan.id,
-      created_time: plan.createdTime ?? now,
-      updated_time: plan.updatedTime ?? now,
+      created_time: now,
+      updated_time: now,
       title: plan.title.trim() || "Untitled",
       kind: "row_page",
       body_path: pageBodyPath(plan.id, plan.title),
@@ -4094,8 +3916,8 @@ async function emitWorkspace(
       id: plan.id,
       kind: "page",
       title: plan.title.trim() || "Untitled",
-      created_time: plan.createdTime ?? now,
-      updated_time: plan.updatedTime ?? now,
+      created_time: now,
+      updated_time: now,
       icon: plan.icon,
       path: pagePathSegments,
       parentId: parent?.id,
@@ -4151,9 +3973,7 @@ async function emitWorkspace(
       const bodyMd = rowPlan.sourcePath
         ? await loadBody(rowPlan.sourcePath, rowPlan.parsed, rowPlan.hasBody, rowPlan.sourceSize)
         : "";
-      const cleaned = bodyMd
-        ? cleanNotionBody(bodyMd, rowPlan.title, dbPlan.fields.map((field) => field.name))
-        : "";
+      const cleaned = bodyMd ? cleanNotionBody(bodyMd, rowPlan.title) : "";
       const record = recordById.get(rowPlan.rowId);
       const isBlankRow =
         cleaned.trim().length === 0 &&
@@ -4253,16 +4073,16 @@ async function emitWorkspace(
   }
 
   const reportPageId = shortId("pg");
-  const reportTitle = `Import report ${now.slice(0, 16).replace("T", " ")}`;
+  const reportTitle = `Import report ${now.slice(0, 19).replace("T", " ")}`;
   const reportBodyPath = pageBodyPath(reportPageId, reportTitle);
   const databaseSummaries: ImportReportDatabaseSummary[] = dbPlans.map((dbPlan) => ({
     id: dbPlan.id,
     name: dbPlan.name,
-    originalName: dbPlan.originalName ?? dbPlan.name,
+    originalName: dbPlan.name,
     path: normalizePathSegments(dbPlan.path, dbPlan.name),
     source: dbPlan.csvPath ?? (dbPlan.sourceHash ? `synthetic:${dbPlan.sourceHash}` : "inline/synthetic"),
     notionId: dbPlan.sourceHash,
-    sourceRows: dbPlan.sourceRows,
+    sourceRows: dbPlan.records.length + (skippedEmptyRowPagesByDbId.get(dbPlan.id) ?? 0),
     rows: dbPlan.records.length,
     rowsWithIcon: dbPlan.rowPlans.filter((row) => Boolean(row.icon)).length,
     rowPages: dbPlan.rowPlans.length,
@@ -4331,7 +4151,6 @@ async function emitWorkspace(
     emptyRowPages: emptyRowPageDetails,
     duplicateRows
   };
-  await writeText(join(target, reportBodyPath), "# Notion import report\n\nFinalizing detailed import report…\n");
   pageIds.unshift(reportPageId);
   pageRecords.unshift({
     id: reportPageId,
@@ -4571,8 +4390,8 @@ async function writeSystemDatabases(
  *      database views and table-of-contents blocks into Lotion fenced
  *      blocks.
  */
-function cleanNotionBody(raw: string, title: string, databasePropertyNames: string[] = []): string {
-  const lines = stripLeadingMarkdownExportIcon(raw).split("\n");
+function cleanNotionBody(raw: string, title: string): string {
+  const lines = raw.split("\n");
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i += 1;
 
@@ -4596,34 +4415,19 @@ function cleanNotionBody(raw: string, title: string, databasePropertyNames: stri
   // small fixed set, intermixed with blank lines, until the first
   // line that isn't one of these.
   const META = /^(Owner|Last edited time|Last edited by|Created by|Created time|Tags|Status|Type|Category|Priority|Date(?: \d+)?)\s*:\s/;
-  const databaseProperties = new Set(databasePropertyNames.map((name) => name.trim()).filter(Boolean));
-  if (databaseProperties.size > 0) {
-    let metadataEnd = i;
-    let hasRecognizedProperty = false;
-    while (metadataEnd < lines.length && lines[metadataEnd].trim() !== "") {
-      const propertyName = /^([^:\n]+?)\s*:\s*/.exec(lines[metadataEnd])?.[1]?.trim() ?? "";
-      if (!propertyName) break;
-      hasRecognizedProperty ||= META.test(lines[metadataEnd]) || databaseProperties.has(propertyName);
-      metadataEnd += 1;
+  while (i < lines.length) {
+    if (lines[i].trim() === "") {
+      lines.splice(i, 1);
+      continue;
     }
-    if (hasRecognizedProperty && (metadataEnd === lines.length || lines[metadataEnd].trim() === "")) {
-      lines.splice(i, metadataEnd - i);
+    if (META.test(lines[i])) {
+      lines.splice(i, 1);
+      continue;
     }
-  } else {
-    while (i < lines.length) {
-      if (lines[i].trim() === "") {
-        lines.splice(i, 1);
-        continue;
-      }
-      if (META.test(lines[i])) {
-        lines.splice(i, 1);
-        continue;
-      }
-      break;
-    }
+    break;
   }
 
-  let body = lines.join("\n").replace(/^\n+/, "");
+  let body = stripLeadingMarkdownExportIcon(lines.join("\n").replace(/^\n+/, ""));
 
   // Inline-DB embed sentinel — the converter emits these as
   // `<p>{{LOTIONVIEW:db_<id>}}</p>` whenever a `collection-content`
@@ -4667,7 +4471,7 @@ function exportRelativeRewriteKey(sourcePath: string): string {
   const normalized = normalizeAbs(sourcePath).replace(/\\/g, "/");
   const parts = normalized.split("/");
   for (let index = parts.length - 1; index >= 0; index -= 1) {
-    if (EXPORT_DIR_RE.test(parts[index] ?? "")) {
+    if (/^Export-[0-9a-f-]+$/i.test(parts[index] ?? "")) {
       return `notion-path:${parts.slice(index + 1).join("/")}`;
     }
   }
@@ -4684,15 +4488,13 @@ function notionFileHash(pathOrHref: string): string | null {
  *
  *   .../Export-<uuid>-Part-N/Export-<uuid>/<logical path>
  *   .../Export-<uuid> 2/<logical path>
- *   .../Export-md-<uuid>/<logical path>
- *   .../Export-html-<uuid>/<logical path>
  *
  * Big exports put CSVs in Part-1 and row HTMLs in Part-2 — the same
  * Notion row lives under different physical paths in different parts,
  * but the logical path after `Export-<uuid>/` is identical. We key
  * row-folder lookups on the logical path so they match across parts.
  */
-const EXPORT_DIR_RE = /^Export-(?:(?:md|html)-)?[0-9a-f-]+(?:-Part-\d+|\s+\d+)?$/i;
+const EXPORT_DIR_RE = /^Export-[0-9a-f-]+(?:-Part-\d+|\s+\d+)?$/i;
 function logicalPath(absOrRel: string): string {
   const abs = resolve(absOrRel);
   const segs = abs.split(sep);
@@ -4770,96 +4572,35 @@ function normalizePathSegments(path: string[] | undefined, fallbackName: string)
 interface ImportEntityPathTarget {
   id: string;
   kind: EntityKind;
-  canonicalPath: string[];
-}
-
-interface ImportEntityParentMatch extends ImportEntityPathTarget {
-  matchedPathLength: number;
 }
 
 function buildImportEntityPathIndex(
-  pagePlans: Array<{ id: string; title: string; path?: string[]; sourcePath: string }>,
+  pagePlans: Array<{ id: string; title: string; path?: string[] }>,
   dbPlans: Array<{
     id: string;
     name: string;
     path?: string[];
-    csvPath?: string;
-    rowPlans: Array<{ rowId: string; title: string; sourcePath?: string }>;
-  }>,
-  sourceRoots: string[]
+    rowPlans: Array<{ rowId: string; title: string }>;
+  }>
 ): Map<string, ImportEntityPathTarget[]> {
   const index = new Map<string, ImportEntityPathTarget[]>();
   for (const page of pagePlans) {
-    const canonicalPath = normalizePathSegments(page.path, page.title || "Untitled");
-    const target: ImportEntityPathTarget = {
+    registerImportEntityPath(index, normalizePathSegments(page.path, page.title || "Untitled"), {
       id: page.id,
-      kind: "page",
-      canonicalPath
-    };
-    registerImportEntityPath(index, canonicalPath, target);
-    registerImportEntityPathAlias(index, notionPagePath(page.sourcePath, sourceRoots), target);
+      kind: "page"
+    });
   }
   for (const dbPlan of dbPlans) {
     const dbPath = normalizePathSegments(dbPlan.path, dbPlan.name || "Untitled");
-    const dbTarget: ImportEntityPathTarget = {
-      id: dbPlan.id,
-      kind: "database",
-      canonicalPath: dbPath
-    };
-    registerImportEntityPath(index, dbPath, dbTarget);
-    if (dbPlan.csvPath) {
-      registerImportEntityPathAlias(index, notionDatabasePath(dbPlan.csvPath, sourceRoots), dbTarget);
-    }
+    registerImportEntityPath(index, dbPath, { id: dbPlan.id, kind: "database" });
     for (const rowPlan of dbPlan.rowPlans) {
-      const rowPath = [...dbPath, rowPlan.title || "Untitled"];
-      const rowTarget: ImportEntityPathTarget = {
+      registerImportEntityPath(index, [...dbPath, rowPlan.title || "Untitled"], {
         id: rowPlan.rowId,
-        kind: "row",
-        canonicalPath: rowPath
-      };
-      registerImportEntityPath(index, rowPath, rowTarget);
-      if (rowPlan.sourcePath) {
-        registerImportEntityPathAlias(index, notionPagePath(rowPlan.sourcePath, sourceRoots), rowTarget);
-      }
+        kind: "row"
+      });
     }
   }
   return index;
-}
-
-function canonicalizeImportEntityPagePaths(
-  index: Map<string, ImportEntityPathTarget[]>,
-  pagePlans: Array<{ id: string; title: string; path?: string[] }>
-): void {
-  const pageTargets = new Map<string, ImportEntityPathTarget>();
-  for (const targets of index.values()) {
-    for (const target of targets) {
-      if (target.kind === "page") pageTargets.set(target.id, target);
-    }
-  }
-
-  for (let iteration = 0; iteration < pagePlans.length; iteration += 1) {
-    let changed = false;
-    for (const page of pagePlans) {
-      const title = page.title.trim() || "Untitled";
-      const rawPath = normalizePathSegments(page.path, title);
-      const parent = importEntityParent(index, rawPath, page.id);
-      const canonicalPath = canonicalImportEntityPath(rawPath, title, parent);
-      const target = pageTargets.get(page.id);
-      if (!target || importEntityPathKey(target.canonicalPath) === importEntityPathKey(canonicalPath)) continue;
-      target.canonicalPath = canonicalPath;
-      changed = true;
-    }
-    if (!changed) return;
-  }
-}
-
-function registerImportEntityPathAlias(
-  index: Map<string, ImportEntityPathTarget[]>,
-  path: string[],
-  target: ImportEntityPathTarget
-): void {
-  if (path.length === 0 || importEntityPathKey(path) === importEntityPathKey(target.canonicalPath)) return;
-  registerImportEntityPath(index, path, target);
 }
 
 function registerImportEntityPath(
@@ -4877,22 +4618,13 @@ function importEntityParent(
   index: Map<string, ImportEntityPathTarget[]>,
   path: string[],
   selfId: string
-): ImportEntityParentMatch | undefined {
+): ImportEntityPathTarget | undefined {
   for (let length = path.length - 1; length > 0; length -= 1) {
     const candidates = (index.get(importEntityPathKey(path.slice(0, length))) ?? [])
       .filter((candidate) => candidate.id !== selfId);
-    if (candidates.length === 1) return { ...candidates[0], matchedPathLength: length };
+    if (candidates.length === 1) return candidates[0];
   }
   return undefined;
-}
-
-function canonicalImportEntityPath(
-  path: string[],
-  title: string,
-  parent: ImportEntityParentMatch | undefined
-): string[] {
-  if (!parent || parent.matchedPathLength !== path.length - 1) return path;
-  return [...parent.canonicalPath, title];
 }
 
 function importEntityPathKey(path: string[]): string {
@@ -5029,25 +4761,6 @@ function notionSystemTimeField(header: string, notionType: string | undefined): 
   return null;
 }
 
-function notionSystemTimes(
-  properties: Record<string, string>,
-  notionTypeByHeader: Record<string, string>
-): { createdTime?: string; updatedTime?: string } {
-  const headers = Object.keys(properties);
-  const selected = chooseSystemTimeHeaders(headers, new Map(Object.entries(notionTypeByHeader)));
-  const createdTime = normalizeImportedSystemTime(properties[selected.get("created_time") ?? ""] ?? "");
-  const updatedTime = normalizeImportedSystemTime(properties[selected.get("updated_time") ?? ""] ?? "");
-  return {
-    createdTime: createdTime || undefined,
-    updatedTime: updatedTime || undefined
-  };
-}
-
-function normalizeImportedSystemTime(value: string): string {
-  const parsed = parseDateTimeValue(value);
-  return parsed ? parsed.toISOString() : "";
-}
-
 function chooseSystemTimeHeaders(
   headers: string[],
   notionTypeByHeader: Map<string, string>
@@ -5067,10 +4780,6 @@ function preferredSystemTimeHeader(headers: string[], systemFieldId: "created_ti
 }
 
 function inferNotionTypeFromCsv(header: string, records: Array<Record<string, string>>): string | undefined {
-  const systemTimeFieldId = notionSystemTimeField(header, undefined);
-  if (systemTimeFieldId === "created_time") return "created_time";
-  if (systemTimeFieldId === "updated_time") return "last_edited_time";
-
   const values = records
     .map((record) => (record[header] ?? "").trim())
     .filter(Boolean);
@@ -5474,9 +5183,6 @@ function normalizeImportedCellValue(fieldType: string | undefined, value: string
   if (fieldType === "url") return normalizeUrlCellValue(value);
   if (fieldType === "number") return normalizeNumberCellValue(value);
   if (fieldType === "checkbox") return normalizeCheckboxCellValue(value);
-  if (fieldType === "created_time" || fieldType === "updated_time") {
-    return normalizeImportedSystemTime(value) || value.trim();
-  }
   if (fieldType !== "date") return value;
   return normalizeDateValue(value) || value;
 }
@@ -5666,3 +5372,123 @@ async function writeText(path: string, value: string): Promise<void> {
 function formatPage(body: string): string {
   return `${body.trimEnd()}\n`;
 }
+
+// Pure import normalization helpers are exposed only as an internal test
+// contract. The production importer continues to use the same functions.
+export const notionImportTestInternals = {
+  normalizeImportOptions,
+  formatDuration,
+  formatBytes,
+  bodyContentHint,
+  htmlMentionsNotionCollection,
+  buildOriginalSourceArchive,
+  resolveOriginalSourceRoot,
+  findOriginalExportContentRoot,
+  isHtmlSource,
+  isMarkdownSource,
+  extractMarkdownExportIcon,
+  stripLeadingMarkdownExportIcon,
+  leadingMarkdownContentAfterTitle,
+  leadingMarkdownPrefixBeforeContent,
+  markdownCsvWrapperTarget,
+  logicalOriginalSourceRootName,
+  makeImportStats,
+  normalizeSourceRoots,
+  resolveElementIcon,
+  textWithoutInlineIcon,
+  resolveInlineRowSource,
+  inventorySourcePathByHash,
+  collectSyntheticEmptyDatabases,
+  collectInlineCollectionViews,
+  duplicatePageRule,
+  normalizeDuplicateRowCell,
+  displayDuplicateRowCell,
+  isGeneratedUntitled,
+  truncateReportValue,
+  buildNameConflictSummary,
+  buildImportReportSummary,
+  buildImportReportMarkdown,
+  formatHumanReviewSummary,
+  formatGroupedSummaryTable,
+  formatSummaryOverflowNote,
+  summarizeDuplicatePages,
+  summarizeEmptyStandalonePages,
+  summarizeEmptyRowPages,
+  pushExample,
+  pushExampleTarget,
+  sortGroupedSummaries,
+  buildDuplicateRowSummaries,
+  buildImportReviewIssues,
+  cleanNotionBody,
+  relaxedEquals,
+  collapseTitle,
+  normalizeAbs,
+  setSourceRewrite,
+  exportRelativeRewriteKey,
+  notionFileHash,
+  logicalPath,
+  notionRelativePath,
+  notionDatabasePath,
+  notionPagePath,
+  pagePathFromSource,
+  notionPathSegment,
+  normalizePathSegments,
+  importEntityParent,
+  importEntityPathKey,
+  buildImportEntityPathIndex,
+  registerImportEntityPath,
+  disambiguateDatabaseDisplayTitles,
+  orderVisibleFieldsByContentRichness,
+  stripHash,
+  displayDatabaseName,
+  rememberUnique,
+  materialTitle,
+  notionTypeToLotion,
+  notionSystemTimeField,
+  chooseSystemTimeHeaders,
+  preferredSystemTimeHeader,
+  inferNotionTypeFromCsv,
+  isImportUrlValue,
+  hasExplicitCheckboxSignal,
+  isImportNumberValue,
+  looksImportDateValue,
+  inferNotionOptions,
+  notionTypeNeedsOptions,
+  optionIdForName,
+  chooseImportedPropertyValue,
+  notionImportValuesCompatible,
+  normalizeImportMatchValue,
+  stripImportLinkTargets,
+  firstNotionHash,
+  importOptionSet,
+  containsNotionLinkPlaceholder,
+  rewriteRecordNotionLinks,
+  buildImportEntityTargetMap,
+  upgradeEntityRefFields,
+  parseImportedEntityRefs,
+  cleanEntityRefLabel,
+  normalizeEntityTargetKey,
+  containsRewritableNotionLink,
+  rewriteNotionTargets,
+  resolveLocalNotionTarget,
+  isBlankImportedRowRecord,
+  normalizeImportedCellValue,
+  normalizeCheckboxCellValue,
+  canonicalCheckboxCellValue,
+  normalizeNumberCellValue,
+  normalizeUrlCellValue,
+  splitNotionOptionValue,
+  safeAttachmentStem,
+  safeOriginalSourceSegment,
+  slugifyFileName,
+  uniqueFieldId,
+  reportNumber,
+  markdownInlineCode,
+  markdownTableCell,
+  formatMarkdownTable,
+  csvEscape,
+  rowsToCsv,
+  parseCsv,
+  parseCsvLine,
+  formatPage
+};

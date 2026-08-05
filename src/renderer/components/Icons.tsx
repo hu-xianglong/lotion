@@ -21,6 +21,7 @@ import {
   FileText as LcFileText,
   Folder as LcFolder,
   FolderOpen as LcFolderOpen,
+  Gauge as LcGauge,
   ListFilter as LcFilter,
   ArrowUpNarrowWide as LcSort,
   Search as LcSearch,
@@ -105,4 +106,7 @@ export function SettingsIcon() {
 }
 export function NoteIcon() {
   return <Themed Icon={LcNote} />;
+}
+export function PerformanceIcon() {
+  return <Themed Icon={LcGauge} monochrome />;
 }

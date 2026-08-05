@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DatabaseRowTemplate, DatabaseSchema, RecordValue } from "../../../shared/types";
 import { useI18n } from "../../lib/i18n";
 
@@ -17,6 +17,49 @@ interface RowTemplateDialogProps {
 
 const NEW_TEMPLATE_ID = "__new__";
 
+export type RowTemplateAction = "save" | "delete";
+export type RowTemplateActionStatus = "submitted" | "failed" | "ignored";
+
+export function dismissRowTemplateIfIdle(guard: { current: boolean }, onClose: () => void): boolean {
+  if (guard.current) return false;
+  onClose();
+  return true;
+}
+
+export function shouldHydrateRowTemplateDraft(activeTemplateId: string, nextTemplateId: string, preserveDraft: boolean): boolean {
+  return activeTemplateId !== nextTemplateId || !preserveDraft;
+}
+
+export async function runRowTemplateAction({
+  guard,
+  onError,
+  onPendingChange,
+  onSuccess,
+  operation
+}: {
+  guard: { current: boolean };
+  onError: (message: string) => void;
+  onPendingChange: (pending: boolean) => void;
+  onSuccess: () => void;
+  operation: () => Promise<void>;
+}): Promise<RowTemplateActionStatus> {
+  if (guard.current) return "ignored";
+  guard.current = true;
+  onError("");
+  onPendingChange(true);
+  try {
+    await operation();
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return "failed";
+  } finally {
+    guard.current = false;
+    onPendingChange(false);
+  }
+  onSuccess();
+  return "submitted";
+}
+
 export function RowTemplateDialog({ schema, onClose, onSave, onDelete }: RowTemplateDialogProps) {
   const { t } = useI18n();
   const templates = useMemo(() => schema.templates ?? [], [schema.templates]);
@@ -31,9 +74,22 @@ export function RowTemplateDialog({ schema, onClose, onSave, onDelete }: RowTemp
   const [values, setValues] = useState<Record<string, RecordValue>>(initialTemplate?.values ?? {});
   const [markdown, setMarkdown] = useState(initialTemplate?.markdown ?? "");
   const [fullWidth, setFullWidth] = useState(!!initialTemplate?.fullWidth);
-  const [saving, setSaving] = useState(false);
+  const [pendingAction, setPendingAction] = useState<RowTemplateAction | null>(null);
+  const [actionError, setActionError] = useState("");
+  const actionRef = useRef(false);
+  const retryRef = useRef<{
+    action: RowTemplateAction;
+    operation: () => Promise<void>;
+    onSuccess: () => void;
+  } | null>(null);
+  const draftTemplateIdRef = useRef(selectedId);
+  const preserveDraftRef = useRef(false);
+  const pending = pendingAction !== null;
 
   useEffect(() => {
+    if (!shouldHydrateRowTemplateDraft(draftTemplateIdRef.current, selectedId, preserveDraftRef.current)) return;
+    draftTemplateIdRef.current = selectedId;
+    preserveDraftRef.current = false;
     if (!selected) {
       setName("");
       setValues({});
@@ -45,55 +101,93 @@ export function RowTemplateDialog({ schema, onClose, onSave, onDelete }: RowTemp
     setValues(selected.values ?? {});
     setMarkdown(selected.markdown ?? "");
     setFullWidth(!!selected.fullWidth);
-  }, [selected]);
+  }, [selected, selectedId]);
 
-  async function save() {
+  function closeIfIdle() {
+    dismissRowTemplateIfIdle(actionRef, onClose);
+  }
+
+  function selectTemplate(templateId: string) {
+    if (actionRef.current) return;
+    preserveDraftRef.current = false;
+    retryRef.current = null;
+    setActionError("");
+    setSelectedId(templateId);
+  }
+
+  function runAction(action: RowTemplateAction, operation: () => Promise<void>, onSuccess: () => void) {
+    if (!actionRef.current) {
+      retryRef.current = { action, operation, onSuccess };
+      preserveDraftRef.current = true;
+    }
+    return runRowTemplateAction({
+      guard: actionRef,
+      onError: setActionError,
+      onPendingChange: (nextPending) => setPendingAction(nextPending ? action : null),
+      onSuccess: () => {
+        retryRef.current = null;
+        preserveDraftRef.current = false;
+        onSuccess();
+      },
+      operation
+    });
+  }
+
+  function save() {
     const cleanValues = sanitizeTemplateValues(values);
     const cleanName = name.trim() || String(cleanValues.title ?? "").trim() || t("templates.untitled");
     if (!cleanValues.title) cleanValues.title = cleanName;
-    setSaving(true);
-    try {
-      await onSave({
-        id: editingExisting ? selected.id : undefined,
-        name: cleanName,
-        values: cleanValues,
-        markdown,
-        fullWidth
-      });
-      if (!editingExisting) setSelectedId(NEW_TEMPLATE_ID);
-    } finally {
-      setSaving(false);
-    }
+    const input = {
+      id: editingExisting ? selected.id : undefined,
+      name: cleanName,
+      values: cleanValues,
+      markdown,
+      fullWidth
+    };
+    return runAction("save", () => onSave(input), () => {
+      if (!editingExisting) selectTemplate(NEW_TEMPLATE_ID);
+    });
   }
 
-  async function remove(template: DatabaseRowTemplate) {
+  function remove(template: DatabaseRowTemplate) {
     if (!window.confirm(t("templates.deleteConfirm"))) return;
-    setSaving(true);
-    try {
-      await onDelete(template.id);
-      setSelectedId(NEW_TEMPLATE_ID);
-    } finally {
-      setSaving(false);
-    }
+    return runAction("delete", () => onDelete(template.id), () => selectTemplate(NEW_TEMPLATE_ID));
   }
 
   return (
-    <div className="dialog-backdrop" onMouseDown={onClose}>
-      <div className="row-template-dialog" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="dialog-backdrop" onMouseDown={closeIfIdle}>
+      <div className="row-template-dialog" role="dialog" aria-modal="true" aria-label={t("templates.manage")} aria-busy={pending} onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <div>
             <h2>{t("templates.manage")}</h2>
             <p>{schema.name}</p>
           </div>
-          <button onClick={onClose}>{t("common.close")}</button>
+          <button disabled={pending} onClick={closeIfIdle}>{t("common.close")}</button>
         </div>
 
+        {actionError && (
+          <div className="dialog-error row-template-action-error" role="alert">
+            <span>{actionError}</span>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                const retry = retryRef.current;
+                if (retry) void runAction(retry.action, retry.operation, retry.onSuccess);
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        <fieldset className="row-template-controls" disabled={pending}>
         <div className="row-template-layout">
           <aside className="row-template-list" aria-label={t("templates.manage")}>
             <button
               type="button"
               className={selectedId === NEW_TEMPLATE_ID ? "row-template-list-item active" : "row-template-list-item"}
-              onClick={() => setSelectedId(NEW_TEMPLATE_ID)}
+              onClick={() => selectTemplate(NEW_TEMPLATE_ID)}
             >
               <span>{t("templates.newTemplate")}</span>
             </button>
@@ -102,7 +196,7 @@ export function RowTemplateDialog({ schema, onClose, onSave, onDelete }: RowTemp
                 key={template.id}
                 type="button"
                 className={template.id === selectedId ? "row-template-list-item active" : "row-template-list-item"}
-                onClick={() => setSelectedId(template.id)}
+                onClick={() => selectTemplate(template.id)}
               >
                 <span>{template.name}</span>
               </button>
@@ -144,7 +238,6 @@ export function RowTemplateDialog({ schema, onClose, onSave, onDelete }: RowTemp
                 <button
                   type="button"
                   className="danger-button"
-                  disabled={saving}
                   onClick={() => {
                     if (selected) void remove(selected);
                   }}
@@ -152,13 +245,14 @@ export function RowTemplateDialog({ schema, onClose, onSave, onDelete }: RowTemp
                   {t("common.delete")}
                 </button>
               )}
-              <button type="button" onClick={onClose}>{t("common.cancel")}</button>
-              <button type="button" className="primary" disabled={saving} onClick={save}>
-                {saving ? t("common.saving") : t("templates.save")}
+              <button type="button" onClick={closeIfIdle}>{t("common.cancel")}</button>
+              <button type="button" className="primary" onClick={save}>
+                {pendingAction === "save" ? t("common.saving") : t("templates.save")}
               </button>
             </div>
           </section>
         </div>
+        </fieldset>
       </div>
     </div>
   );

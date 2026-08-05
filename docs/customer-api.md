@@ -18,7 +18,8 @@ version bump. The current version is `1.0`.
 
 Stable surfaces:
 
-- `workspace`: deterministic workspace create/open and workspace metadata.
+- `workspace`: deterministic workspace create/open, workspace metadata, and
+  `getStartupIndex()` for the persistent page/database/sidebar projection.
 - `pages`: list, create, read, update, rename, and delete pages.
 - `databases`: list, read, create, delete, fields, cells, rows, templates, and cached stats.
 - `views`: create and update database views.

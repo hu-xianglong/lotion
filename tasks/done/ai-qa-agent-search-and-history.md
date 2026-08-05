@@ -27,7 +27,7 @@ Lotion should pursue the local-first version of that workflow:
   context controls, visible tool activity, and safe write previews.
 - `tasks/done/advanced-search-lancedb-qwen3-local-vector-index.md` provides the
   local semantic retrieval layer.
-- `tasks/todo/github-backup-page-history-redesign.md` provides local page
+- `tasks/done/github-backup-page-history-redesign.md` provides local page
   version APIs that this assistant can later read as history context.
 
 ## Scope

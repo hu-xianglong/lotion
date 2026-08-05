@@ -16,6 +16,10 @@ import {
 
 const SETTINGS_KEY = "githubBackupSettings";
 
+export function githubBackupPreviewLabel(pageTitle: string): string {
+  return `Page snapshot · ${pageTitle}`;
+}
+
 export const manifest: PluginManifest = {
   id: "github-backup",
   name: "GitHub Backup",
@@ -371,7 +375,7 @@ export function GitHubBackupPanel({
           <div className="github-backup-history-header">
             <div>
               <h4>Preview restore</h4>
-              <p>{preview.version.path}</p>
+              <p>{githubBackupPreviewLabel(preview.version.title)}</p>
             </div>
             <button type="button" onClick={() => void restoreVersion()} disabled={busy}>Restore this version</button>
           </div>

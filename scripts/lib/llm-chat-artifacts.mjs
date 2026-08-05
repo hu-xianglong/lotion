@@ -9,7 +9,8 @@ const REQUIRED_PHASES = [
 ];
 
 export async function assertLLMChatArtifactContract(summary, {
-  expectedViewportNames = ["desktop", "compact"]
+  expectedViewportNames = ["desktop", "compact"],
+  requiredPerceptualBaselineViewportNames = ["desktop", "compact", "wide"]
 } = {}) {
   if (summary?.status !== "passed") {
     throw new Error(`LLM Chat artifact contract requires passed smoke status, saw ${summary?.status ?? "missing"}`);
@@ -27,8 +28,11 @@ export async function assertLLMChatArtifactContract(summary, {
     const entry = viewports.find((candidate) => candidate.viewport === viewportName);
     if (!entry) throw new Error(`LLM Chat artifact contract missing entry for ${viewportName}`);
     assertLLMChatViewport(entry, viewportName);
-    const phaseSnapshots = await assertLLMChatSnapshots(entry, viewportName);
+    const phaseSnapshots = await assertLLMChatSnapshots(entry, viewportName, {
+      requirePerceptualBaseline: requiredPerceptualBaselineViewportNames.includes(viewportName)
+    });
     const representative = phaseSnapshots[0];
+    const conversation = phaseSnapshots.find((snapshot) => snapshot.phase === "conversation");
     snapshots.push({
       viewport: viewportName,
       imageBytes: phaseSnapshots.reduce((total, snapshot) => total + snapshot.imageBytes, 0),
@@ -37,7 +41,8 @@ export async function assertLLMChatArtifactContract(summary, {
       phaseCount: phaseSnapshots.length,
       phases: phaseSnapshots.map((snapshot) => snapshot.phase),
       messageCount: phaseSnapshots.reduce((total, snapshot) => total + snapshot.messageCount, 0),
-      historyItems: Math.max(...phaseSnapshots.map((snapshot) => snapshot.historyItems))
+      historyItems: Math.max(...phaseSnapshots.map((snapshot) => snapshot.historyItems)),
+      ...(conversation?.perceptualBaseline ? { perceptualBaseline: conversation.perceptualBaseline } : {})
     });
   }
 
@@ -46,6 +51,7 @@ export async function assertLLMChatArtifactContract(summary, {
     expectedViewportNames,
     observedViewportNames,
     snapshotCount: snapshots.length,
+    perceptualBaselineCount: snapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length,
     snapshots
   };
 }
@@ -99,7 +105,9 @@ function assertLLMChatViewport(entry, viewportName) {
   }
 }
 
-async function assertLLMChatSnapshots(entry, viewportName) {
+async function assertLLMChatSnapshots(entry, viewportName, {
+  requirePerceptualBaseline = false
+} = {}) {
   const snapshots = snapshotEntries(entry);
   const phases = snapshots.map((snapshot) => snapshot.phase);
   const missingPhases = REQUIRED_PHASES.filter((phase) => !phases.includes(phase));
@@ -109,7 +117,9 @@ async function assertLLMChatSnapshots(entry, viewportName) {
 
   const checked = [];
   for (const snapshot of snapshots.filter((candidate) => REQUIRED_PHASES.includes(candidate.phase))) {
-    checked.push(await assertSnapshot(snapshot, viewportName));
+    checked.push(await assertSnapshot(snapshot, viewportName, {
+      requirePerceptualBaseline: requirePerceptualBaseline && snapshot.phase === "conversation"
+    }));
   }
   return checked;
 }
@@ -123,7 +133,9 @@ function snapshotEntries(entry) {
   ].filter(Boolean);
 }
 
-async function assertSnapshot(snapshot, viewportName) {
+async function assertSnapshot(snapshot, viewportName, {
+  requirePerceptualBaseline = false
+} = {}) {
   if (!snapshot?.imagePath || !snapshot?.metadataPath) {
     throw new Error(`LLM Chat artifact contract missing snapshot paths for ${viewportName} ${snapshot?.phase ?? "unknown"}`);
   }
@@ -141,13 +153,64 @@ async function assertSnapshot(snapshot, viewportName) {
   }
   assertGeometry(payload.geometry, viewportName, snapshot.phase);
   assertVisibleState(payload.visibleState, viewportName, snapshot.phase);
+  const perceptualBaseline = await assertPerceptualBaseline(snapshot.perceptualBaseline, snapshot, viewportName, {
+    required: requirePerceptualBaseline
+  });
   return {
     phase: snapshot.phase,
     imageBytes: imageInfo.size,
     imagePath: snapshot.imagePath,
     metadataPath: snapshot.metadataPath,
+    ...(perceptualBaseline ? { perceptualBaseline } : {}),
     messageCount: Array.isArray(payload.visibleState?.messages) ? payload.visibleState.messages.length : 0,
     historyItems: payload.visibleState?.historyItems ?? 0
+  };
+}
+
+async function assertPerceptualBaseline(baseline, snapshot, viewportName, { required }) {
+  if (!baseline) {
+    if (required) throw new Error(`LLM Chat artifact contract missing committed conversation baseline for ${viewportName}`);
+    return null;
+  }
+  if (baseline.kind !== "lotion-png-visual-diff" || baseline.status !== "passed") {
+    throw new Error(`LLM Chat artifact contract conversation baseline did not pass for ${viewportName}: ${JSON.stringify({ kind: baseline.kind, status: baseline.status })}`);
+  }
+  if (baseline.actualPath !== snapshot.imagePath) {
+    throw new Error(`LLM Chat artifact contract conversation baseline actual path mismatch for ${viewportName}: ${baseline.actualPath}`);
+  }
+  if (!baseline.dimensionsMatch || baseline.diffPixels > baseline.maxDiffPixels || baseline.diffRatio > baseline.maxDiffRatio) {
+    throw new Error(`LLM Chat artifact contract conversation baseline exceeded tolerance for ${viewportName}: ${JSON.stringify({ dimensionsMatch: baseline.dimensionsMatch, diffPixels: baseline.diffPixels, diffRatio: baseline.diffRatio })}`);
+  }
+  for (const [label, path] of Object.entries({
+    expected: baseline.expectedPath,
+    diff: baseline.diffPath,
+    metadata: baseline.metadataPath,
+    policy: baseline.policyPath
+  })) {
+    if (!path) throw new Error(`LLM Chat artifact contract missing conversation ${label} path for ${viewportName}`);
+    const info = await stat(path);
+    if (info.size <= 0) throw new Error(`LLM Chat artifact contract found empty conversation ${label} artifact for ${viewportName}: ${path}`);
+  }
+  const diffMetadata = JSON.parse(await readFile(baseline.metadataPath, "utf8"));
+  if (diffMetadata.status !== "passed" || diffMetadata.expectedPath !== baseline.expectedPath || diffMetadata.actualPath !== baseline.actualPath) {
+    throw new Error(`LLM Chat artifact contract conversation diff metadata mismatch for ${viewportName}: ${JSON.stringify(diffMetadata)}`);
+  }
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA,
+    policy: baseline.policy
   };
 }
 
@@ -191,6 +254,17 @@ function assertVisibleState(visibleState, viewportName, phase) {
   }
   if (phase === "conversation" && !messages.some((message) => message.content === "Summarize this smoke page.")) {
     throw new Error(`LLM Chat artifact contract conversation snapshot missing user prompt for ${viewportName}: ${JSON.stringify(messages)}`);
+  }
+  if (phase === "conversation") {
+    const transcript = visibleState.transcriptViewport || {};
+    const requiredLabels = ["You", "LLM"];
+    if (
+      !Number.isFinite(transcript.clientHeight)
+      || transcript.clientHeight < 120
+      || requiredLabels.some((label) => !messages.some((message) => message.label === label && message.fullyVisible === true))
+    ) {
+      throw new Error(`LLM Chat artifact contract conversation transcript is clipped for ${viewportName}: ${JSON.stringify({ messages, transcript })}`);
+    }
   }
   if (phase === "selection-command" && !messages.some((message) => message.content.includes("Smoke workspace for LLM Chat UI coverage."))) {
     throw new Error(`LLM Chat artifact contract selection snapshot missing selected text for ${viewportName}: ${JSON.stringify(messages)}`);

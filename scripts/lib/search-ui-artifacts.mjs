@@ -4,7 +4,8 @@ const DEFAULT_EXPECTED_VIEWPORTS = ["desktop", "compact"];
 const REQUIRED_SORT_VALUES = ["relevance", "updated_desc", "updated_asc", "created_desc", "created_asc"];
 
 export async function assertSearchUiArtifactContract(summary, {
-  expectedViewportNames = DEFAULT_EXPECTED_VIEWPORTS
+  expectedViewportNames = DEFAULT_EXPECTED_VIEWPORTS,
+  requiredPerceptualBaselineViewportNames = []
 } = {}) {
   if (summary?.status !== "passed") {
     throw new Error(`Search UI artifact contract requires passed smoke status, saw ${summary?.status ?? "missing"}`);
@@ -22,13 +23,16 @@ export async function assertSearchUiArtifactContract(summary, {
     const entry = viewports.find((candidate) => viewportNameFromEntry(candidate) === viewportName);
     if (!entry) throw new Error(`Search UI artifact contract missing entry for ${viewportName}`);
     assertSearchEvidence(entry, summary, viewportName);
-    snapshots.push(await assertSearchSnapshot(entry.visualSnapshot, entry, viewportName));
+    snapshots.push(await assertSearchSnapshot(entry.visualSnapshot, entry, viewportName, {
+      requirePerceptualBaseline: requiredPerceptualBaselineViewportNames.includes(viewportName)
+    }));
   }
 
   return {
     status: "passed",
     expectedViewportNames,
     observedViewportNames,
+    perceptualBaselineCount: snapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length,
     snapshotCount: snapshots.length,
     snapshots
   };
@@ -46,12 +50,53 @@ function assertSearchEvidence(entry, summary, viewportName) {
   }
   assertTiming(entry.firstRenderMs, summary.thresholdMs, `${viewportName} first render`);
   assertTiming(entry.repeatedRenderMs, summary.thresholdMs, `${viewportName} repeated render`);
+  assertSearchHarnessCacheEvidence(entry.harnessCache, viewportName);
   assertInputLatency(entry.inputLatency, summary.inputThresholdMs, viewportName);
   assertSorting(entry.sorting, viewportName);
   assertJump(entry.jump, viewportName);
   assertOverflow(entry.renderOverflow, viewportName, "render");
   assertOverflow(entry.inputOverflow, viewportName, "input");
   assertKeyboard(entry.keyboardNavigation, viewportName);
+}
+
+export function assertSearchHarnessCacheEvidence(evidence, viewportName = "unknown") {
+  const generationCounts = evidence?.generationCounts;
+  const queryCounts = evidence?.queryCounts;
+  const queryTimings = evidence?.queryTimings;
+  if (
+    !generationCounts || typeof generationCounts !== "object" ||
+    !queryCounts || typeof queryCounts !== "object" ||
+    !Array.isArray(queryTimings)
+  ) {
+    throw new Error(`Search UI ${viewportName} missing harness cache evidence: ${JSON.stringify(evidence)}`);
+  }
+  const generatedSorts = Object.keys(generationCounts);
+  if (!generatedSorts.includes("relevance")) {
+    throw new Error(`Search UI ${viewportName} harness did not cache relevance results: ${JSON.stringify(evidence)}`);
+  }
+  for (const sortMode of generatedSorts) {
+    const generations = generationCounts[sortMode];
+    const queries = queryCounts[sortMode];
+    if (generations !== 1 || !Number.isFinite(queries) || queries < generations) {
+      throw new Error(
+        `Search UI ${viewportName} regenerated synthetic hits for ${sortMode}: ${JSON.stringify({ generations, queries })}`
+      );
+    }
+  }
+  if (!queryTimings.some((timing) => (
+    timing?.cacheHit === true &&
+    Number.isFinite(timing.originalMs) &&
+    Number.isFinite(timing.delayMs) &&
+    Number.isFinite(timing.prepareMs) &&
+    Number.isFinite(timing.totalMs)
+  ))) {
+    throw new Error(`Search UI ${viewportName} missing cached-query timing evidence: ${JSON.stringify(queryTimings)}`);
+  }
+  return {
+    generationCounts: { ...generationCounts },
+    queryCounts: { ...queryCounts },
+    queryTimings: queryTimings.map((timing) => ({ ...timing }))
+  };
 }
 
 function assertTiming(actual, threshold, label) {
@@ -88,7 +133,16 @@ function assertSorting(sorting, viewportName) {
   if (!/^Search UI Hit \d+$/.test(sorting.updatedDesc || "")) {
     throw new Error(`Search UI ${viewportName} updated descending sort missing newest title: ${JSON.stringify(sorting)}`);
   }
-  if (!sorting.geometry?.active || !sorting.geometry?.dialogInsideViewport || !sorting.geometry?.sortInsideViewport) {
+  if (
+    !sorting.geometry?.active ||
+    !sorting.geometry?.dialogInsideViewport ||
+    !sorting.geometry?.sortInsideViewport ||
+    !sorting.geometry?.filtersInsideDialog ||
+    !sorting.geometry?.sortInsideDialog ||
+    !sorting.geometry?.sortInsideFilters ||
+    sorting.geometry?.sortOverlapsFilter ||
+    sorting.geometry?.filtersOverflowX > 1
+  ) {
     throw new Error(`Search UI ${viewportName} sort geometry/focus failed: ${JSON.stringify(sorting.geometry)}`);
   }
 }
@@ -119,7 +173,9 @@ function assertOverflow(metrics, viewportName, phase) {
   }
 }
 
-async function assertSearchSnapshot(snapshot, entry, viewportName) {
+async function assertSearchSnapshot(snapshot, entry, viewportName, {
+  requirePerceptualBaseline = false
+} = {}) {
   if (!snapshot?.imagePath || !snapshot?.metadataPath) {
     throw new Error(`Search UI ${viewportName} missing snapshot paths`);
   }
@@ -138,11 +194,18 @@ async function assertSearchSnapshot(snapshot, entry, viewportName) {
   if (payload.query !== entry.query || payload.visibleHitCount < 1 || payload.firstVisibleTitle !== "Search UI Hit 0") {
     throw new Error(`Search UI ${viewportName} snapshot search metadata mismatch: ${JSON.stringify(payload)}`);
   }
+  assertSearchLayout(payload.layout, viewportName);
   for (const key of ["firstRenderMs", "repeatedRenderMs", "inputMaxMs"]) {
     if (!Number.isFinite(payload[key])) {
       throw new Error(`Search UI ${viewportName} snapshot missing numeric ${key}: ${JSON.stringify(payload)}`);
     }
   }
+  const perceptualBaseline = await assertPerceptualBaseline(
+    snapshot.perceptualBaseline,
+    snapshot,
+    viewportName,
+    { required: requirePerceptualBaseline }
+  );
   return {
     viewport: viewportName,
     imageBytes: imageInfo.size,
@@ -153,7 +216,78 @@ async function assertSearchSnapshot(snapshot, entry, viewportName) {
     visibleHitCount: payload.visibleHitCount,
     firstRenderMs: payload.firstRenderMs,
     repeatedRenderMs: payload.repeatedRenderMs,
-    inputMaxMs: payload.inputMaxMs
+    inputMaxMs: payload.inputMaxMs,
+    ...(perceptualBaseline ? { perceptualBaseline } : {})
+  };
+}
+
+function assertSearchLayout(layout, viewportName) {
+  for (const key of ["panel", "filters", "sortLabel", "sortSelect", "results"]) {
+    const rect = layout?.[key];
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`Search UI ${viewportName} snapshot missing ${key} geometry: ${JSON.stringify(rect)}`);
+    }
+  }
+  if (
+    layout.filterCount !== 6 ||
+    !Array.isArray(layout.filterButtons) ||
+    layout.filterButtons.length !== 6 ||
+    !layout.sortInsidePanel ||
+    !layout.sortInsideFilters ||
+    layout.sortOverlapsFilter ||
+    layout.filtersOverflowX > 1
+  ) {
+    throw new Error(`Search UI ${viewportName} snapshot clipped or overlapping controls: ${JSON.stringify(layout)}`);
+  }
+  if (!Array.isArray(layout.visibleRows) || layout.visibleRows.length < 1 || !layout.visibleRows[0]?.fullyVisible) {
+    throw new Error(`Search UI ${viewportName} snapshot missing a fully visible result row: ${JSON.stringify(layout?.visibleRows)}`);
+  }
+}
+
+async function assertPerceptualBaseline(baseline, snapshot, viewportName, { required }) {
+  if (!baseline) {
+    if (required) throw new Error(`Search UI artifact contract missing committed result baseline for ${viewportName}`);
+    return null;
+  }
+  if (baseline.kind !== "lotion-png-visual-diff" || baseline.status !== "passed") {
+    throw new Error(`Search UI artifact contract result baseline did not pass for ${viewportName}: ${JSON.stringify({ kind: baseline.kind, status: baseline.status })}`);
+  }
+  if (baseline.actualPath !== snapshot.imagePath) {
+    throw new Error(`Search UI artifact contract result baseline actual path mismatch for ${viewportName}: ${baseline.actualPath}`);
+  }
+  if (!baseline.dimensionsMatch || baseline.diffPixels > baseline.maxDiffPixels || baseline.diffRatio > baseline.maxDiffRatio) {
+    throw new Error(`Search UI artifact contract result baseline exceeded tolerance for ${viewportName}: ${JSON.stringify({ dimensionsMatch: baseline.dimensionsMatch, diffPixels: baseline.diffPixels, diffRatio: baseline.diffRatio })}`);
+  }
+  for (const [label, path] of Object.entries({
+    expected: baseline.expectedPath,
+    diff: baseline.diffPath,
+    metadata: baseline.metadataPath,
+    policy: baseline.policyPath
+  })) {
+    if (!path) throw new Error(`Search UI artifact contract missing result ${label} path for ${viewportName}`);
+    const info = await stat(path);
+    if (info.size <= 0) throw new Error(`Search UI artifact contract found empty result ${label} artifact for ${viewportName}: ${path}`);
+  }
+  const diffMetadata = JSON.parse(await readFile(baseline.metadataPath, "utf8"));
+  if (diffMetadata.status !== "passed" || diffMetadata.expectedPath !== baseline.expectedPath || diffMetadata.actualPath !== baseline.actualPath) {
+    throw new Error(`Search UI artifact contract result diff metadata mismatch for ${viewportName}: ${JSON.stringify(diffMetadata)}`);
+  }
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA,
+    policy: baseline.policy
   };
 }
 

@@ -4,7 +4,7 @@ Status: done
 
 ## Source
 
-Split from `tasks/todo/git-sync-plugin.md` conflict policy.
+Split from `tasks/done/git-sync-plugin.md` conflict policy.
 
 ## Goal
 

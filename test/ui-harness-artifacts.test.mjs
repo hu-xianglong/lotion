@@ -14,6 +14,7 @@ import {
   captureFailureArtifacts,
   openWorkspaceAndReload,
   readHarnessResultArtifactsSince,
+  withPreservedLocalStorageValue,
   writeHarnessResultArtifact
 } from "../scripts/ui-harness.mjs";
 import { assertEmbeddedViewArtifactContract } from "../scripts/lib/embedded-view-artifacts.mjs";
@@ -24,6 +25,8 @@ import { assertEditorScrollArtifactContract } from "../scripts/lib/editor-scroll
 import { assertGlobalSearchVisualArtifactContract } from "../scripts/lib/global-search-visual-artifacts.mjs";
 import { assertImageLightboxArtifactContract, requiredImageLightboxControls } from "../scripts/lib/image-lightbox-artifacts.mjs";
 import { assertDatabaseCreatedViewsArtifactContract, requiredDatabaseCreatedViewTabs } from "../scripts/lib/database-created-views-artifacts.mjs";
+import { assertDatabaseInteractionArtifactContract } from "../scripts/lib/database-interaction-artifacts.mjs";
+import { assertDatabaseMultiViewArtifactContract } from "../scripts/lib/database-multi-view-artifacts.mjs";
 import { assertLLMChatArtifactContract, requiredLLMChatSnapshotPhases } from "../scripts/lib/llm-chat-artifacts.mjs";
 import { assertMarkdownPreviewArtifactContract } from "../scripts/lib/markdown-preview-artifacts.mjs";
 import { assertNavigationAnchorArtifactContract } from "../scripts/lib/navigation-anchor-artifacts.mjs";
@@ -34,7 +37,10 @@ import { assertPluginManagerArtifactContract, requiredPluginManagerPlugins } fro
 import { assertRowPageNavigationArtifactContract } from "../scripts/lib/row-page-navigation-artifacts.mjs";
 import { assertRowPagePropertyVisualArtifactContract } from "../scripts/lib/row-page-property-visual-artifacts.mjs";
 import { assertSearchAiArtifactContract } from "../scripts/lib/search-ai-artifacts.mjs";
-import { assertSearchUiArtifactContract } from "../scripts/lib/search-ui-artifacts.mjs";
+import {
+  assertSearchHarnessCacheEvidence,
+  assertSearchUiArtifactContract
+} from "../scripts/lib/search-ui-artifacts.mjs";
 import { assertSettingsCenterArtifactContract, requiredSettingsCenterCategories } from "../scripts/lib/settings-center-artifacts.mjs";
 import { assertSidebarSettingsArtifactContract } from "../scripts/lib/sidebar-settings-artifacts.mjs";
 import { assertSourceAttachmentArtifactContract } from "../scripts/lib/source-attachment-artifacts.mjs";
@@ -51,9 +57,85 @@ import {
   buildUiSuiteArtifactIndex,
   formatUiSuiteArtifactIndexMarkdown,
   productionVisualViewportNamesFromSelection,
+  uiSuiteHarnessConnection,
   writeUiSuiteArtifactIndex
 } from "../scripts/lib/ui-suite-artifacts.mjs";
 import { assertDesignSystemArtifactContract, requiredDesignSystemStatusPills } from "../scripts/lib/design-system-artifacts.mjs";
+
+test("database multi-view artifact contract requires create-view failure recovery evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-multi-view-contract-"));
+  try {
+    const viewports = [];
+    for (const viewport of ["desktop", "compact"]) {
+      const imagePath = join(root, `${viewport}.png`);
+      const metadataPath = join(root, `${viewport}.json`);
+      await writeFile(imagePath, Buffer.alloc(1024, 1));
+      await writeFile(metadataPath, JSON.stringify({
+        viewport: { name: viewport },
+        metadata: { phase: "multi-view-overflow" }
+      }));
+      viewports.push({
+        viewport,
+        viewCount: 12,
+        orderPersisted: true,
+        keyboardFocusFollowed: true,
+        sidebarViewsVerified: true,
+        createViewFailureRecovery: {
+          message: "Injected create view failure",
+          dialogRemainedOpen: true,
+          duplicateSubmitSuppressed: true,
+          retryCreatedExactlyOne: true
+        },
+        viewOrderFailureRecovery: {
+          message: "Injected view reorder failure",
+          controlsBlockedUntilResolution: true,
+          rollbackPreservedOrder: true,
+          rollbackPreservedRevisions: true,
+          duplicateDropSuppressed: true,
+          retryPersistedExactlyOnce: true
+        },
+        snapshot: { imagePath, metadataPath }
+      });
+    }
+    const summary = { status: "passed", viewports };
+    const contract = await assertDatabaseMultiViewArtifactContract(summary);
+    assert.equal(contract.snapshotCount, 2);
+
+    summary.viewports[0].createViewFailureRecovery.duplicateSubmitSuppressed = false;
+    await assert.rejects(
+      () => assertDatabaseMultiViewArtifactContract(summary),
+      /create-view failure recovery evidence incomplete for desktop/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ui harness restores preserved local storage state after success and failure", async () => {
+  for (const shouldThrow of [false, true]) {
+    const evaluations = [];
+    const page = {
+      async evaluate(_callback, argument) {
+        evaluations.push(argument);
+        if (evaluations.length === 1) return "en";
+        return undefined;
+      }
+    };
+    const run = withPreservedLocalStorageValue(page, "lotion.locale", async (previousValue, restore) => {
+      assert.equal(previousValue, "en");
+      await restore();
+      await restore();
+      if (shouldThrow) throw new Error("simulated suite failure");
+      return "passed";
+    });
+    if (shouldThrow) await assert.rejects(run, /simulated suite failure/);
+    else assert.equal(await run, "passed");
+    assert.deepEqual(evaluations, [
+      "lotion.locale",
+      { storageKey: "lotion.locale", value: "en" }
+    ]);
+  }
+});
 
 test("ui harness failure artifacts include readable diagnostics and metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-ui-artifacts-"));
@@ -154,9 +236,11 @@ test("ui harness workspace reload tolerates reload navigation timeout", async ()
   const timeout = new Error("page.reload: Timeout 30000ms exceeded.");
   timeout.name = "TimeoutError";
   const page = {
-    async evaluate(callback, root) {
-      calls.push(["evaluate", root]);
+    async evaluate(callback, argument) {
+      calls.push(["evaluate", argument]);
       assert.equal(typeof callback, "function");
+      if (argument === undefined) return 1234;
+      return { name: "Fixture", spaceId: "sp_fixture" };
     },
     async reload(options) {
       calls.push(["reload", options]);
@@ -171,19 +255,143 @@ test("ui harness workspace reload tolerates reload navigation timeout", async ()
   await openWorkspaceAndReload(page, "/tmp/lotion-workspace");
 
   assert.deepEqual(calls, [
+    ["evaluate", undefined],
     ["evaluate", "/tmp/lotion-workspace"],
     ["reload", { waitUntil: "domcontentloaded" }],
     ["waitForFunction", { timeout: 15_000 }]
   ]);
 });
 
+test("ui harness startup failures expose only the diagnostics available before a page exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-ui-startup-failure-"));
+  try {
+    const { manifest } = await writeHarnessResultArtifact({
+      artifactRoot: root,
+      cdpUrl: "http://127.0.0.1:59999",
+      devLog: ["vite ready\n", "electron exited\n"],
+      error: new Error("Timed out waiting for Lotion CDP"),
+      name: "startup-failure",
+      page: null,
+      status: "failed"
+    });
+    assert.deepEqual(Object.keys(manifest.failureArtifacts).sort(), ["devLog", "error", "readme"]);
+    assert.equal(manifest.failureArtifacts.devLog, join(root, "dev.log"));
+    assert.equal(manifest.failureArtifacts.error, join(root, "error.txt"));
+    assert.equal(manifest.failureArtifacts.readme, join(root, "README.md"));
+    assert.equal("screenshot" in manifest.failureArtifacts, false);
+    assert.equal(manifest.logs.devLogBytes > 0, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ui harness persists redacted real-workspace immutability evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-ui-real-workspace-evidence-"));
+  try {
+    const fingerprint = {
+      kind: "lotion-real-workspace-fingerprint",
+      workspaceName: "Lotion Demo Space",
+      fileCount: 183,
+      directoryCount: 36,
+      totalBytes: 228_505_681,
+      sha256: "a".repeat(64),
+      sourceRoot: "/must/not/persist"
+    };
+    const { manifest } = await writeHarnessResultArtifact({
+      artifactRoot: root,
+      consoleMessages: [],
+      devLog: [],
+      name: "real-demo-workspace-ui",
+      page: {
+        url: () => "http://127.0.0.1:5173/#/page",
+        viewportSize: () => ({ width: 1440, height: 1000 })
+      },
+      result: {
+        status: "passed",
+        sourceRoot: "/must/not/persist",
+        sourceIdentity: {
+          workspaceName: "Lotion Demo Space",
+          directoryName: "Lotion Demo Space",
+          sourcePath: "/must/not/persist"
+        },
+        sourceFingerprint: fingerprint,
+        cloneFingerprint: fingerprint,
+        isolation: {
+          mode: "COPYFILE_FICLONE with platform fallback",
+          symlinksAllowed: false,
+          byteIdenticalAtClone: true,
+          cloneRoot: "/must/not/persist"
+        },
+        sourceSafety: { unchanged: true, before: fingerprint, after: fingerprint },
+        viewports: [
+          {
+            viewport: "desktop",
+            workspaceName: "Lotion Demo Space",
+            activeWorkspaceWasClone: true,
+            homeOpenMs: 120,
+            databaseOpenMs: 2400,
+            databaseState: { rowCountText: "500000 rows", renderedRowCount: 20, virtualSpacerCount: 2, virtualized: true, documentHorizontalOverflowPx: 0 }
+          },
+          { viewport: "compact" }
+        ],
+        artifactContract: {
+          status: "passed",
+          reproduceCommand: "npm run smoke:real-demo-workspace-ui",
+          workspaceName: "Lotion Demo Space",
+          sourceFingerprint: fingerprint,
+          sourceUnchanged: true,
+          staleToggleTargetMissing: true,
+          seededToggleProvenance: "clone-only-importer-regression-shape",
+          expectedViewportNames: ["desktop", "compact"],
+          observedViewportNames: ["desktop", "compact"],
+          snapshotCount: 1,
+          snapshots: [{
+            viewport: "desktop",
+            imagePath: "desktop-toggle.png",
+            metadataPath: "desktop-toggle.json",
+            imageBytes: 1234,
+            provenance: "clone-seeded",
+            title: "Family Vision Check",
+            openMs: 321,
+            toggleCount: 1,
+            loadedImageCount: 1,
+            documentHorizontalOverflowPx: 0,
+            toggleSummary: "Appointment receipt",
+            collapsed: true,
+            reexpanded: true,
+            overlay: { kind: "command-modal", visible: true, sourcePath: "/must/not/persist" }
+          }]
+        }
+      },
+      status: "passed"
+    });
+
+    assert.equal(manifest.result.realWorkspaceEvidence.sourceSafety.unchanged, true);
+    assert.equal(manifest.result.realWorkspaceEvidence.isolation.mode, "COPYFILE_FICLONE with platform fallback");
+    assert.equal(manifest.result.realWorkspaceEvidence.viewports[0].databaseState.renderedRowCount, 20);
+    assert.equal(manifest.result.artifactContract.reproduceCommand, "npm run smoke:real-demo-workspace-ui");
+    assert.equal(manifest.result.realWorkspaceEvidence.sourceFingerprint.sha256, "a".repeat(64));
+    assert.equal(manifest.result.artifactContract.sourceUnchanged, true);
+    assert.equal(manifest.result.artifactContract.sourceFingerprint.totalBytes, 228_505_681);
+    assert.equal(manifest.result.artifactContract.staleToggleTargetMissing, true);
+    assert.equal(manifest.result.artifactContract.seededToggleProvenance, "clone-only-importer-regression-shape");
+    assert.equal(manifest.result.artifactContract.snapshots[0].loadedImageCount, 1);
+    assert.equal(manifest.result.artifactContract.snapshots[0].overlay.visible, true);
+    assert.doesNotMatch(JSON.stringify(manifest), /must\/not\/persist/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ui harness workspace reload tolerates transient network changes", async () => {
   const calls = [];
   const networkChanged = new Error("page.reload: net::ERR_NETWORK_CHANGED");
   const page = {
-    async evaluate(callback, root) {
-      calls.push(["evaluate", root]);
+    async evaluate(callback, argument) {
+      calls.push(["evaluate", argument]);
       assert.equal(typeof callback, "function");
+      if (argument === undefined) return 1234;
+      return { name: "Fixture", spaceId: "sp_fixture" };
     },
     async reload(options) {
       calls.push(["reload", options]);
@@ -198,6 +406,7 @@ test("ui harness workspace reload tolerates transient network changes", async ()
   await openWorkspaceAndReload(page, "/tmp/lotion-workspace");
 
   assert.deepEqual(calls, [
+    ["evaluate", undefined],
     ["evaluate", "/tmp/lotion-workspace"],
     ["reload", { waitUntil: "domcontentloaded" }],
     ["waitForFunction", { timeout: 15_000 }]
@@ -242,6 +451,7 @@ test("ui harness element snapshots include image and metadata artifacts", async 
 
     const snapshot = await captureElementSnapshot({
       artifactRoot,
+      deterministicTypography: false,
       locator,
       metadata: { rowId: "row_visual", fieldCount: 8 },
       name: "Row Page Property Panel / compact",
@@ -325,6 +535,7 @@ test("ui harness element snapshot baseline reports geometry drift", async () => 
 
     const snapshot = await captureElementSnapshot({
       artifactRoot,
+      deterministicTypography: false,
       locator,
       metadata: { rowId: "row_drift" },
       name: "Row property drift",
@@ -356,6 +567,7 @@ test("row-property visual artifact contract validates viewport screenshots and m
       const imagePath = join(snapshotRoot, "row-property.png");
       const metadataPath = join(snapshotRoot, "row-property.json");
       await writeFile(imagePath, `fake ${viewportName} row-property screenshot`, "utf8");
+      const completePanelState = createRowPropertyCompletePanelState(viewportName);
       await writeFile(metadataPath, `${JSON.stringify({
         name: `row-property-${viewportName}`,
         viewport: { name: viewportName, width: viewportName === "desktop" ? 1440 : 1040, height: 820 },
@@ -364,6 +576,7 @@ test("row-property visual artifact contract validates viewport screenshots and m
         metadata: {
           rowId: "row_visual",
           rowTitle: "Row Property Visual Row",
+          completePanelState,
           sourceRows: ["Original Notion HTML", "Original Notion CSV"],
           valueColumnLeft: 420,
           visibleRows: [
@@ -384,6 +597,8 @@ test("row-property visual artifact contract validates viewport screenshots and m
       }, null, 2)}\n`, "utf8");
       viewports.push({
         viewport: viewportName,
+        recovery: createRowPropertyRecoveryEvidence(viewportName),
+        optionRecovery: createRowPropertyOptionRecoveryEvidence(viewportName),
         propertyVisuals: {
           rowCount: 12,
           valueColumnLeft: 420,
@@ -392,6 +607,7 @@ test("row-property visual artifact contract validates viewport screenshots and m
             { label: "Original Notion HTML", requests: ["attachments/original/export/source.html"] },
             { label: "Original Notion CSV", requests: ["attachments/original/export/source.csv"] }
           ],
+          completePanelState,
           snapshot: {
             imagePath,
             metadataPath,
@@ -424,6 +640,7 @@ test("row-property visual artifact contract validates viewport screenshots and m
     assert.equal(contract.snapshots[0].horizontalOverflowPx, 0);
     assert.equal(contract.snapshots[0].scrollWidth, 1440);
     assert.deepEqual(contract.snapshots[0].sourceRows, ["Original Notion HTML", "Original Notion CSV"]);
+    assert.equal(contract.snapshots[0].completePanelState.rows.Status.searchChipText, "Done");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -464,7 +681,10 @@ test("row-property visual artifact contract reports horizontal overflow", async 
         status: "passed",
         viewports: [{
           viewport: "desktop",
+          recovery: createRowPropertyRecoveryEvidence("desktop"),
+          optionRecovery: createRowPropertyOptionRecoveryEvidence("desktop"),
           propertyVisuals: {
+            completePanelState: createRowPropertyCompletePanelState("desktop"),
             rowCount: 12,
             valueColumnLeft: 420,
             focus: [{}, {}, {}, {}],
@@ -480,6 +700,30 @@ test("row-property visual artifact contract reports horizontal overflow", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("row-property visual artifact contract requires transactional recovery evidence", async () => {
+  await assert.rejects(
+    () => assertRowPagePropertyVisualArtifactContract({
+      status: "passed",
+      viewports: [{ viewport: "desktop", propertyVisuals: {} }]
+    }, { expectedViewportNames: ["desktop"] }),
+    /missing transactional recovery evidence/
+  );
+});
+
+test("row-property visual artifact contract requires option mutation recovery evidence", async () => {
+  await assert.rejects(
+    () => assertRowPagePropertyVisualArtifactContract({
+      status: "passed",
+      viewports: [{
+        viewport: "desktop",
+        recovery: createRowPropertyRecoveryEvidence("desktop"),
+        propertyVisuals: {}
+      }]
+    }, { expectedViewportNames: ["desktop"] }),
+    /missing option mutation recovery evidence/
+  );
 });
 
 test("row-property visual artifact contract reports missing metadata", async () => {
@@ -504,7 +748,10 @@ test("row-property visual artifact contract reports missing metadata", async () 
         status: "passed",
         viewports: [{
           viewport: "desktop",
+          recovery: createRowPropertyRecoveryEvidence("desktop"),
+          optionRecovery: createRowPropertyOptionRecoveryEvidence("desktop"),
           propertyVisuals: {
+            completePanelState: createRowPropertyCompletePanelState("desktop"),
             rowCount: 12,
             valueColumnLeft: 420,
             focus: [{}, {}, {}, {}],
@@ -516,6 +763,96 @@ test("row-property visual artifact contract reports missing metadata", async () 
         }]
       }, { expectedViewportNames: ["desktop"] }),
       /missing source row Original Notion CSV/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("row-property visual artifact contract rejects a clipped or transparent complete panel", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-row-property-contract-clipped-"));
+  try {
+    const imagePath = join(root, "row-property.png");
+    const metadataPath = join(root, "row-property.json");
+    const completePanelState = createRowPropertyCompletePanelState("compact");
+    completePanelState.propertiesOpacity = 0;
+    await writeFile(imagePath, "fake screenshot", "utf8");
+    await writeFile(metadataPath, `${JSON.stringify({
+      viewport: { name: "compact", width: 1040, height: 820 },
+      metadata: {
+        completePanelState,
+        sourceRows: ["Original Notion HTML", "Original Notion CSV"],
+        valueColumnLeft: 420,
+        visibleRows: rowPropertyNames()
+      }
+    })}\n`, "utf8");
+
+    await assert.rejects(
+      () => assertRowPagePropertyVisualArtifactContract({
+        status: "passed",
+        viewports: [{
+          viewport: "compact",
+          recovery: createRowPropertyRecoveryEvidence("compact"),
+          optionRecovery: createRowPropertyOptionRecoveryEvidence("compact"),
+          propertyVisuals: {
+            completePanelState,
+            rowCount: 12,
+            valueColumnLeft: 420,
+            focus: [{}, {}, {}, {}],
+            sourceOpen: [{}, {}],
+            snapshot: { imagePath, metadataPath },
+            snapshotBaseline: { imageBytes: 15 },
+            viewport: { width: 1040, height: 820, scrollWidth: 1040 }
+          }
+        }]
+      }, { expectedViewportNames: ["compact"] }),
+      /clipped, hidden, or mis-owned entry panel/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("row-property visual artifact contract rejects a missing required panel baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-row-property-contract-baseline-"));
+  try {
+    const imagePath = join(root, "row-property.png");
+    const metadataPath = join(root, "row-property.json");
+    const completePanelState = createRowPropertyCompletePanelState("desktop");
+    await writeFile(imagePath, "fake screenshot", "utf8");
+    await writeFile(metadataPath, `${JSON.stringify({
+      viewport: { name: "desktop", width: 1440, height: 1000 },
+      metadata: {
+        completePanelState,
+        sourceRows: ["Original Notion HTML", "Original Notion CSV"],
+        valueColumnLeft: 420,
+        visibleRows: rowPropertyNames()
+      }
+    })}\n`, "utf8");
+
+    await assert.rejects(
+      () => assertRowPagePropertyVisualArtifactContract({
+        status: "passed",
+        viewports: [{
+          viewport: "desktop",
+          recovery: createRowPropertyRecoveryEvidence("desktop"),
+          optionRecovery: createRowPropertyOptionRecoveryEvidence("desktop"),
+          propertyVisuals: {
+            completePanelState,
+            rowCount: 12,
+            valueColumnLeft: 420,
+            focus: [{}, {}, {}, {}],
+            sourceOpen: [{}, {}],
+            snapshot: { imagePath, metadataPath },
+            snapshotBaseline: { imageBytes: 15 },
+            viewport: { width: 1440, height: 1000, scrollWidth: 1440 }
+          }
+        }]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed panel baseline/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -772,6 +1109,35 @@ test("editor regression artifact contract reports missing link click evidence", 
   }
 });
 
+test("editor regression artifact contract rejects incomplete page layout recovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-editor-layout-recovery-contract-fail-"));
+  try {
+    const desktopImage = join(root, "desktop.png");
+    const desktopMetadata = join(root, "desktop.json");
+    const compactImage = join(root, "compact.png");
+    const compactMetadata = join(root, "compact.json");
+    await writeFile(desktopImage, "desktop editor screenshot", "utf8");
+    await writeFile(compactImage, "compact editor screenshot", "utf8");
+    await writeEditorRegressionMetadata(desktopMetadata, "desktop", editorRegressionMetadata("desktop"));
+    await writeEditorRegressionMetadata(compactMetadata, "compact", editorRegressionMetadata("compact"));
+    const desktopEntry = editorRegressionContractEntry("desktop", { imagePath: desktopImage, metadataPath: desktopMetadata });
+    desktopEntry.empty.layoutRecovery.discardResetDraft = false;
+
+    await assert.rejects(
+      () => assertEditorRegressionArtifactContract({
+        status: "passed",
+        viewports: [
+          desktopEntry,
+          editorRegressionContractEntry("compact", { imagePath: compactImage, metadataPath: compactMetadata })
+        ]
+      }),
+      /empty row page layout recovery failed discardResetDraft/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("editor link-click artifact contract validates open, navigation, editing, and snapshots", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-editor-link-click-contract-"));
   try {
@@ -926,6 +1292,23 @@ test("search UI artifact contract validates latency, sorting, keyboard, jump, an
   }
 });
 
+test("search UI performance harness evidence rejects regenerated synthetic hit sets", () => {
+  assert.deepEqual(assertSearchHarnessCacheEvidence({
+    generationCounts: { relevance: 1, created_asc: 1, updated_desc: 1 },
+    queryCounts: { relevance: 4, created_asc: 1, updated_desc: 2 },
+    queryTimings: [{ cacheHit: true, delayMs: 350.1, originalMs: 12.2, prepareMs: 0.1, sortMode: "relevance", totalMs: 362.4 }]
+  }, "desktop"), {
+    generationCounts: { relevance: 1, created_asc: 1, updated_desc: 1 },
+    queryCounts: { relevance: 4, created_asc: 1, updated_desc: 2 },
+    queryTimings: [{ cacheHit: true, delayMs: 350.1, originalMs: 12.2, prepareMs: 0.1, sortMode: "relevance", totalMs: 362.4 }]
+  });
+  assert.throws(() => assertSearchHarnessCacheEvidence({
+    generationCounts: { relevance: 2 },
+    queryCounts: { relevance: 4 },
+    queryTimings: [{ cacheHit: true, delayMs: 350, originalMs: 12, prepareMs: 0.1, sortMode: "relevance", totalMs: 362.1 }]
+  }, "desktop"), /regenerated synthetic hits/);
+});
+
 test("search UI artifact contract reports missing sort options", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-search-ui-contract-fail-"));
   try {
@@ -952,6 +1335,72 @@ test("search UI artifact contract reports missing sort options", async () => {
         ]
       }),
       /missing sort option/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("search UI artifact contract rejects clipped or overlapping controls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-search-ui-clipped-controls-"));
+  try {
+    const desktopImage = join(root, "desktop.png");
+    const desktopMetadata = join(root, "desktop.json");
+    const compactImage = join(root, "compact.png");
+    const compactMetadata = join(root, "compact.json");
+    await writeFile(desktopImage, "desktop search latency screenshot", "utf8");
+    await writeFile(compactImage, "compact search latency screenshot", "utf8");
+    const clipped = searchUiMetadata("desktop");
+    clipped.layout.sortInsideFilters = false;
+    clipped.layout.sortOverlapsFilter = true;
+    clipped.layout.filtersOverflowX = 72;
+    await writeSearchUiMetadata(desktopMetadata, "desktop", clipped);
+    await writeSearchUiMetadata(compactMetadata, "compact", searchUiMetadata("compact"));
+
+    await assert.rejects(
+      () => assertSearchUiArtifactContract({
+        status: "passed",
+        visibleHits: 100,
+        thresholdMs: 1500,
+        inputThresholdMs: 80,
+        viewports: [
+          searchUiContractEntry("desktop", { imagePath: desktopImage, metadataPath: desktopMetadata }),
+          searchUiContractEntry("compact", { imagePath: compactImage, metadataPath: compactMetadata })
+        ]
+      }),
+      /clipped or overlapping controls/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("search UI artifact contract rejects a missing required result baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-search-ui-missing-baseline-"));
+  try {
+    const desktopImage = join(root, "desktop.png");
+    const desktopMetadata = join(root, "desktop.json");
+    const compactImage = join(root, "compact.png");
+    const compactMetadata = join(root, "compact.json");
+    await writeFile(desktopImage, "desktop search latency screenshot", "utf8");
+    await writeFile(compactImage, "compact search latency screenshot", "utf8");
+    await writeSearchUiMetadata(desktopMetadata, "desktop", searchUiMetadata("desktop"));
+    await writeSearchUiMetadata(compactMetadata, "compact", searchUiMetadata("compact"));
+
+    await assert.rejects(
+      () => assertSearchUiArtifactContract({
+        status: "passed",
+        visibleHits: 100,
+        thresholdMs: 1500,
+        inputThresholdMs: 80,
+        viewports: [
+          searchUiContractEntry("desktop", { imagePath: desktopImage, metadataPath: desktopMetadata }),
+          searchUiContractEntry("compact", { imagePath: compactImage, metadataPath: compactMetadata })
+        ]
+      }, {
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed result baseline for desktop/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1158,12 +1607,24 @@ test("notion import audit artifact contract validates summary screenshots and op
     assert.equal(contract.diagnosticCount, 2);
     assert.equal(contract.snapshots[0].phase, "command-modal");
     assert.equal(contract.snapshots[0].overlay.title, "Import from Notion");
+    assert.equal(contract.snapshots[0].controlState.scanDisabled, true);
     assert.equal(contract.snapshots[2].pathButtons, 2);
     assert.equal(contract.snapshots[2].openedCount, 2);
     assert.equal(contract.snapshots[2].summary.Issues, "0");
+    assert.equal(contract.snapshots[2].singleFlightSubmission.resultCount, 1);
     assert.equal(contract.snapshots[4].phase, "diagnostic");
     assert.equal(contract.snapshots[4].issueKinds.cell_loss, 1);
     assert.equal(contract.snapshots[4].summary.Issues, "1");
+    viewports[0].singleFlightSubmission.resultCount = 2;
+    await assert.rejects(
+      () => assertNotionImportAuditArtifactContract({
+        diagnostics,
+        importModal,
+        status: "passed",
+        viewports
+      }),
+      /single-flight submission evidence/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1205,6 +1666,103 @@ test("notion import audit artifact contract reports missing failing diagnostics"
         viewports
       }),
       /missing failing diagnostic/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("notion import audit artifact contract rejects clipped or transparent modal controls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-notion-audit-contract-clipped-modal-"));
+  try {
+    const modalImagePath = join(root, "notion-import-command-modal.png");
+    const modalMetadataPath = join(root, "notion-import-command-modal.json");
+    const modalEntry = notionImportModalContractEntry("desktop", {
+      imagePath: modalImagePath,
+      metadataPath: modalMetadataPath
+    });
+    modalEntry.controlState.opacity = 0;
+    modalEntry.controlState.sourceButtonRects[1] = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    await writeNotionImportModalSnapshotFiles({
+      entry: modalEntry,
+      imagePath: modalImagePath,
+      metadataPath: modalMetadataPath,
+      viewportName: "desktop"
+    });
+    const auditImagePath = join(root, "notion-audit.png");
+    const auditMetadataPath = join(root, "notion-audit.json");
+    const auditEntry = notionImportAuditContractEntry("desktop", {
+      imagePath: auditImagePath,
+      metadataPath: auditMetadataPath
+    });
+    await writeNotionImportAuditSnapshotFiles({
+      entry: auditEntry,
+      imagePath: auditImagePath,
+      metadataPath: auditMetadataPath,
+      viewportName: "desktop"
+    });
+    const diagnosticImagePath = join(root, "notion-diagnostic.png");
+    const diagnosticMetadataPath = join(root, "notion-diagnostic.json");
+    const diagnosticEntry = notionImportAuditDiagnosticEntry("desktop", {
+      imagePath: diagnosticImagePath,
+      metadataPath: diagnosticMetadataPath
+    });
+    await writeNotionImportAuditSnapshotFiles({
+      entry: diagnosticEntry,
+      imagePath: diagnosticImagePath,
+      metadataPath: diagnosticMetadataPath,
+      viewportName: "desktop"
+    });
+
+    await assert.rejects(
+      () => assertNotionImportAuditArtifactContract({
+        importModal: [modalEntry],
+        diagnostics: [diagnosticEntry],
+        status: "passed",
+        viewports: [auditEntry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /missing complete entry import modal sourceButtonRects|clipped, transparent, or incomplete/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("notion import audit artifact contract requires a committed modal baseline when requested", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-notion-audit-contract-missing-modal-baseline-"));
+  try {
+    const imagePath = join(root, "notion-import-command-modal.png");
+    const metadataPath = join(root, "notion-import-command-modal.json");
+    const modalEntry = notionImportModalContractEntry("desktop", { imagePath, metadataPath });
+    await writeNotionImportModalSnapshotFiles({ entry: modalEntry, imagePath, metadataPath, viewportName: "desktop" });
+    const auditImagePath = join(root, "notion-audit.png");
+    const auditMetadataPath = join(root, "notion-audit.json");
+    const auditEntry = notionImportAuditContractEntry("desktop", { imagePath: auditImagePath, metadataPath: auditMetadataPath });
+    await writeNotionImportAuditSnapshotFiles({ entry: auditEntry, imagePath: auditImagePath, metadataPath: auditMetadataPath, viewportName: "desktop" });
+    const diagnosticImagePath = join(root, "notion-diagnostic.png");
+    const diagnosticMetadataPath = join(root, "notion-diagnostic.json");
+    const diagnosticEntry = notionImportAuditDiagnosticEntry("desktop", {
+      imagePath: diagnosticImagePath,
+      metadataPath: diagnosticMetadataPath
+    });
+    await writeNotionImportAuditSnapshotFiles({
+      entry: diagnosticEntry,
+      imagePath: diagnosticImagePath,
+      metadataPath: diagnosticMetadataPath,
+      viewportName: "desktop"
+    });
+
+    await assert.rejects(
+      () => assertNotionImportAuditArtifactContract({
+        importModal: [modalEntry],
+        diagnostics: [diagnosticEntry],
+        status: "passed",
+        viewports: [auditEntry]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed command-modal baseline/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1262,12 +1820,28 @@ test("markdown preview artifact contract validates screenshots and rendered widg
       await mkdir(snapshotRoot, { recursive: true });
       const initialImagePath = join(snapshotRoot, "markdown-preview-initial.png");
       const initialMetadataPath = join(snapshotRoot, "markdown-preview-initial.json");
+      const selectedImagePath = join(snapshotRoot, "markdown-preview-selected-imported-highlight.png");
+      const selectedMetadataPath = join(snapshotRoot, "markdown-preview-selected-imported-highlight.json");
+      const importedToggleImagePath = join(snapshotRoot, "markdown-preview-imported-toggle.png");
+      const importedToggleMetadataPath = join(snapshotRoot, "markdown-preview-imported-toggle.json");
       const widgetsImagePath = join(snapshotRoot, "markdown-preview-widgets.png");
       const widgetsMetadataPath = join(snapshotRoot, "markdown-preview-widgets.json");
       await writeMarkdownSnapshotFiles({
         imagePath: initialImagePath,
         metadataPath: initialMetadataPath,
         phase: "initial",
+        viewportName
+      });
+      await writeMarkdownSnapshotFiles({
+        imagePath: selectedImagePath,
+        metadataPath: selectedMetadataPath,
+        phase: "selected-imported-highlight",
+        viewportName
+      });
+      await writeMarkdownSnapshotFiles({
+        imagePath: importedToggleImagePath,
+        metadataPath: importedToggleMetadataPath,
+        phase: "imported-toggle",
         viewportName
       });
       await writeMarkdownSnapshotFiles({
@@ -1279,6 +1853,10 @@ test("markdown preview artifact contract validates screenshots and rendered widg
       viewports.push(markdownPreviewContractEntry(viewportName, {
         initialImagePath,
         initialMetadataPath,
+        selectedImagePath,
+        selectedMetadataPath,
+        importedToggleImagePath,
+        importedToggleMetadataPath,
         widgetsImagePath,
         widgetsMetadataPath
       }));
@@ -1292,14 +1870,15 @@ test("markdown preview artifact contract validates screenshots and rendered widg
     assert.equal(contract.status, "passed");
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
-    assert.equal(contract.snapshotCount, 2);
-    assert.deepEqual(contract.snapshots[0].phases, ["initial", "widgets"]);
-    assert.equal(contract.snapshots[0].imagePath, join(artifactRoot, "desktop", "markdown-preview-initial.png"));
-    assert.equal(contract.snapshots[0].metadataPath, join(artifactRoot, "desktop", "markdown-preview-initial.json"));
-    assert.deepEqual(contract.snapshots[0].phaseSnapshots.map((entry) => entry.phase), ["initial", "widgets"]);
-    assert.equal(contract.snapshots[0].previews.callout, true);
-    assert.equal(contract.snapshots[0].previews.missingDatabase, true);
-    assert.equal(contract.snapshots[0].sourceHidden, true);
+    assert.equal(contract.snapshotCount, 8);
+    assert.deepEqual(contract.viewports[0].phases, ["initial", "selected-imported-highlight", "imported-toggle", "widgets"]);
+    assert.equal(contract.snapshots[0].imagePath, join(artifactRoot, "desktop", "markdown-preview-selected-imported-highlight.png"));
+    assert.equal(contract.snapshots[0].metadataPath, join(artifactRoot, "desktop", "markdown-preview-selected-imported-highlight.json"));
+    assert.deepEqual(contract.viewports[0].phaseSnapshots.map((entry) => entry.phase), ["initial", "selected-imported-highlight", "imported-toggle", "widgets"]);
+    assert.equal(contract.viewports[0].previews.callout, true);
+    assert.equal(contract.viewports[0].previews.missingDatabase, true);
+    assert.equal(contract.viewports[0].sourceHidden, true);
+    assert.equal(contract.viewports[0].phaseSnapshots[1].selectedSourceState.editSourceText, "Edit source");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1312,12 +1891,28 @@ test("markdown preview artifact contract reports missing high-risk widgets", asy
     await mkdir(artifactRoot, { recursive: true });
     const initialImagePath = join(artifactRoot, "markdown-preview-initial.png");
     const initialMetadataPath = join(artifactRoot, "markdown-preview-initial.json");
+    const selectedImagePath = join(artifactRoot, "markdown-preview-selected-imported-highlight.png");
+    const selectedMetadataPath = join(artifactRoot, "markdown-preview-selected-imported-highlight.json");
+    const importedToggleImagePath = join(artifactRoot, "markdown-preview-imported-toggle.png");
+    const importedToggleMetadataPath = join(artifactRoot, "markdown-preview-imported-toggle.json");
     const widgetsImagePath = join(artifactRoot, "markdown-preview-widgets.png");
     const widgetsMetadataPath = join(artifactRoot, "markdown-preview-widgets.json");
     await writeMarkdownSnapshotFiles({
       imagePath: initialImagePath,
       metadataPath: initialMetadataPath,
       phase: "initial",
+      viewportName: "desktop"
+    });
+    await writeMarkdownSnapshotFiles({
+      imagePath: selectedImagePath,
+      metadataPath: selectedMetadataPath,
+      phase: "selected-imported-highlight",
+      viewportName: "desktop"
+    });
+    await writeMarkdownSnapshotFiles({
+      imagePath: importedToggleImagePath,
+      metadataPath: importedToggleMetadataPath,
+      phase: "imported-toggle",
       viewportName: "desktop"
     });
     await writeMarkdownSnapshotFiles({
@@ -1329,9 +1924,23 @@ test("markdown preview artifact contract reports missing high-risk widgets", asy
     const entry = markdownPreviewContractEntry("desktop", {
       initialImagePath,
       initialMetadataPath,
+      selectedImagePath,
+      selectedMetadataPath,
+      importedToggleImagePath,
+      importedToggleMetadataPath,
       widgetsImagePath,
       widgetsMetadataPath
     });
+    const missingSelectedSnapshot = structuredClone(entry);
+    missingSelectedSnapshot.visualSnapshots = missingSelectedSnapshot.visualSnapshots
+      .filter((snapshot) => snapshot.phase !== "selected-imported-highlight");
+    await assert.rejects(
+      () => assertMarkdownPreviewArtifactContract({
+        status: "passed",
+        viewports: [missingSelectedSnapshot]
+      }, { expectedViewportNames: ["desktop"] }),
+      /missing selected-imported-highlight snapshot/
+    );
     entry.rendered.iframePreview = null;
 
     await assert.rejects(
@@ -1343,6 +1952,49 @@ test("markdown preview artifact contract reports missing high-risk widgets", asy
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("markdown preview artifact contract rejects clipped or transparent selected-source controls", async () => {
+  const fixture = await createMarkdownPreviewArtifactFixture("desktop");
+  try {
+    fixture.entry.visualSnapshots[1].selectedSourceState.editSourceOpacity = 0;
+    fixture.entry.visualSnapshots[1].selectedSourceState.selectionRect.width = 0;
+    fixture.entry.visualSnapshots[1].selectedSourceState.selectionOverlapsEditSource = true;
+    await writeMarkdownSnapshotFiles({
+      imagePath: fixture.paths.selectedImagePath,
+      metadataPath: fixture.paths.selectedMetadataPath,
+      phase: "selected-imported-highlight",
+      viewportName: "desktop",
+      selectedSourceState: fixture.entry.visualSnapshots[1].selectedSourceState
+    });
+    await assert.rejects(
+      () => assertMarkdownPreviewArtifactContract({
+        status: "passed",
+        viewports: [fixture.entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /selected-source selectionRect geometry|clipped, hidden, or incomplete/
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("markdown preview artifact contract requires a committed selected-source baseline when requested", async () => {
+  const fixture = await createMarkdownPreviewArtifactFixture("desktop");
+  try {
+    await assert.rejects(
+      () => assertMarkdownPreviewArtifactContract({
+        status: "passed",
+        viewports: [fixture.entry]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed selected-source baseline/
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
   }
 });
 
@@ -1368,7 +2020,8 @@ test("embedded view artifact contract validates table screenshots and load-more 
           embeddedViews: entry.embeddedViews,
           rowsPerDatabase: entry.rowsPerDatabase,
           columnOrder: entry.columnOrder,
-          pagination: entry.pagination
+          pagination: entry.pagination,
+          completeSurfaceState: entry.visualSnapshot.completeSurfaceState
         }
       }, null, 2)}\n`, "utf8");
       results.push(entry);
@@ -1381,9 +2034,56 @@ test("embedded view artifact contract validates table screenshots and load-more 
 
     assert.equal(contract.status, "passed");
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
+    assert.equal(contract.renderThresholdMs, 1000);
+    assert.equal(contract.maxRenderMs, 120);
+    assert.deepEqual(contract.renderTimings, [
+      { viewport: "desktop", embeddedViews: 1, rowsPerDatabase: 120, renderMs: 120 },
+      { viewport: "compact", embeddedViews: 1, rowsPerDatabase: 120, renderMs: 120 }
+    ]);
     assert.equal(contract.snapshotCount, 2);
     assert.deepEqual(contract.snapshots[0].columnOrder, ["Name", "Notes", "Score"]);
     assert.equal(contract.snapshots[0].loadMoreShown, 100);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("embedded view artifact contract rejects any over-budget non-snapshot scenario", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-embedded-view-budget-contract-fail-"));
+  try {
+    const imagePath = join(root, "embedded-table.png");
+    const metadataPath = join(root, "embedded-table.json");
+    const entry = embeddedViewContractEntry("desktop", { imagePath, metadataPath });
+    const slowEntry = {
+      ...entry,
+      embeddedViews: 10,
+      rendered: 10,
+      renderMs: 1000.1,
+      visualSnapshot: null,
+      columnOrder: null,
+      headerActions: null,
+      pagination: null
+    };
+    await writeFile(imagePath, "fake screenshot", "utf8");
+    await writeFile(metadataPath, `${JSON.stringify({
+      viewport: { name: "desktop", width: 1440, height: 1000 },
+      metadata: {
+        phase: "embedded-table",
+        embeddedViews: entry.embeddedViews,
+        rowsPerDatabase: entry.rowsPerDatabase,
+        columnOrder: entry.columnOrder,
+        pagination: entry.pagination,
+        completeSurfaceState: entry.visualSnapshot.completeSurfaceState
+      }
+    })}\n`, "utf8");
+
+    await assert.rejects(
+      () => assertEmbeddedViewArtifactContract({
+        status: "passed",
+        results: [entry, slowEntry]
+      }, { expectedViewportNames: ["desktop"], renderThresholdMs: 1000 }),
+      /10 embedded views rendered in 1000\.1ms for desktop, exceeding 1000ms/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1406,7 +2106,8 @@ test("embedded view artifact contract reports weak load-more controls", async ()
         embeddedViews: entry.embeddedViews,
         rowsPerDatabase: entry.rowsPerDatabase,
         columnOrder: entry.columnOrder,
-        pagination: entry.pagination
+        pagination: entry.pagination,
+        completeSurfaceState: entry.visualSnapshot.completeSurfaceState
       }
     })}\n`, "utf8");
 
@@ -1429,6 +2130,7 @@ test("embedded view artifact contract reports missing header actions", async () 
     const imagePath = join(root, "embedded-table.png");
     const metadataPath = join(root, "embedded-table.json");
     const entry = embeddedViewContractEntry("desktop", { imagePath, metadataPath });
+    const settingsButton = entry.headerActions.settingsButton;
     delete entry.headerActions.settingsButton;
     await writeFile(imagePath, "fake screenshot", "utf8");
     await writeFile(metadataPath, `${JSON.stringify({
@@ -1438,7 +2140,8 @@ test("embedded view artifact contract reports missing header actions", async () 
         embeddedViews: entry.embeddedViews,
         rowsPerDatabase: entry.rowsPerDatabase,
         columnOrder: entry.columnOrder,
-        pagination: entry.pagination
+        pagination: entry.pagination,
+        completeSurfaceState: entry.visualSnapshot.completeSurfaceState
       }
     })}\n`, "utf8");
 
@@ -1448,6 +2151,71 @@ test("embedded view artifact contract reports missing header actions", async () 
         results: [entry]
       }, { expectedViewportNames: ["desktop"] }),
       /weak Settings action/
+    );
+
+    entry.headerActions.settingsButton = settingsButton;
+    entry.headerActions.settingsMenu.viewHasLayout = false;
+    await assert.rejects(
+      () => assertEmbeddedViewArtifactContract({
+        status: "passed",
+        results: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /scoped settings menu/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("embedded view artifact contract rejects clipped geometry and requires committed baselines", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-embedded-view-complete-surface-fail-"));
+  try {
+    const imagePath = join(root, "embedded-table.png");
+    const metadataPath = join(root, "embedded-table.json");
+    const entry = embeddedViewContractEntry("desktop", { imagePath, metadataPath });
+    await writeFile(imagePath, "fake screenshot", "utf8");
+    await writeFile(metadataPath, `${JSON.stringify({
+      viewport: { name: "desktop", width: 1440, height: 1000 },
+      metadata: {
+        phase: "embedded-table",
+        embeddedViews: entry.embeddedViews,
+        rowsPerDatabase: entry.rowsPerDatabase,
+        columnOrder: entry.columnOrder,
+        pagination: entry.pagination,
+        completeSurfaceState: entry.visualSnapshot.completeSurfaceState
+      }
+    })}\n`, "utf8");
+
+    entry.visualSnapshot.completeSurfaceState.surfaceOpacity = 0;
+    await assert.rejects(
+      () => assertEmbeddedViewArtifactContract({
+        status: "passed",
+        results: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /clipped, hidden, incomplete, or offscreen entry table/
+    );
+
+    entry.visualSnapshot.completeSurfaceState.surfaceOpacity = 1;
+    entry.visualSnapshot.completeSurfaceState.footerRect.left = 900;
+    entry.visualSnapshot.completeSurfaceState.footerRect.right = 1612;
+    await assert.rejects(
+      () => assertEmbeddedViewArtifactContract({
+        status: "passed",
+        results: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /mis-owned entry surface content/
+    );
+
+    entry.visualSnapshot.completeSurfaceState = embeddedCompleteSurfaceState("desktop");
+    await assert.rejects(
+      () => assertEmbeddedViewArtifactContract({
+        status: "passed",
+        results: [entry]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed table baseline/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1553,8 +2321,75 @@ test("settings center artifact contract validates category snapshots and deep-li
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
+    assert.equal(contract.snapshots[0].perceptualBaseline.status, "passed");
     assert.equal(contract.snapshots[0].categoryCount, requiredSettingsCenterCategories().length);
     assert.equal(contract.snapshots[0].searchAiPluginHosts, 2);
+    assert.equal(contract.snapshots[0].snapshotState.activeTab, "PluginsExtensions");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("settings center artifact contract rejects missing committed baseline evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-settings-center-baseline-fail-"));
+  try {
+    const imagePath = join(root, "settings-center-wide.png");
+    const metadataPath = join(root, "settings-center-wide.json");
+    const entry = settingsCenterContractEntry("wide", { imagePath, metadataPath });
+    await writeSettingsCenterSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "wide" });
+    delete entry.perceptualBaseline;
+
+    await assert.rejects(
+      () => assertSettingsCenterArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["wide"] }),
+      /missing committed perceptual baseline for wide/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("settings center artifact contract rejects an in-flight active-tab transition", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-settings-center-transition-fail-"));
+  try {
+    const imagePath = join(root, "settings-center-desktop.png");
+    const metadataPath = join(root, "settings-center-desktop.json");
+    const entry = settingsCenterContractEntry("desktop", { imagePath, metadataPath });
+    entry.snapshotState.activeTabStyle.backgroundColor = "rgb(235, 239, 248)";
+    await writeSettingsCenterSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+
+    await assert.rejects(
+      () => assertSettingsCenterArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /active Plugins tab transition is unsettled/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("settings center artifact contract rejects a clipped final plugin row", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-settings-center-clipped-row-fail-"));
+  try {
+    const imagePath = join(root, "settings-center-compact.png");
+    const metadataPath = join(root, "settings-center-compact.json");
+    const entry = settingsCenterContractEntry("compact", { imagePath, metadataPath });
+    entry.snapshotState.lastPluginRowWithinCenter = false;
+    entry.snapshotState.visiblePluginRowCount = 6;
+    await writeSettingsCenterSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "compact" });
+
+    await assert.rejects(
+      () => assertSettingsCenterArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["compact"] }),
+      /final snapshot state is unstable/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1606,6 +2441,11 @@ test("design system artifact contract validates token, control, and layout evide
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
+    assert.equal(contract.snapshots[0].perceptualBaseline.status, "passed");
+    assert.match(contract.snapshots[0].perceptualBaseline.expectedPath, /desktop\.expected\.png$/);
+    assert.equal(contract.snapshots[1].perceptualBaseline.status, "passed");
+    assert.match(contract.snapshots[1].perceptualBaseline.expectedPath, /compact\.expected\.png$/);
     assert.equal(contract.snapshots[0].tokenCount, 4);
     assert.deepEqual(contract.snapshots[0].statusPills, requiredDesignSystemStatusPills());
   } finally {
@@ -1630,6 +2470,87 @@ test("design system artifact contract reports missing token evidence", async () 
         viewports: [entry]
       }, { expectedViewportNames: ["desktop"] }),
       /token paper mismatch/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("design system artifact contract rejects missing committed desktop baseline evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-design-system-baseline-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "design-system.png");
+    const metadataPath = join(artifactRoot, "design-system.json");
+    const entry = designSystemContractEntry("desktop", { imagePath, metadataPath });
+    await writeDesignSystemSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    delete entry.perceptualBaseline;
+
+    await assert.rejects(
+      () => assertDesignSystemArtifactContract({ status: "passed", viewports: [entry] }, { expectedViewportNames: ["desktop"] }),
+      /missing committed perceptual baseline/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("design system artifact contract rejects missing committed compact baseline evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-design-system-compact-baseline-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    const viewports = [];
+    for (const viewportName of ["desktop", "compact"]) {
+      const imagePath = join(artifactRoot, `${viewportName}.png`);
+      const metadataPath = join(artifactRoot, `${viewportName}.json`);
+      await mkdir(artifactRoot, { recursive: true });
+      const entry = designSystemContractEntry(viewportName, { imagePath, metadataPath });
+      await writeDesignSystemSnapshotFiles({ entry, imagePath, metadataPath, viewportName });
+      if (viewportName === "compact") delete entry.perceptualBaseline;
+      viewports.push(entry);
+    }
+    await assert.rejects(
+      () => assertDesignSystemArtifactContract({ status: "passed", viewports }),
+      /missing committed perceptual baseline for compact/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("design system artifact contract rejects missing committed wide baseline evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-design-system-wide-baseline-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "wide.png");
+    const metadataPath = join(artifactRoot, "wide.json");
+    const entry = designSystemContractEntry("wide", { imagePath, metadataPath });
+    await writeDesignSystemSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "wide" });
+    delete entry.perceptualBaseline;
+    await assert.rejects(
+      () => assertDesignSystemArtifactContract({ status: "passed", viewports: [entry] }, { expectedViewportNames: ["wide"] }),
+      /missing committed perceptual baseline for wide/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("design system artifact contract rejects clipped quality-gate pill geometry", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-design-system-pill-geometry-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "desktop.png");
+    const metadataPath = join(artifactRoot, "desktop.json");
+    const entry = designSystemContractEntry("desktop", { imagePath, metadataPath });
+    entry.controlState.statusPillGeometry.find((pill) => pill.label === "Local").withinLab = false;
+    await writeDesignSystemSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertDesignSystemArtifactContract({ status: "passed", viewports: [entry] }, { expectedViewportNames: ["desktop"] }),
+      /status pill Local is missing or clipped/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1742,6 +2663,190 @@ test("database created views artifact contract reports missing generated tab evi
   }
 });
 
+test("database created views artifact contract rejects dirty geometry and requires committed baselines", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-database-created-views-surface-fail-"));
+  try {
+    const imagePath = join(root, "database-created-views.png");
+    const metadataPath = join(root, "database-created-views.json");
+    const entry = databaseCreatedViewsContractEntry("desktop", { imagePath, metadataPath });
+    await writeDatabaseCreatedViewsSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+
+    entry.snapshot.completeSurfaceState.filterPopoverCount = 1;
+    await assert.rejects(
+      () => assertDatabaseCreatedViewsArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /clipped, hidden, dirty, or incomplete entry surface/
+    );
+
+    entry.snapshot.completeSurfaceState = databaseCreatedViewsCompleteSurfaceState("desktop");
+    entry.snapshot.completeSurfaceState.footerRect.left = 100;
+    await assert.rejects(
+      () => assertDatabaseCreatedViewsArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /mis-owned entry surface content/
+    );
+
+    entry.snapshot.completeSurfaceState = databaseCreatedViewsCompleteSurfaceState("desktop");
+    await assert.rejects(
+      () => assertDatabaseCreatedViewsArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed surface baseline/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("database interaction artifact contract validates persistence, timing, and viewport evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-database-interaction-contract-"));
+  try {
+    const viewports = [];
+    for (const viewport of ["desktop", "compact", "wide"]) {
+      const snapshots = [];
+      for (const phase of ["settings-scope-menu", "filter-menu", "sort-menu"]) {
+        const imagePath = join(root, `${viewport}-${phase}.png`);
+        const metadataPath = join(root, `${viewport}-${phase}.json`);
+        const completeSurfaceState = databaseInteractionCompleteSurfaceState(viewport, phase);
+        await writeFile(imagePath, "x".repeat(1024), "utf8");
+        await writeFile(metadataPath, `${JSON.stringify({ viewport: { name: viewport }, metadata: { completeSurfaceState, phase } })}\n`, "utf8");
+        snapshots.push({
+          imagePath,
+          metadataPath,
+          imageBytes: 0,
+          phase,
+          completeSurfaceState,
+          horizontalOverflowPx: 0,
+          viewportWidth: viewport === "wide" ? 1728 : viewport === "compact" ? 1040 : 1440,
+          scrollWidth: viewport === "wide" ? 1728 : viewport === "compact" ? 1040 : 1440
+        });
+      }
+      viewports.push({
+        viewport,
+        noHorizontalOverflow: true,
+        reloadVerified: true,
+        staleConflictCode: "VIEW_CONFLICT",
+        cellEditRecovery: {
+          message: "Injected inline cell persistence failure",
+          failedValueRolledBack: true,
+          laterEditPaused: true,
+          queuedEditVisible: true,
+          duplicateRetrySuppressed: true,
+          retryPersistedFailedEdit: true,
+          queueResumedInOrder: true,
+          discardPreservedStoredValue: true,
+          discardResetDraft: true
+        },
+        timings: { firstPaintMs: 12, menuOpenMs: 3, sortCommitMs: 8, viewSwitchMs: 4 },
+        persistedFiles: {
+          viewJson: "databases/user/Tasks--db_tasks/views/view_default.json",
+          schemaJson: "databases/user/Tasks--db_tasks/schema.json",
+          dataCsv: "databases/user/Tasks--db_tasks/data.csv"
+        },
+        fixture: { fieldTypeCount: 10, hasVirtualRows: true, hasEmbeddedReference: true },
+        snapshots
+      });
+    }
+    const contract = await assertDatabaseInteractionArtifactContract({ status: "passed", viewports });
+    assert.equal(contract.snapshotCount, 9);
+    assert.ok(contract.imageBytesTotal > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("database interaction artifact contract rejects transparent phases and missing baselines", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-database-interaction-surface-fail-"));
+  try {
+    const snapshots = [];
+    for (const phase of ["settings-scope-menu", "filter-menu", "sort-menu"]) {
+      const imagePath = join(root, `${phase}.png`);
+      const metadataPath = join(root, `${phase}.json`);
+      const completeSurfaceState = databaseInteractionCompleteSurfaceState("desktop", phase);
+      await writeFile(imagePath, "x".repeat(1024), "utf8");
+      await writeFile(metadataPath, `${JSON.stringify({
+        viewport: { name: "desktop" },
+        metadata: { completeSurfaceState, phase }
+      })}\n`, "utf8");
+      snapshots.push({
+        imagePath,
+        metadataPath,
+        imageBytes: 0,
+        phase,
+        completeSurfaceState,
+        horizontalOverflowPx: 0,
+        viewportWidth: 1440,
+        scrollWidth: 1440
+      });
+    }
+    const entry = {
+      viewport: "desktop",
+      noHorizontalOverflow: true,
+      reloadVerified: true,
+      staleConflictCode: "VIEW_CONFLICT",
+      cellEditRecovery: {
+        message: "Injected inline cell persistence failure",
+        failedValueRolledBack: true,
+        laterEditPaused: true,
+        queuedEditVisible: true,
+        duplicateRetrySuppressed: true,
+        retryPersistedFailedEdit: true,
+        queueResumedInOrder: true,
+        discardPreservedStoredValue: true,
+        discardResetDraft: true
+      },
+      timings: { firstPaintMs: 12, menuOpenMs: 3, sortCommitMs: 8, viewSwitchMs: 4 },
+      persistedFiles: {
+        viewJson: "databases/user/Tasks--db_tasks/views/view_default.json",
+        schemaJson: "databases/user/Tasks--db_tasks/schema.json",
+        dataCsv: "databases/user/Tasks--db_tasks/data.csv"
+      },
+      fixture: { fieldTypeCount: 10, hasVirtualRows: true, hasEmbeddedReference: true },
+      snapshots
+    };
+
+    snapshots[1].completeSurfaceState.surfaceOpacity = 0.05;
+    await assert.rejects(
+      () => assertDatabaseInteractionArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /clipped, transparent, animating, or offscreen entry surface/
+    );
+
+    snapshots[1].completeSurfaceState = databaseInteractionCompleteSurfaceState("desktop", "filter-menu");
+    await assert.rejects(
+      () => assertDatabaseInteractionArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed settings baseline/
+    );
+
+    entry.cellEditRecovery.queueResumedInOrder = false;
+    await assert.rejects(
+      () => assertDatabaseInteractionArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /cell-edit recovery evidence incomplete/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("page backlinks artifact contract validates source rows and snapshots", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-page-backlinks-contract-"));
   const artifactRoot = join(root, "visual");
@@ -1779,6 +2884,16 @@ test("page backlinks artifact contract reports missing property backlink evidenc
     const imagePath = join(artifactRoot, "page-backlinks.png");
     const metadataPath = join(artifactRoot, "page-backlinks.json");
     const entry = pageBacklinksContractEntry("desktop", { imagePath, metadataPath });
+    const externalRefresh = entry.externalRefresh;
+    delete entry.externalRefresh;
+    await assert.rejects(
+      () => assertPageBacklinksArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /external incremental refresh evidence/
+    );
+    entry.externalRefresh = externalRefresh;
     entry.rendered.items[1].sourceType = "Text";
     await writePageBacklinksSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
 
@@ -1788,6 +2903,28 @@ test("page backlinks artifact contract reports missing property backlink evidenc
         viewports: [entry]
       }, { expectedViewportNames: ["desktop"] }),
       /property backlink evidence/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page backlinks artifact contract rejects internal ids in readable markdown excerpts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-backlinks-identity-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "page-backlinks.png");
+    const metadataPath = join(artifactRoot, "page-backlinks.json");
+    const entry = pageBacklinksContractEntry("desktop", { imagePath, metadataPath });
+    entry.rendered.items[0].excerpt = "See Backlink Target Page (pg_backlink_target).";
+    await writePageBacklinksSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageBacklinksArtifactContract(
+        { status: "passed", viewports: [entry] },
+        { expectedViewportNames: ["desktop"] }
+      ),
+      /missing markdown backlink evidence/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1817,6 +2954,8 @@ test("page secondary artifact contract validates panel states, TOC, editor persi
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact", "laptop"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact", "laptop"]);
     assert.equal(contract.snapshotCount, 3);
+    assert.equal(contract.tocCollapsedSnapshotCount, 3);
+    assert.equal(contract.tocSnapshotCount, 3);
     assert.deepEqual(contract.snapshots.map((snapshot) => snapshot.backlinkItems), [5, 5, 5]);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1840,6 +2979,269 @@ test("page secondary artifact contract reports missing source-link evidence", as
         viewports: [entry]
       }, { expectedViewportNames: ["desktop"] }),
       /source link evidence/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects TOC navigation that exposes heading source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-toc-source-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.toc.navigation.activeInEditor = true;
+    entry.toc.navigation.activeIsTocItem = false;
+    entry.toc.navigation.headingIsActiveLine = true;
+    entry.toc.navigation.headingText = "### Nested Insight";
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /source-safe TOC navigation/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects TOC-driven document reflow", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-toc-overlap-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("laptop", { imagePath, metadataPath });
+    entry.toc.layout.layoutStable = false;
+    entry.toc.layout.contentRect.width -= 120;
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "laptop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["laptop"] }),
+      /reflow-free TOC layout/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects a TOC that stays open after pointer exit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-toc-recollapse-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.toc.autoHidden.hostRect.width = 240;
+    entry.toc.autoHidden.navDisplay = "block";
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /auto-hidden TOC pointer-navigation exit state/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects pointer-owned TOC focus after pointer exit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-toc-pointer-focus-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.toc.autoHidden.focusedWithin = true;
+    entry.toc.autoHidden.activeIsTocItem = true;
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /auto-hidden TOC pointer-navigation exit state/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects pointer-to-keyboard TOC focus loss", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-toc-keyboard-ownership-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.toc.keyboardAfterPointer.focusedWithin = false;
+    entry.toc.keyboardAfterPointer.activeIsTocItem = false;
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /pointer-to-keyboard TOC ownership/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects pointer-to-keyboard focus loss in the persisted snapshot", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-toc-keyboard-snapshot-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    const snapshotMetadata = JSON.parse(await readFile(entry.toc.collapsedSnapshot.metadataPath, "utf8"));
+    snapshotMetadata.metadata.keyboardAfterPointer.focusedWithin = false;
+    snapshotMetadata.metadata.keyboardAfterPointer.activeIsTocItem = false;
+    snapshotMetadata.metadata.keyboardAfterPointer.hovered = true;
+    await writeFile(entry.toc.collapsedSnapshot.metadataPath, `${JSON.stringify(snapshotMetadata, null, 2)}\n`, "utf8");
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /snapshot pointer-to-keyboard TOC ownership state/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects incomplete page-property recovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-property-recovery-contract-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.pagePropertyRecovery.retryPersistedExactInput = false;
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /page-property recovery/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects incomplete page-title recovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-title-recovery-contract-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.pageTitleRecovery.retryPersistedExactInput = false;
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /page-title recovery/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects incomplete cover-offset recovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-cover-offset-recovery-contract-"));
+  try {
+    const imagePath = join(root, "page-secondary.png");
+    const metadataPath = join(root, "page-secondary.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.coverOffsetRecovery.retryPersistedExactInput = false;
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /cover-offset recovery/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects history storage-path leaks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-history-leak-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "page-history.png");
+    const metadataPath = join(artifactRoot, "page-history.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.history.storageLeakMatches = ["databases/system/pages--db_pages/pages/Target--pg_target.md"];
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /storage identity leaks/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects a collapsed or transparent history capture", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-history-hidden-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "page-history.png");
+    const metadataPath = join(artifactRoot, "page-history.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    entry.history.secondaryExpanded = false;
+    entry.history.contentOpacity = "0.04";
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /clipped history interaction/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("page secondary artifact contract rejects a missing required history baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-page-secondary-history-baseline-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "page-history.png");
+    const metadataPath = join(artifactRoot, "page-history.json");
+    const entry = pageSecondaryContractEntry("desktop", { imagePath, metadataPath });
+    await writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath, viewportName: "desktop" });
+
+    await assert.rejects(
+      () => assertPageSecondaryArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, {
+        expectedViewportNames: ["desktop"],
+        requiredPerceptualBaselineViewportNames: ["desktop"]
+      }),
+      /missing committed history baseline for desktop/
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1870,9 +3272,55 @@ test("plugin manager artifact contract validates plugin settings and command evi
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
+    assert.equal(contract.snapshots[0].perceptualBaseline.status, "passed");
     assert.equal(contract.snapshots[0].pluginRows, requiredPluginManagerPlugins().length);
+    assert.equal(contract.snapshots[0].snapshotState.providerRowCount, 14);
     assert.equal(contract.snapshots[0].detailCount, 3);
     assert.equal(contract.snapshots[0].commandQuery, "Open Notion Import");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("plugin manager artifact contract rejects missing committed baseline evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-plugin-manager-baseline-fail-"));
+  try {
+    const imagePath = join(root, "plugin-manager-wide.png");
+    const metadataPath = join(root, "plugin-manager-wide.json");
+    const entry = pluginManagerContractEntry("wide", { imagePath, metadataPath });
+    await writePluginManagerSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "wide" });
+    delete entry.perceptualBaseline;
+
+    await assert.rejects(
+      () => assertPluginManagerArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["wide"] }),
+      /missing committed perceptual baseline for wide/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("plugin manager artifact contract rejects an incomplete provider surface", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-plugin-manager-clipped-provider-fail-"));
+  try {
+    const imagePath = join(root, "plugin-manager-compact.png");
+    const metadataPath = join(root, "plugin-manager-compact.json");
+    const entry = pluginManagerContractEntry("compact", { imagePath, metadataPath });
+    entry.snapshotState.allProviderRowsWithinManager = false;
+    entry.snapshotState.providerRowCount = 11;
+    await writePluginManagerSnapshotFiles({ entry, imagePath, metadataPath, viewportName: "compact" });
+
+    await assert.rejects(
+      () => assertPluginManagerArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["compact"] }),
+      /final snapshot surface is incomplete/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1925,9 +3373,57 @@ test("white theme artifact contract validates theme phases and snapshots", async
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, requiredWhiteThemePhases().length * 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
     assert.equal(contract.snapshots[0].phase, "page");
+    assert.equal(contract.snapshots[0].perceptualBaseline.status, "passed");
     assert.equal(contract.snapshots[0].surfaceCount > 0, true);
     assert.equal(contract.snapshots[0].tokenCount, 8);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("white theme artifact contract rejects missing committed page baseline evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-white-theme-baseline-fail-"));
+  const snapshotRoot = join(root, "wide");
+  try {
+    await mkdir(snapshotRoot, { recursive: true });
+    const entry = whiteThemeContractEntry("wide", snapshotRoot);
+    for (const snapshot of entry.snapshots) {
+      await writeWhiteThemeSnapshotFiles({ snapshot, viewportName: "wide" });
+    }
+    delete entry.snapshots.find((snapshot) => snapshot.phase === "page").perceptualBaseline;
+
+    await assert.rejects(
+      () => assertWhiteThemeArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["wide"] }),
+      /missing committed page perceptual baseline for wide/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("white theme artifact contract rejects an asynchronously scrolled page phase", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-white-theme-scroll-fail-"));
+  const snapshotRoot = join(root, "desktop");
+  try {
+    await mkdir(snapshotRoot, { recursive: true });
+    const entry = whiteThemeContractEntry("desktop", snapshotRoot);
+    entry.pageState.scrollState.scrollTop[".main-content"] = 43;
+    for (const snapshot of entry.snapshots) {
+      await writeWhiteThemeSnapshotFiles({ snapshot, viewportName: "desktop" });
+    }
+
+    await assert.rejects(
+      () => assertWhiteThemeArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /page scroll is unstable/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2123,6 +3619,7 @@ test("Search & AI artifact contract validates unified tabs and snapshots", async
       const metadataPath = join(artifactRoot, `search-ai-${viewportName}.json`);
       await writeFile(imagePath, `fake search ai ${viewportName}`, "utf8");
       const entry = searchAiContractEntry(viewportName, { imagePath, metadataPath });
+      await attachSearchAiPerceptualBaseline(entry.snapshot, viewportName);
       await writeFile(metadataPath, JSON.stringify({
         viewport: { name: viewportName, width: viewportName === "desktop" ? 1440 : 1040, height: viewportName === "desktop" ? 1000 : 820 },
         metadata: {
@@ -2130,6 +3627,7 @@ test("Search & AI artifact contract validates unified tabs and snapshots", async
           search: entry.search,
           advanced: entry.advanced,
           chat: entry.chat,
+          visibleState: entry.visibleState,
           viewport: viewportName
         }
       }, null, 2), "utf8");
@@ -2145,8 +3643,98 @@ test("Search & AI artifact contract validates unified tabs and snapshots", async
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
     assert.equal(contract.snapshots[0].resultCount, 3);
     assert.match(contract.snapshots[0].selectedSource, /Semantic Orchard Row/);
+    assert.match(contract.snapshots[0].perceptualBaseline.expectedPath, /search-ai-desktop\.expected\.png$/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Search & AI artifact contract rejects missing committed chat-handoff baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-search-ai-contract-baseline-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "search-ai-desktop.png");
+    const metadataPath = join(artifactRoot, "search-ai-desktop.json");
+    await writeFile(imagePath, "fake Search & AI screenshot", "utf8");
+    const entry = searchAiContractEntry("desktop", { imagePath, metadataPath });
+    await writeFile(metadataPath, JSON.stringify({
+      viewport: { name: "desktop" },
+      metadata: {
+        phase: "search-ai",
+        search: entry.search,
+        advanced: entry.advanced,
+        chat: entry.chat,
+        visibleState: entry.visibleState
+      }
+    }), "utf8");
+    await assert.rejects(
+      () => assertSearchAiArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /missing committed chat-handoff baseline/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Search & AI artifact contract rejects internal storage identity leaks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-search-ai-contract-leak-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "search-ai-desktop.png");
+    const metadataPath = join(artifactRoot, "search-ai-desktop.json");
+    await writeFile(imagePath, "fake Search & AI screenshot", "utf8");
+    const entry = searchAiContractEntry("desktop", { imagePath, metadataPath });
+    entry.search.rows[0] += " databases/user/Knowledge_Base--db_leak/data.csv";
+    await assert.rejects(
+      () => assertSearchAiArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /internal storage path or ID/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Search & AI artifact contract rejects a clipped selected source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-search-ai-contract-clipped-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    await mkdir(artifactRoot, { recursive: true });
+    const imagePath = join(artifactRoot, "search-ai-compact.png");
+    const metadataPath = join(artifactRoot, "search-ai-compact.json");
+    await writeFile(imagePath, "fake Search & AI screenshot", "utf8");
+    const entry = searchAiContractEntry("compact", { imagePath, metadataPath });
+    entry.visibleState.selectedSource.scrollWidth = 900;
+    entry.visibleState.selectedSource.clientWidth = 500;
+    entry.visibleState.selectedSource.fullyVisible = false;
+    await attachSearchAiPerceptualBaseline(entry.snapshot, "compact");
+    await writeFile(metadataPath, JSON.stringify({
+      viewport: { name: "compact" },
+      metadata: {
+        phase: "search-ai",
+        search: entry.search,
+        advanced: entry.advanced,
+        chat: entry.chat,
+        visibleState: entry.visibleState
+      }
+    }), "utf8");
+    await assert.rejects(
+      () => assertSearchAiArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["compact"] }),
+      /selected source is clipped or unreadable/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2226,12 +3814,59 @@ test("Advanced Search artifact contract validates semantic-search states and sna
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
     assert.deepEqual(contract.snapshots[0].phases, requiredAdvancedSearchSnapshotPhases());
     assert.equal(contract.snapshots[0].phaseCount, requiredAdvancedSearchSnapshotPhases().length);
     assert.match(contract.snapshots[0].imagePath, /\/desktop\/advanced-search-initial\.png$/);
     assert.match(contract.snapshots[0].metadataPath, /\/desktop\/advanced-search-initial\.json$/);
     assert.ok(contract.snapshots[0].resultCountMax >= 1, "contract should count semantic results");
     assert.ok(contract.snapshots[0].statusLabels.includes("Stale"), "contract should include stale status evidence");
+    assert.match(contract.snapshots[0].perceptualBaseline.expectedPath, /desktop\/advanced-search-stale-results\.expected\.png$/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Advanced Search artifact contract rejects missing committed stale-result baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-advanced-search-contract-baseline-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    const entry = await advancedSearchContractEntry({ artifactRoot, viewportName: "desktop" });
+    entry.visualSnapshots.find((snapshot) => snapshot.phase === "stale-results").perceptualBaseline = null;
+    await assert.rejects(
+      () => assertAdvancedSearchArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["desktop"] }),
+      /missing committed stale-result baseline/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Advanced Search artifact contract rejects clipped stale-result cards", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-advanced-search-contract-clipped-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    const entry = await advancedSearchContractEntry({ artifactRoot, viewportName: "compact" });
+    const stale = entry.visualSnapshots.find((snapshot) => snapshot.phase === "stale-results");
+    stale.visibleState.resultsViewport = { clientHeight: 28, scrollHeight: 230, scrollTop: 0 };
+    stale.visibleState.resultVisibility[0].fullyVisible = false;
+    await writeAdvancedSearchSnapshotFiles({
+      imagePath: stale.imagePath,
+      metadataPath: stale.metadataPath,
+      phase: stale.phase,
+      visibleState: stale.visibleState,
+      viewportName: "compact"
+    });
+    await assert.rejects(
+      () => assertAdvancedSearchArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["compact"] }),
+      /stale result viewport is clipped/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2283,12 +3918,34 @@ test("LLM Chat artifact contract validates assistant states and snapshots", asyn
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.deepEqual(contract.observedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.snapshotCount, 2);
+    assert.equal(contract.perceptualBaselineCount, 2);
+    assert.equal(contract.snapshots[0].perceptualBaseline.status, "passed");
     assert.deepEqual(contract.snapshots[0].phases, requiredLLMChatSnapshotPhases());
     assert.equal(contract.snapshots[0].phaseCount, requiredLLMChatSnapshotPhases().length);
     assert.match(contract.snapshots[0].imagePath, /\/desktop\/llm-chat-empty\.png$/);
     assert.match(contract.snapshots[0].metadataPath, /\/desktop\/llm-chat-empty\.json$/);
     assert.ok(contract.snapshots[0].messageCount >= 8, "contract should count transcript messages");
     assert.equal(contract.snapshots[0].historyItems, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("LLM Chat artifact contract rejects missing committed conversation baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-llm-chat-contract-baseline-fail-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    const entry = await llmChatContractEntry({ artifactRoot, viewportName: "wide" });
+    const conversation = entry.interactionState.visualSnapshots.find((snapshot) => snapshot.phase === "conversation");
+    delete conversation.perceptualBaseline;
+
+    await assert.rejects(
+      () => assertLLMChatArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["wide"] }),
+      /missing committed conversation baseline for wide/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2332,6 +3989,39 @@ test("LLM Chat artifact contract reports missing JSONL history evidence", async 
   }
 });
 
+test("LLM Chat artifact contract rejects a clipped compact conversation transcript", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-llm-chat-contract-clipped-"));
+  const artifactRoot = join(root, "visual");
+  try {
+    const entry = await llmChatContractEntry({ artifactRoot, viewportName: "compact" });
+    const conversation = entry.interactionState.visualSnapshots.find((snapshot) => snapshot.phase === "conversation");
+    conversation.visibleState.transcriptViewport.clientHeight = 28;
+    conversation.visibleState.messages[0].fullyVisible = false;
+    await writeLLMChatSnapshotFiles({
+      extraMetadata: {
+        prompt: "Summarize this smoke page.",
+        assistantText: "Smoke response for: Summarize this smoke page.",
+        requestCount: 1
+      },
+      imagePath: conversation.imagePath,
+      metadataPath: conversation.metadataPath,
+      phase: conversation.phase,
+      visibleState: conversation.visibleState,
+      viewportName: "compact"
+    });
+
+    await assert.rejects(
+      () => assertLLMChatArtifactContract({
+        status: "passed",
+        viewports: [entry]
+      }, { expectedViewportNames: ["compact"] }),
+      /conversation transcript is clipped/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ui harness result manifests summarize success and viewport coverage", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-ui-result-"));
   const artifactRoot = join(root, "result");
@@ -2352,6 +4042,13 @@ test("ui harness result manifests summarize success and viewport coverage", asyn
         expectedViewportNames: ["desktop", "compact"],
         observedViewportNames: ["desktop", "compact"],
         diagnosticCount: 1,
+        perceptualBaselineCount: 1,
+        renderThresholdMs: 1000,
+        maxRenderMs: 537,
+        renderTimings: [
+          { viewport: "desktop", embeddedViews: 1, rowsPerDatabase: 500, renderMs: 117.5 },
+          { viewport: "desktop", embeddedViews: 10, rowsPerDatabase: 500, renderMs: 537 }
+        ],
         snapshotCount: 3,
         snapshots: [
           {
@@ -2378,7 +4075,8 @@ test("ui harness result manifests summarize success and viewport coverage", asyn
             openedCount: 3,
             visibleTabs: ["All", "Created date asc", "Created date desc"],
             summary: notionImportAuditSummary(),
-            previews: { pdf: true, video: true, audio: true, image: true }
+            previews: { pdf: true, video: true, audio: true, image: true },
+            perceptualBaseline: productionPerceptualBaseline()
           },
           {
             viewport: "compact",
@@ -2454,6 +4152,13 @@ test("ui harness result manifests summarize success and viewport coverage", asyn
       expectedViewportNames: ["desktop", "compact"],
       observedViewportNames: ["desktop", "compact"],
       diagnosticCount: 1,
+      perceptualBaselineCount: 1,
+      renderThresholdMs: 1000,
+      maxRenderMs: 537,
+      renderTimings: [
+        { viewport: "desktop", embeddedViews: 1, rowsPerDatabase: 500, renderMs: 117.5 },
+        { viewport: "desktop", embeddedViews: 10, rowsPerDatabase: 500, renderMs: 537 }
+      ],
       snapshotCount: 3,
       snapshots: [
         {
@@ -2480,7 +4185,8 @@ test("ui harness result manifests summarize success and viewport coverage", asyn
           openedCount: 3,
           visibleTabs: ["All", "Created date asc", "Created date desc"],
           summary: notionImportAuditSummary(),
-          previews: { pdf: true, video: true, audio: true, image: true }
+          previews: { pdf: true, video: true, audio: true, image: true },
+          perceptualBaseline: productionPerceptualBaseline()
         },
         {
           viewport: "compact",
@@ -2556,6 +4262,39 @@ test("ui harness viewport coverage recognizes result arrays and artifact contrac
   });
 });
 
+test("ui suite isolates the synthetic 10k Search benchmark from shared renderer load", () => {
+  assert.deepEqual(
+    uiSuiteHarnessConnection("smoke-embedded-view-ui.mjs", "http://127.0.0.1:9222"),
+    {
+      mode: "shared",
+      env: {
+        LOTION_CDP_URL: "http://127.0.0.1:9222",
+        LOTION_UI_HARNESS_NO_AUTOSTART: "1"
+      }
+    }
+  );
+  assert.deepEqual(
+    uiSuiteHarnessConnection("smoke-search-ui.mjs", "http://127.0.0.1:9222"),
+    {
+      mode: "isolated",
+      env: {
+        LOTION_CDP_URL: "",
+        LOTION_UI_HARNESS_NO_AUTOSTART: "0"
+      }
+    }
+  );
+  assert.deepEqual(
+    uiSuiteHarnessConnection("smoke-search-ai-ui.mjs", "http://127.0.0.1:9222"),
+    {
+      mode: "shared",
+      env: {
+        LOTION_CDP_URL: "http://127.0.0.1:9222",
+        LOTION_UI_HARNESS_NO_AUTOSTART: "1"
+      }
+    }
+  );
+});
+
 test("ui suite artifact index summarizes child manifests and screenshot contracts", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-ui-suite-index-"));
   const artifactRoot = join(root, "ui-suite");
@@ -2616,6 +4355,7 @@ test("ui suite artifact index summarizes child manifests and screenshot contract
         uiSuiteChild({
           artifactRoot: "artifacts/ui-smoke/embedded-view-ui-2026",
           elapsedMs: 1350,
+          harnessMode: "isolated",
           manifestPath: "artifacts/ui-smoke/embedded-view-ui-2026/harness-result.json",
           name: "Embedded view UI",
           scriptPath: "scripts/smoke-embedded-view-ui.mjs",
@@ -2666,6 +4406,7 @@ test("ui suite artifact index summarizes child manifests and screenshot contract
       "scripts/smoke-notion-import-ui.mjs",
       "scripts/smoke-embedded-view-ui.mjs"
     ]);
+    assert.deepEqual(index.suites.map((suite) => suite.harnessMode), ["shared", "isolated"]);
     assert.deepEqual(index.suites.map((suite) => suite.reproduceCommand), [
       "LOTION_UI_SUITE_FILTER=smoke-notion-import-ui.mjs npm run smoke:ui",
       "LOTION_UI_SUITE_FILTER=smoke-embedded-view-ui.mjs npm run smoke:ui"
@@ -2814,6 +4555,39 @@ test("ui suite artifact index records missing child artifact contracts", async (
       imageBytesTotal: 0,
       missingArtifactContractCount: 1
     });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ui suite artifact writer honors an explicitly selected single viewport", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-ui-suite-single-viewport-"));
+  try {
+    const summary = {
+      environment: {
+        nodeVersion: "22.13.1",
+        platform: "darwin",
+        arch: "arm64",
+        selectedViewportNames: ["desktop"],
+        selectedViewports: [{ name: "desktop", width: 1440, height: 1000 }],
+        selectedSuiteScripts: ["smoke-design-system-ui.mjs"],
+        runner: "npm run smoke:ui"
+      },
+      selectedCount: 1,
+      results: [
+        uiSuiteChild({
+          artifactRoot: "artifacts/ui-smoke/design-system-ui-2026",
+          manifestPath: "artifacts/ui-smoke/design-system-ui-2026/harness-result.json",
+          name: "Design system UI",
+          scriptPath: "scripts/smoke-design-system-ui.mjs",
+          observedViewports: ["desktop"],
+          snapshotBytes: [1000]
+        })
+      ]
+    };
+    const written = await writeUiSuiteArtifactIndex({ artifactRoot: root, summary });
+    assert.equal(written.contract.suiteCount, 1);
+    assert.deepEqual(JSON.parse(await readFile(written.jsonPath, "utf8")).environment.selectedViewportNames, ["desktop"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2992,8 +4766,10 @@ test("production visual gate requires critical suites with screenshot evidence",
     ["Markdown preview UI", "scripts/smoke-markdown-preview-ui.mjs", "markdown-preview"],
     ["Embedded view UI", "scripts/smoke-embedded-view-ui.mjs", "embedded-view"],
     ["Database created views UI", "scripts/smoke-database-created-views-ui.mjs", "database-created-views"],
+    ["Database interaction UI", "scripts/smoke-database-interaction-ui.mjs", "database-interaction"],
     ["Row-page property visual UI", "scripts/smoke-row-page-property-visual-ui.mjs", "row-page-property-visual"],
     ["Page secondary UI", "scripts/smoke-page-secondary-ui.mjs", "page-secondary"],
+    ["GitHub backup UI", "scripts/smoke-github-backup-ui.mjs", "github-backup"],
     ["Notion import audit UI", "scripts/smoke-notion-import-ui.mjs", "notion-import-audit"],
     ["Settings center UI", "scripts/smoke-settings-center-ui.mjs", "settings-center"],
     ["Plugin manager UI", "scripts/smoke-plugin-manager-ui.mjs", "plugin-manager"],
@@ -3068,11 +4844,159 @@ test("production visual gate requires critical suites with screenshot evidence",
   assert.equal(contract.requiredSuiteCount, criticalSuites.length);
   assert.deepEqual(contract.requiredViewportNames, DEFAULT_PRODUCTION_VISUAL_VIEWPORT_NAMES);
   assert.equal(contract.snapshotCount, criticalSuites.length * 3);
+  assert.equal(contract.perceptualBaselineCount, 48);
+  assert.equal(contract.suites[0].perceptualBaselines[0].viewport, "desktop");
+  assert.match(contract.suites[0].perceptualBaselines[0].expectedPath, /design-system-desktop\.png$/);
+  assert.equal(contract.suites[0].perceptualBaselines[1].viewport, "compact");
+  assert.match(contract.suites[0].perceptualBaselines[1].expectedPath, /design-system-compact\.png$/);
+  assert.equal(contract.suites[0].perceptualBaselines[2].viewport, "wide");
+  assert.match(contract.suites[0].perceptualBaselines[2].expectedPath, /design-system-wide\.png$/);
+  const whiteThemeProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-white-theme-ui.mjs");
+  assert.equal(whiteThemeProductionSuite.perceptualBaselines.length, 3);
+  assert.match(whiteThemeProductionSuite.perceptualBaselines[0].expectedPath, /white-theme-page-desktop\.png$/);
+  assert.match(whiteThemeProductionSuite.perceptualBaselines[1].expectedPath, /white-theme-page-compact\.png$/);
+  assert.match(whiteThemeProductionSuite.perceptualBaselines[2].expectedPath, /white-theme-page-wide\.png$/);
+  const globalSearchProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-search-ui.mjs");
+  assert.equal(globalSearchProductionSuite.perceptualBaselines.length, 3);
+  assert.match(globalSearchProductionSuite.perceptualBaselines[0].expectedPath, /global-search-results-desktop\.png$/);
+  assert.match(globalSearchProductionSuite.perceptualBaselines[1].expectedPath, /global-search-results-compact\.png$/);
+  assert.match(globalSearchProductionSuite.perceptualBaselines[2].expectedPath, /global-search-results-wide\.png$/);
+  const embeddedViewProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-embedded-view-ui.mjs");
+  assert.equal(embeddedViewProductionSuite.perceptualBaselines.length, 3);
+  assert.match(embeddedViewProductionSuite.perceptualBaselines[0].expectedPath, /embedded-view-table-desktop\.png$/);
+  assert.match(embeddedViewProductionSuite.perceptualBaselines[1].expectedPath, /embedded-view-table-compact\.png$/);
+  assert.match(embeddedViewProductionSuite.perceptualBaselines[2].expectedPath, /embedded-view-table-wide\.png$/);
+  const pageSecondaryProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-page-secondary-ui.mjs");
+  assert.equal(pageSecondaryProductionSuite.perceptualBaselines.length, 3);
+  assert.match(pageSecondaryProductionSuite.perceptualBaselines[0].expectedPath, /page-history-restore-preview-desktop\.png$/);
+  assert.match(pageSecondaryProductionSuite.perceptualBaselines[1].expectedPath, /page-history-restore-preview-compact\.png$/);
+  assert.match(pageSecondaryProductionSuite.perceptualBaselines[2].expectedPath, /page-history-restore-preview-wide\.png$/);
+  const githubBackupProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-github-backup-ui.mjs");
+  assert.equal(githubBackupProductionSuite.perceptualBaselines.length, 3);
+  assert.match(githubBackupProductionSuite.perceptualBaselines[0].expectedPath, /github-backup-restore-preview-desktop\.png$/);
+  assert.match(githubBackupProductionSuite.perceptualBaselines[1].expectedPath, /github-backup-restore-preview-compact\.png$/);
+  assert.match(githubBackupProductionSuite.perceptualBaselines[2].expectedPath, /github-backup-restore-preview-wide\.png$/);
+  const notionImportProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-notion-import-ui.mjs");
+  assert.equal(notionImportProductionSuite.perceptualBaselines.length, 3);
+  assert.match(notionImportProductionSuite.perceptualBaselines[0].expectedPath, /notion-import-command-modal-desktop\.png$/);
+  assert.match(notionImportProductionSuite.perceptualBaselines[1].expectedPath, /notion-import-command-modal-compact\.png$/);
+  assert.match(notionImportProductionSuite.perceptualBaselines[2].expectedPath, /notion-import-command-modal-wide\.png$/);
+  const markdownPreviewProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-markdown-preview-ui.mjs");
+  assert.equal(markdownPreviewProductionSuite.perceptualBaselines.length, 3);
+  assert.match(markdownPreviewProductionSuite.perceptualBaselines[0].expectedPath, /markdown-preview-selected-source-desktop\.png$/);
+  assert.match(markdownPreviewProductionSuite.perceptualBaselines[1].expectedPath, /markdown-preview-selected-source-compact\.png$/);
+  assert.match(markdownPreviewProductionSuite.perceptualBaselines[2].expectedPath, /markdown-preview-selected-source-wide\.png$/);
+  const rowPropertyProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-row-page-property-visual-ui.mjs");
+  assert.equal(rowPropertyProductionSuite.perceptualBaselines.length, 3);
+  assert.match(rowPropertyProductionSuite.perceptualBaselines[0].expectedPath, /row-page-property-panel-desktop\.png$/);
+  assert.match(rowPropertyProductionSuite.perceptualBaselines[1].expectedPath, /row-page-property-panel-compact\.png$/);
+  assert.match(rowPropertyProductionSuite.perceptualBaselines[2].expectedPath, /row-page-property-panel-wide\.png$/);
+  const settingsCenterProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-settings-center-ui.mjs");
+  assert.equal(settingsCenterProductionSuite.perceptualBaselines.length, 3);
+  assert.match(settingsCenterProductionSuite.perceptualBaselines[0].expectedPath, /settings-center-desktop\.png$/);
+  assert.match(settingsCenterProductionSuite.perceptualBaselines[2].expectedPath, /settings-center-wide\.png$/);
+  const pluginManagerProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-plugin-manager-ui.mjs");
+  assert.equal(pluginManagerProductionSuite.perceptualBaselines.length, 3);
+  assert.match(pluginManagerProductionSuite.perceptualBaselines[0].expectedPath, /plugin-manager-desktop\.png$/);
+  assert.match(pluginManagerProductionSuite.perceptualBaselines[1].expectedPath, /plugin-manager-compact\.png$/);
+  assert.match(pluginManagerProductionSuite.perceptualBaselines[2].expectedPath, /plugin-manager-wide\.png$/);
+  const llmChatProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-llm-chat-ui.mjs");
+  assert.equal(llmChatProductionSuite.perceptualBaselines.length, 3);
+  assert.match(llmChatProductionSuite.perceptualBaselines[0].expectedPath, /llm-chat-conversation-desktop\.png$/);
+  assert.match(llmChatProductionSuite.perceptualBaselines[1].expectedPath, /llm-chat-conversation-compact\.png$/);
+  assert.match(llmChatProductionSuite.perceptualBaselines[2].expectedPath, /llm-chat-conversation-wide\.png$/);
+  const advancedSearchProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-advanced-search-ui.mjs");
+  assert.equal(advancedSearchProductionSuite.perceptualBaselines.length, 3);
+  assert.match(advancedSearchProductionSuite.perceptualBaselines[0].expectedPath, /advanced-search-stale-results-desktop\.png$/);
+  assert.match(advancedSearchProductionSuite.perceptualBaselines[1].expectedPath, /advanced-search-stale-results-compact\.png$/);
+  assert.match(advancedSearchProductionSuite.perceptualBaselines[2].expectedPath, /advanced-search-stale-results-wide\.png$/);
+  const searchAiProductionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-search-ai-ui.mjs");
+  assert.equal(searchAiProductionSuite.perceptualBaselines.length, 3);
+  assert.match(searchAiProductionSuite.perceptualBaselines[0].expectedPath, /search-ai-chat-handoff-desktop\.png$/);
+  assert.match(searchAiProductionSuite.perceptualBaselines[1].expectedPath, /search-ai-chat-handoff-compact\.png$/);
+  assert.match(searchAiProductionSuite.perceptualBaselines[2].expectedPath, /search-ai-chat-handoff-wide\.png$/);
   assert.deepEqual(contract.suites.map((suite) => suite.scriptPath), criticalSuites.map(([, script]) => script));
   assert.match(contract.suites[0].reproduceCommand, /^LOTION_UI_SUITE_FILTER=smoke-design-system-ui\.mjs npm run smoke:ui$/);
   const databaseCreatedViewsSuite = index.suites.find((suite) => suite.scriptPath === "scripts/smoke-database-created-views-ui.mjs");
   assert.match(databaseCreatedViewsSuite.artifactContract.detailText, /activeTabText=Created date desc/);
   assert.match(databaseCreatedViewsSuite.artifactContract.detailText, /visibleTabs=All,Created date asc,Created date desc/);
+  assert.equal(databaseCreatedViewsSuite.artifactContract.snapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length, 3);
+  assert.match(databaseCreatedViewsSuite.artifactContract.snapshots[0].perceptualBaseline.expectedPath, /database-created-views-desktop\.png$/);
+  assert.match(databaseCreatedViewsSuite.artifactContract.snapshots[1].perceptualBaseline.expectedPath, /database-created-views-compact\.png$/);
+  assert.match(databaseCreatedViewsSuite.artifactContract.snapshots[2].perceptualBaseline.expectedPath, /database-created-views-wide\.png$/);
+  const databaseInteractionSuite = contract.suites.find((suite) => suite.scriptPath === "scripts/smoke-database-interaction-ui.mjs");
+  assert.equal(databaseInteractionSuite.perceptualBaselines.length, 3);
+  assert.match(databaseInteractionSuite.perceptualBaselines[0].expectedPath, /database-interaction-settings-desktop\.png$/);
+  assert.match(databaseInteractionSuite.perceptualBaselines[1].expectedPath, /database-interaction-settings-compact\.png$/);
+  assert.match(databaseInteractionSuite.perceptualBaselines[2].expectedPath, /database-interaction-settings-wide\.png$/);
+
+  const focusedDesktopIndex = buildUiSuiteArtifactIndex({
+    environment: {
+      selectedViewportNames: ["desktop"],
+      selectedViewports: [{ name: "desktop", width: 1440, height: 1000 }],
+      selectedSuiteScripts: ["smoke-design-system-ui.mjs"],
+      runner: "npm run smoke:ui"
+    },
+    selectedCount: 1,
+    results: [productionVisualChild(firstSuiteName, firstSuiteScript, firstSuiteArtifact, {
+      observedViewports: ["desktop"],
+      snapshotBytes: [1200],
+      snapshotDetails: [{ phase: "desktop-visual", horizontalOverflowPx: 0, scrollWidth: 1440, viewportWidth: 1440 }],
+      snapshotViewports: ["desktop"]
+    })]
+  }, { generatedAt: "2026-06-17T21:00:30.000Z" });
+  const focusedDesktopContract = assertProductionVisualGateContract(focusedDesktopIndex, {
+    requiredSuiteScripts: [firstSuiteScript],
+    requiredViewportNames: ["desktop"]
+  });
+  assert.equal(focusedDesktopContract.requiredSuiteCount, 1);
+  assert.equal(focusedDesktopContract.snapshotCount, 1);
+  assert.equal(focusedDesktopContract.perceptualBaselineCount, 1);
+
+  const missingPerceptualBaseline = buildUiSuiteArtifactIndex({
+    environment: {
+      selectedViewportNames: ["desktop"],
+      selectedViewports: [{ name: "desktop", width: 1440, height: 1000 }],
+      selectedSuiteScripts: ["smoke-design-system-ui.mjs"],
+      runner: "npm run smoke:ui"
+    },
+    selectedCount: 1,
+    results: [productionVisualChild(firstSuiteName, firstSuiteScript, firstSuiteArtifact, {
+      includePerceptualBaseline: false,
+      observedViewports: ["desktop"],
+      snapshotBytes: [1200],
+      snapshotDetails: [{ phase: "desktop-visual", horizontalOverflowPx: 0, scrollWidth: 1440, viewportWidth: 1440 }]
+    })]
+  }, { generatedAt: "2026-06-17T21:00:45.000Z" });
+  assert.throws(
+    () => assertProductionVisualGateContract(missingPerceptualBaseline, {
+      requiredSuiteScripts: [firstSuiteScript],
+      requiredViewportNames: ["desktop"]
+    }),
+    /lacks a committed perceptual baseline/
+  );
+
+  const focusedReviewIndex = buildUiSuiteArtifactIndex({
+    environment: {
+      selectedViewportNames: ["review"],
+      selectedViewports: [{ name: "review", width: 1200, height: 900 }],
+      selectedSuiteScripts: ["smoke-design-system-ui.mjs"],
+      runner: "npm run smoke:ui"
+    },
+    selectedCount: 1,
+    results: [productionVisualChild(firstSuiteName, firstSuiteScript, firstSuiteArtifact, {
+      includePerceptualBaseline: false,
+      observedViewports: ["review"],
+      snapshotBytes: [1200],
+      snapshotDetails: [{ phase: "review-visual", horizontalOverflowPx: 0, scrollWidth: 1200, viewportWidth: 1200 }],
+      snapshotViewports: ["review"]
+    })]
+  }, { generatedAt: "2026-06-17T21:00:50.000Z" });
+  const focusedReviewContract = assertProductionVisualGateContract(focusedReviewIndex, {
+    requiredSuiteScripts: [firstSuiteScript],
+    requiredViewportNames: ["review"]
+  });
+  assert.equal(focusedReviewContract.perceptualBaselineCount, 0);
 
   const missingCriticalSuite = buildUiSuiteArtifactIndex({
     selectedCount: criticalSuites.length - 1,
@@ -3157,6 +5081,49 @@ test("production visual gate requires critical suites with screenshot evidence",
 });
 
 function productionVisualChild(name, scriptPath, artifactName, options = {}) {
+  const snapshotDetails = options.snapshotDetails || [
+    { phase: "desktop-visual", horizontalOverflowPx: 0, scrollWidth: 1440, viewportWidth: 1440 },
+    { phase: "compact-visual", horizontalOverflowPx: 0, scrollWidth: 1040, viewportWidth: 1040 },
+    { phase: "wide-visual", horizontalOverflowPx: 0, scrollWidth: 1728, viewportWidth: 1728 }
+  ];
+  const perceptualSurface = scriptPath === "scripts/smoke-design-system-ui.mjs"
+    ? "design-system"
+    : scriptPath === "scripts/smoke-white-theme-ui.mjs"
+      ? "white-theme-page"
+      : scriptPath === "scripts/smoke-search-ui.mjs"
+        ? "global-search-results"
+      : scriptPath === "scripts/smoke-page-secondary-ui.mjs"
+        ? "page-history-restore-preview"
+      : scriptPath === "scripts/smoke-github-backup-ui.mjs"
+        ? "github-backup-restore-preview"
+      : scriptPath === "scripts/smoke-notion-import-ui.mjs"
+        ? "notion-import-command-modal"
+      : scriptPath === "scripts/smoke-markdown-preview-ui.mjs"
+        ? "markdown-preview-selected-source"
+      : scriptPath === "scripts/smoke-row-page-property-visual-ui.mjs"
+        ? "row-page-property-panel"
+      : scriptPath === "scripts/smoke-embedded-view-ui.mjs"
+        ? "embedded-view-table"
+      : scriptPath === "scripts/smoke-database-created-views-ui.mjs"
+        ? "database-created-views"
+      : scriptPath === "scripts/smoke-database-interaction-ui.mjs"
+        ? "database-interaction-settings"
+      : scriptPath === "scripts/smoke-settings-center-ui.mjs"
+        ? "settings-center"
+        : scriptPath === "scripts/smoke-plugin-manager-ui.mjs"
+          ? "plugin-manager"
+          : scriptPath === "scripts/smoke-llm-chat-ui.mjs"
+            ? "llm-chat-conversation"
+          : scriptPath === "scripts/smoke-advanced-search-ui.mjs"
+            ? "advanced-search-stale-results"
+          : scriptPath === "scripts/smoke-search-ai-ui.mjs"
+            ? "search-ai-chat-handoff"
+        : null;
+  const withPerceptualBaseline = perceptualSurface && options.includePerceptualBaseline !== false
+    ? snapshotDetails.map((details, index) => index < 3
+      ? { ...details, perceptualBaseline: productionPerceptualBaseline(["desktop", "compact", "wide"][index], perceptualSurface) }
+      : details)
+    : snapshotDetails;
   return uiSuiteChild({
     artifactRoot: `artifacts/ui-smoke/${artifactName}-2026`,
     manifestPath: `artifacts/ui-smoke/${artifactName}-2026/harness-result.json`,
@@ -3164,14 +5131,30 @@ function productionVisualChild(name, scriptPath, artifactName, options = {}) {
     scriptPath,
     observedViewports: options.observedViewports || DEFAULT_PRODUCTION_VISUAL_VIEWPORT_NAMES,
     snapshotBytes: options.snapshotBytes || [1200, 1100, 1300],
-    snapshotDetails: options.snapshotDetails || [
-      { phase: "desktop-visual", horizontalOverflowPx: 0, scrollWidth: 1440, viewportWidth: 1440 },
-      { phase: "compact-visual", horizontalOverflowPx: 0, scrollWidth: 1040, viewportWidth: 1040 },
-      { phase: "wide-visual", horizontalOverflowPx: 0, scrollWidth: 1728, viewportWidth: 1728 }
-    ],
+    snapshotDetails: withPerceptualBaseline,
     snapshotViewports: options.snapshotViewports,
     reproduceCommand: options.reproduceCommand
   });
+}
+
+function productionPerceptualBaseline(viewportName = "desktop", surface = "design-system") {
+  return {
+    kind: "lotion-png-visual-diff",
+    status: "passed",
+    policyPath: `test/baselines/production-visual/${surface}-${viewportName}.json`,
+    actualPath: `artifacts/ui-smoke/${surface}/snapshots/${surface}-${viewportName}.png`,
+    expectedPath: `test/baselines/production-visual/${surface}-${viewportName}.png`,
+    diffPath: `artifacts/ui-smoke/${surface}/visual-diff/${surface}-${viewportName}-diff.png`,
+    metadataPath: `artifacts/ui-smoke/${surface}/visual-diff/${surface}-${viewportName}-diff.json`,
+    dimensionsMatch: true,
+    diffPixels: 0,
+    diffRatio: 0,
+    maxDiffPixels: 0,
+    maxDiffRatio: 0,
+    threshold: 0.1,
+    includeAA: false,
+    policy: { surface, theme: "light", viewport: { name: viewportName } }
+  };
 }
 
 function uiSuiteChild({
@@ -3180,6 +5163,7 @@ function uiSuiteChild({
   consoleIssues = [],
   elapsedMs = 100,
   failureArtifacts = null,
+  harnessMode = "shared",
   includeArtifactContract = true,
   manifestPath,
   name,
@@ -3193,6 +5177,7 @@ function uiSuiteChild({
 }) {
   return {
     elapsedMs,
+    harnessMode,
     reproduceCommand: reproduceCommand ?? `LOTION_UI_SUITE_FILTER=${scriptFilterForPath(scriptPath ?? `scripts/${scriptNameForSuite(name)}`)} npm run smoke:ui`,
     scriptPath: scriptPath ?? `scripts/${scriptNameForSuite(name)}`,
     harnessManifest: {
@@ -3250,11 +5235,20 @@ function notionImportAuditContractEntry(viewportName, { imagePath, metadataPath 
       height: 420,
       width: 760
     },
-    shellOpenDryRunRequests: [sourceRoot, workspaceRoot]
+    shellOpenDryRunRequests: [sourceRoot, workspaceRoot],
+    singleFlightSubmission: notionAuditSingleFlightEvidence()
   };
 }
 
 function notionImportModalContractEntry(viewportName, { imagePath, metadataPath }) {
+  const rect = (left, top, width, height) => ({
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height
+  });
   return {
     viewport: viewportName,
     overlay: {
@@ -3265,6 +5259,53 @@ function notionImportModalContractEntry(viewportName, { imagePath, metadataPath 
       modalHeight: 425,
       modalRole: "dialog",
       title: "Import from Notion"
+    },
+    controlState: {
+      modalRect: rect(140, 80, 760, 644),
+      bodyRect: rect(140, 142, 760, 520),
+      panelRect: rect(168, 158, 704, 488),
+      titleRect: rect(168, 100, 190, 28),
+      closeRect: rect(848, 96, 32, 32),
+      optionsRect: rect(168, 158, 704, 166),
+      optionRects: [
+        rect(184, 188, 430, 30),
+        rect(184, 226, 430, 30),
+        rect(184, 264, 430, 44)
+      ],
+      sourceCardRects: [rect(168, 340, 704, 82), rect(168, 434, 704, 82)],
+      sourceButtonRects: [rect(726, 360, 126, 40), rect(726, 454, 126, 40)],
+      actionsRect: rect(168, 548, 704, 64),
+      cancelRect: rect(668, 560, 80, 40),
+      scanRect: rect(760, 560, 112, 40),
+      titleText: "Import from Notion",
+      optionTexts: [
+        "Do not import blank rows and pages",
+        "Auto-dedupe duplicate Notion pages",
+        "Preserve original Notion export for audit"
+      ],
+      optionChecked: [true, true, true],
+      sourceTexts: ["1. Markdown & CSV export Required", "2. HTML export Recommended"],
+      sourceButtonTexts: ["Choose folder…", "Choose folder…"],
+      actionTexts: ["Cancel", "Scan exports"],
+      scanDisabled: true,
+      panelInsideModal: true,
+      titleInsideModal: true,
+      closeInsideModal: true,
+      optionsInsideModal: true,
+      optionsInsidePanel: true,
+      optionControlsInsideOptions: true,
+      sourceCardsInsidePanel: true,
+      sourceButtonsInsideCards: true,
+      actionsInsidePanel: true,
+      actionButtonsInsideActions: true,
+      modalInsideViewport: true,
+      bodyOverflowY: "auto",
+      bodyScrollHeight: 520,
+      bodyClientHeight: 520,
+      bodyOwnsVerticalScroll: true,
+      visibility: "visible",
+      opacity: 1,
+      horizontalOverflow: 0
     },
     snapshot: {
       imagePath,
@@ -3294,7 +5335,8 @@ function notionImportAuditDiagnosticEntry(viewportName, { imagePath, metadataPat
       height: 520,
       width: 760
     },
-    shellOpenDryRunRequests: [sourceRoot, workspaceRoot, "databases/user/Tasks--db_audit_ui"]
+    shellOpenDryRunRequests: [sourceRoot, workspaceRoot, "databases/user/Tasks--db_audit_ui"],
+    singleFlightSubmission: notionAuditSingleFlightEvidence()
   };
 }
 
@@ -3307,6 +5349,7 @@ async function writeNotionImportModalSnapshotFiles({ entry, imagePath, metadataP
     image: imagePath,
     metadata: {
       overlay: entry.overlay,
+      controlState: entry.controlState,
       phase: "command-modal",
       workspaceRoot: entry.workspaceRoot
     }
@@ -3326,12 +5369,23 @@ async function writeNotionImportAuditSnapshotFiles({ entry, imagePath, metadataP
       sourceRoot: entry.sourceRoot,
       workspaceRoot: entry.workspaceRoot,
       shellOpenDryRunRequests: entry.shellOpenDryRunRequests,
+      singleFlightSubmission: entry.singleFlightSubmission,
       ...(entry.failText ? { failText: entry.failText } : {}),
       ...(entry.issueKinds ? { issueKinds: entry.issueKinds } : {}),
       ...(entry.issueRows ? { issueRows: entry.issueRows } : {}),
       ...(entry.failText ? { phase: "diagnostic" } : { phase: "passing" })
     }
   }, null, 2)}\n`, "utf8");
+}
+
+function notionAuditSingleFlightEvidence() {
+  return {
+    attemptedClicks: 2,
+    disabledAfterFirstClick: false,
+    disabledAfterDispatch: false,
+    resultCount: 1,
+    errorCount: 0
+  };
 }
 
 function notionImportAuditSummary() {
@@ -3545,11 +5599,13 @@ function editorRegressionContractEntry(viewportName, { imagePath, metadataPath }
       },
       lotionCalloutFence: { rendered: true },
       lotionViewFence: { rendered: true },
-      markdownTableSyntax: { rendered: true }
+      markdownTableSyntax: { rendered: true },
+      layoutRecovery: editorLayoutRecoveryEvidence(viewportName, "normal page")
     },
     empty: {
       firstTyping: `Empty row first typing ${viewportName}`,
-      markdownLength: 256
+      markdownLength: 256,
+      layoutRecovery: editorLayoutRecoveryEvidence(viewportName, "empty row page")
     },
     large: {
       largeToken: `Large document edit ${viewportName}`,
@@ -3560,6 +5616,23 @@ function editorRegressionContractEntry(viewportName, { imagePath, metadataPath }
       imagePath,
       metadataPath
     }
+  };
+}
+
+function editorLayoutRecoveryEvidence(viewportName, scope) {
+  return {
+    retryMessage: `Injected ${scope} ${viewportName} full-width persistence failure`,
+    discardMessage: `Injected ${scope} ${viewportName} small-text persistence failure`,
+    failedValueRolledBack: true,
+    retainedDraft: true,
+    competingControlsBlocked: true,
+    duplicateRetrySuppressed: true,
+    retryPersistedExactInput: true,
+    discardFailureRolledBack: true,
+    discardedDraftRetained: true,
+    discardPreservedStoredValue: true,
+    discardResetDraft: true,
+    baselineStateRestored: true
   };
 }
 
@@ -3749,7 +5822,7 @@ function sourceAttachmentContractEntry(viewportName, { imagePath, metadataPath }
   };
 }
 
-async function writeMarkdownSnapshotFiles({ imagePath, metadataPath, phase, viewportName }) {
+async function writeMarkdownSnapshotFiles({ imagePath, metadataPath, phase, viewportName, selectedSourceState }) {
   await writeFile(imagePath, `fake ${viewportName} ${phase} markdown preview screenshot`, "utf8");
   await writeFile(metadataPath, `${JSON.stringify({
     name: `markdown-preview-${phase}-${viewportName}`,
@@ -3759,7 +5832,19 @@ async function writeMarkdownSnapshotFiles({ imagePath, metadataPath, phase, view
     metadata: {
       phase,
       pageId: `pg_markdown_${viewportName}`,
-      pageTitle: `Markdown Preview ${viewportName}`
+      pageTitle: `Markdown Preview ${viewportName}`,
+      ...(phase === "selected-imported-highlight" ? {
+        selectionBackgroundTransparent: true,
+        blockBackgroundAlpha: 0.48,
+        sourceEditable: true,
+        selectedSourceState: selectedSourceState ?? markdownSelectedSourceState()
+      } : {}),
+      ...(phase === "imported-toggle" ? {
+        importedToggleBodyTextPreserved: true,
+        importedToggleImageCount: 1,
+        importedToggleOpen: true,
+        importedToggleSummary: "收据"
+      } : {})
     }
   }, null, 2)}\n`, "utf8");
 }
@@ -3767,6 +5852,10 @@ async function writeMarkdownSnapshotFiles({ imagePath, metadataPath, phase, view
 function markdownPreviewContractEntry(viewportName, {
   initialImagePath,
   initialMetadataPath,
+  selectedImagePath,
+  selectedMetadataPath,
+  importedToggleImagePath,
+  importedToggleMetadataPath,
   widgetsImagePath,
   widgetsMetadataPath
 }) {
@@ -3777,6 +5866,21 @@ function markdownPreviewContractEntry(viewportName, {
         phase: "initial",
         imagePath: initialImagePath,
         metadataPath: initialMetadataPath,
+        height: 600,
+        width: 780
+      },
+      {
+        phase: "selected-imported-highlight",
+        imagePath: selectedImagePath,
+        metadataPath: selectedMetadataPath,
+        height: 600,
+        width: 780,
+        selectedSourceState: markdownSelectedSourceState()
+      },
+      {
+        phase: "imported-toggle",
+        imagePath: importedToggleImagePath,
+        metadataPath: importedToggleMetadataPath,
         height: 600,
         width: 780
       },
@@ -3796,6 +5900,16 @@ function markdownPreviewContractEntry(viewportName, {
       underlineLine: { underlineText: ["重要下划线"] },
       highlightLine: { highlightText: ["重点高亮"] },
       colorLine: { colorText: ["红色文字"] },
+      importedHighlightSelection: {
+        sourceEditable: true,
+        editorHasSelection: true,
+        selectedText: "Selection probe",
+        bgBackground: "rgba(0, 0, 0, 0)",
+        lineBackground: "rgba(243, 238, 255, 0.55)",
+        lineHasSelectionClass: true,
+        lineIsBlockquote: true,
+        editSourceButtonState: { text: "Edit source", opacity: "1" }
+      },
       listColorLine: { colorText: ["列表红色"] },
       rawCalloutSourceVisible: false,
       calloutMark: "高亮提示",
@@ -3825,7 +5939,16 @@ function markdownPreviewContractEntry(viewportName, {
       },
       tablePreview: {
         text: "名称 主动增管",
-        editableCellContentEditable: "plaintext-only"
+        editableCellContentEditable: "plaintext-only",
+        hasEditSource: true,
+        controls: [
+          { action: "add-row" },
+          { action: "add-column" },
+          { action: "delete-row" },
+          { action: "delete-column" }
+        ],
+        rowDragHandleCount: 2,
+        columnDragHandleCount: 3
       },
       importedNotionToggle: {
         summaryText: "收据",
@@ -3856,6 +5979,15 @@ function markdownPreviewContractEntry(viewportName, {
       markdownContainsEdit: true,
       tableContainsEdit: true
     },
+    markdownTableSourceEdit: {
+      buttonState: { text: "Edit source" },
+      sourceState: {
+        headerLine: { text: "| 名称 | 配额 | 目前余额 |" },
+        tableWidgetVisible: false
+      }
+    },
+    markdownTableStructureEdit: { restoredOriginal: true },
+    markdownTableDragReorder: { restoredOriginal: true },
     toggleDirectEdit: {
       markdownContainsSummary: true,
       markdownContainsBody: true,
@@ -3884,6 +6016,78 @@ function markdownPreviewContractEntry(viewportName, {
       on: { editorPresent: true },
       off: { editorPresent: true }
     }
+  };
+}
+
+function markdownSelectedSourceState() {
+  const rect = (left, top, width, height) => ({
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height
+  });
+  return {
+    editorRect: rect(120, 80, 780, 600),
+    scrollerRect: rect(120, 80, 780, 600),
+    lineRect: rect(150, 280, 710, 52),
+    highlightRect: rect(290, 284, 390, 42),
+    editSourceRect: rect(758, 286, 92, 30),
+    selectionRect: rect(310, 286, 330, 38),
+    rawSourceText: '> <span data-lotion-bg="yellow">Selection probe: **From now on, make it a personal commitment**</span>Edit source',
+    selectedText: "Selection probe",
+    selectedRangeCount: 1,
+    editSourceText: "Edit source",
+    lineInsideEditor: true,
+    lineIntersectsScroller: true,
+    highlightInsideLine: true,
+    selectionInsideLine: true,
+    selectionIntersectsScroller: true,
+    editSourceInsideLine: true,
+    editSourceIntersectsScroller: true,
+    selectionOverlapsEditSource: false,
+    highlightOverlapsEditSource: false,
+    lineVisibility: "visible",
+    lineOpacity: 1,
+    highlightVisibility: "visible",
+    highlightOpacity: 1,
+    editSourceVisibility: "visible",
+    editSourceOpacity: 1,
+    documentHorizontalOverflow: 0,
+    editorHorizontalOverflow: 0
+  };
+}
+
+async function createMarkdownPreviewArtifactFixture(viewportName) {
+  const root = await mkdtemp(join(tmpdir(), "lotion-markdown-preview-artifact-fixture-"));
+  const paths = {
+    initialImagePath: join(root, "initial.png"),
+    initialMetadataPath: join(root, "initial.json"),
+    selectedImagePath: join(root, "selected.png"),
+    selectedMetadataPath: join(root, "selected.json"),
+    importedToggleImagePath: join(root, "imported-toggle.png"),
+    importedToggleMetadataPath: join(root, "imported-toggle.json"),
+    widgetsImagePath: join(root, "widgets.png"),
+    widgetsMetadataPath: join(root, "widgets.json")
+  };
+  for (const [phase, imageKey, metadataKey] of [
+    ["initial", "initialImagePath", "initialMetadataPath"],
+    ["selected-imported-highlight", "selectedImagePath", "selectedMetadataPath"],
+    ["imported-toggle", "importedToggleImagePath", "importedToggleMetadataPath"],
+    ["widgets", "widgetsImagePath", "widgetsMetadataPath"]
+  ]) {
+    await writeMarkdownSnapshotFiles({
+      imagePath: paths[imageKey],
+      metadataPath: paths[metadataKey],
+      phase,
+      viewportName
+    });
+  }
+  return {
+    root,
+    paths,
+    entry: markdownPreviewContractEntry(viewportName, paths)
   };
 }
 
@@ -3934,6 +6138,12 @@ function embeddedViewContractEntry(viewportName, { imagePath, metadataPath }) {
       settingsButton: { ariaLabel: "View settings", title: "View settings", width: 32, height: 32 },
       settingsFocused: true,
       refreshAfter: { disabled: false, ariaLabel: "Refresh", title: "Refresh" },
+      settingsMenu: {
+        rootAriaLabel: "Database settings",
+        rootHasViewSettings: true,
+        viewAriaLabel: "View settings menu",
+        viewHasLayout: true
+      },
       settingsDialog: { ariaLabel: "View settings", hasRowsPerPage: true },
       openResult: { hasStandaloneDatabase: true, textIncludesTitle: true },
       buttons: [
@@ -3947,8 +6157,61 @@ function embeddedViewContractEntry(viewportName, { imagePath, metadataPath }) {
       imagePath,
       metadataPath,
       height: 620,
-      width: 940
+      width: 940,
+      completeSurfaceState: embeddedCompleteSurfaceState(viewportName)
     }
+  };
+}
+
+function embeddedCompleteSurfaceState(viewportName) {
+  const viewport = {
+    width: viewportName === "wide" ? 1728 : viewportName === "desktop" ? 1440 : 1040,
+    height: viewportName === "wide" ? 1100 : viewportName === "desktop" ? 1000 : 820
+  };
+  return {
+    surfaceRect: embeddedRect(120, 100, 712, 565),
+    headerRect: embeddedRect(120, 100, 712, 44),
+    titleRect: embeddedRect(120, 100, 376, 25),
+    subtitleRect: embeddedRect(120, 127, 376, 16),
+    openRect: embeddedRect(504, 106, 55, 30),
+    refreshRect: embeddedRect(562, 107, 28, 28),
+    settingsRect: embeddedRect(594, 107, 28, 28),
+    tabsRect: embeddedRect(120, 144, 712, 40),
+    stickyHeaderRect: embeddedRect(120, 205, 712, 44),
+    bodyRect: embeddedRect(120, 249, 712, 335),
+    summaryRect: embeddedRect(120, 584, 712, 43),
+    footerRect: embeddedRect(120, 627, 712, 38),
+    loadMoreRect: embeddedRect(120, 635, 126, 30),
+    rowCountRect: embeddedRect(256, 642, 91, 17),
+    firstRowRect: embeddedRect(120, 249, 712, 41),
+    lastRowRect: embeddedRect(120, 542, 712, 42),
+    firstRowText: "Row 0 Open Embedded row 0",
+    lastRowText: "Row 7 Open Embedded row 7",
+    renderedDataRowCount: 8,
+    virtualSpacerCount: 0,
+    titleText: "Embedded DB 1",
+    subtitleText: "All · Table",
+    loadMoreText: "+ Load 50 more",
+    rowCountText: "100 of 120 rows",
+    surfaceVisibility: "visible",
+    surfaceOpacity: 1,
+    headerVisibility: "visible",
+    headerOpacity: 1,
+    footerVisibility: "visible",
+    footerOpacity: 1,
+    viewport,
+    documentHorizontalOverflow: 0
+  };
+}
+
+function embeddedRect(left, top, width, height) {
+  return {
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height
   };
 }
 
@@ -3967,7 +6230,11 @@ async function writeSettingsCenterSnapshotFiles({ entry, imagePath, metadataPath
   await writeFile(imagePath, `fake ${viewportName} settings center screenshot`, "utf8");
   await writeFile(metadataPath, `${JSON.stringify({
     name: `settings-center-${viewportName}`,
-    viewport: { name: viewportName, width: viewportName === "desktop" ? 1440 : 1040, height: 820 },
+    viewport: {
+      name: viewportName,
+      width: viewportName === "desktop" ? 1440 : viewportName === "wide" ? 1728 : 1040,
+      height: viewportName === "desktop" ? 1000 : viewportName === "wide" ? 1100 : 820
+    },
     rect: { top: 72, right: 1180, bottom: 760, left: 280, width: 900, height: 688 },
     image: imagePath,
     metadata: {
@@ -3976,9 +6243,48 @@ async function writeSettingsCenterSnapshotFiles({ entry, imagePath, metadataPath
       pluginsSection: entry.pluginsSection,
       searchAiDeepLink: entry.searchAiDeepLink,
       searchJump: entry.searchJump,
+      snapshotState: entry.snapshotState,
       viewport: viewportName
     }
   }, null, 2)}\n`, "utf8");
+  const expectedPath = imagePath.replace(/\.png$/, ".expected.png");
+  const diffPath = imagePath.replace(/\.png$/, ".diff.png");
+  const diffMetadataPath = imagePath.replace(/\.png$/, ".diff.json");
+  const policyPath = imagePath.replace(/\.png$/, ".policy.json");
+  await Promise.all([
+    writeFile(expectedPath, "fake committed settings center baseline", "utf8"),
+    writeFile(diffPath, "fake zero-pixel settings center diff", "utf8"),
+    writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+    writeFile(diffMetadataPath, JSON.stringify({
+      kind: "lotion-png-visual-diff",
+      status: "passed",
+      actualPath: imagePath,
+      expectedPath
+    }), "utf8")
+  ]);
+  entry.perceptualBaseline = {
+    kind: "lotion-png-visual-diff",
+    status: "passed",
+    actualPath: imagePath,
+    expectedPath,
+    diffPath,
+    metadataPath: diffMetadataPath,
+    policyPath,
+    dimensionsMatch: true,
+    diffPixels: 0,
+    diffRatio: 0,
+    threshold: 0.1,
+    includeAA: false,
+    maxDiffPixels: 0,
+    maxDiffRatio: 0,
+    policy: {
+      surface: "settings-center",
+      viewport: { name: viewportName },
+      imageSha256: "c".repeat(64),
+      verifiedAt: "2026-07-22",
+      sourceTask: "tasks/done/settings-center-committed-perceptual-baselines.md"
+    }
+  };
 }
 
 function settingsCenterContractEntry(viewportName, snapshotPaths) {
@@ -3992,6 +6298,12 @@ function settingsCenterContractEntry(viewportName, snapshotPaths) {
       paneText: "Git Sync / Backup Remote repository URL GitHub Backup"
     },
     searchAiDeepLink: {
+      advancedTabClick: {
+        ariaSelectedAfter: "true",
+        disabled: false,
+        height: 30,
+        width: 82
+      },
       pluginHosts: 2
     },
     importSection: {
@@ -4001,6 +6313,22 @@ function settingsCenterContractEntry(viewportName, snapshotPaths) {
     pluginsSection: {
       sectionName: "Plugins",
       paneText: "Installed plugins Open plugin manager"
+    },
+    snapshotState: {
+      activeTab: "PluginsExtensions",
+      activeTabAriaSelected: "true",
+      activeTabStyle: {
+        backgroundColor: "rgb(232, 237, 248)",
+        borderColor: "rgb(80, 103, 165)",
+        color: "rgb(32, 34, 31)"
+      },
+      focusedInside: false,
+      lastPluginRowWithinCenter: true,
+      navigationScrollTop: 0,
+      paneScrollTop: 0,
+      paneVisible: true,
+      pluginRowCount: 7,
+      visiblePluginRowCount: 7
     },
     snapshot: {
       imagePath: snapshotPaths.imagePath,
@@ -4015,7 +6343,7 @@ async function writeDesignSystemSnapshotFiles({ entry, imagePath, metadataPath, 
   await writeFile(imagePath, `fake ${viewportName} design-system screenshot`, "utf8");
   await writeFile(metadataPath, `${JSON.stringify({
     name: `design-system-${viewportName}`,
-    viewport: { name: viewportName, width: viewportName === "desktop" ? 1440 : 390, height: viewportName === "desktop" ? 1000 : 820 },
+    viewport: { name: viewportName, ...designSystemViewport(viewportName) },
     rect: { top: 80, right: 1200, bottom: 760, left: 120, width: 1080, height: 680 },
     image: imagePath,
     metadata: {
@@ -4026,11 +6354,58 @@ async function writeDesignSystemSnapshotFiles({ entry, imagePath, metadataPath, 
       viewport: viewportName
     }
   }, null, 2)}\n`, "utf8");
+  if (["desktop", "compact", "wide"].includes(viewportName)) {
+    const expectedPath = imagePath.replace(/\.png$/, ".expected.png");
+    const diffPath = imagePath.replace(/\.png$/, ".diff.png");
+    const diffMetadataPath = imagePath.replace(/\.png$/, ".diff.json");
+    const policyPath = imagePath.replace(/\.png$/, ".policy.json");
+    await Promise.all([
+      writeFile(expectedPath, "fake committed design-system baseline", "utf8"),
+      writeFile(diffPath, "fake zero-pixel design-system diff", "utf8"),
+      writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+      writeFile(diffMetadataPath, JSON.stringify({
+        kind: "lotion-png-visual-diff",
+        status: "passed",
+        actualPath: imagePath,
+        expectedPath
+      }), "utf8")
+    ]);
+    entry.perceptualBaseline = {
+      kind: "lotion-png-visual-diff",
+      status: "passed",
+      actualPath: imagePath,
+      expectedPath,
+      diffPath,
+      metadataPath: diffMetadataPath,
+      policyPath,
+      actual: { width: 1080, height: 680 },
+      expected: { width: 1080, height: 680 },
+      dimensionsMatch: true,
+      totalPixels: 734400,
+      diffPixels: 0,
+      diffRatio: 0,
+      threshold: 0.1,
+      includeAA: false,
+      maxDiffPixels: 0,
+      maxDiffRatio: 0,
+      policy: {
+        surface: "design-system",
+        viewport: {
+          name: viewportName,
+          width: viewportName === "desktop" ? 1440 : viewportName === "wide" ? 1728 : 1040,
+          height: viewportName === "desktop" ? 1000 : viewportName === "wide" ? 1100 : 820
+        },
+        imageSha256: "a".repeat(64),
+        verifiedAt: "2026-07-22",
+        sourceTask: "tasks/done/design-system-status-pill-visibility-and-wide-baseline.md"
+      }
+    };
+  }
 }
 
 function designSystemContractEntry(viewportName, snapshotPaths) {
   return {
-    viewport: { name: viewportName, width: viewportName === "desktop" ? 1440 : 390, height: viewportName === "desktop" ? 1000 : 820 },
+    viewport: { name: viewportName, ...designSystemViewport(viewportName) },
     controlState: {
       focusState: {
         activeClass: "lotion-ui-button primary",
@@ -4038,7 +6413,9 @@ function designSystemContractEntry(viewportName, snapshotPaths) {
         isPrimary: true,
         outlineColor: "rgb(32, 32, 30)"
       },
-      statusPills: requiredDesignSystemStatusPills()
+      statusPills: requiredDesignSystemStatusPills(),
+      statusPillGeometry: requiredDesignSystemStatusPills().map((label) => ({ label, width: 72, height: 24, top: 100, withinLab: true })),
+      statusPillsLayoutValid: true
     },
     layoutState: designSystemLayoutState(viewportName),
     themeState: designSystemThemeState(),
@@ -4088,7 +6465,7 @@ function designSystemThemeState() {
 }
 
 function designSystemLayoutState(viewportName) {
-  const viewport = { width: viewportName === "desktop" ? 1440 : 390, height: viewportName === "desktop" ? 1000 : 820 };
+  const viewport = designSystemViewport(viewportName);
   const right = viewport.width - 24;
   const rect = (top, height) => ({
     bottom: top + height,
@@ -4109,6 +6486,12 @@ function designSystemLayoutState(viewportName) {
     },
     viewport
   };
+}
+
+function designSystemViewport(viewportName) {
+  if (viewportName === "desktop") return { width: 1440, height: 1000 };
+  if (viewportName === "wide") return { width: 1728, height: 1100 };
+  return { width: 1040, height: 820 };
 }
 
 async function writeImageLightboxSnapshotFiles({ entry, imagePath, metadataPath, viewportName }) {
@@ -4167,7 +6550,8 @@ async function writeDatabaseCreatedViewsSnapshotFiles({ entry, imagePath, metada
     image: imagePath,
     metadata: {
       ...entry,
-      phase: "database-created-views"
+      phase: "database-created-views",
+      completeSurfaceState: entry.snapshot.completeSurfaceState
     }
   }, null, 2)}\n`, "utf8");
 }
@@ -4185,6 +6569,44 @@ function databaseCreatedViewsContractEntry(viewportName, snapshotPaths) {
     keyboardActivatedTab: "Created date asc",
     noHorizontalOverflow: true,
     phase: "database-created-views",
+    filterRecovery: {
+      message: "Injected view persistence failure",
+      popoverRemainedOpen: true,
+      pendingDismissalBlocked: true,
+      draftRetained: true,
+      debouncedDismissalFlushed: true,
+      failedStateRolledBack: true,
+      duplicateSubmitSuppressed: true,
+      retryCommittedExactlyOnce: true
+    },
+    sortRecovery: {
+      message: "Injected sort persistence failure",
+      popoverRemainedOpen: true,
+      pendingDismissalBlocked: true,
+      draftRetained: true,
+      failedStateRolledBack: true,
+      duplicateSubmitSuppressed: true,
+      retryCommittedExactlyOnce: true
+    },
+    viewSettingsRecovery: {
+      message: "Injected view settings persistence failure",
+      dialogRemainedOpen: true,
+      pendingDismissalBlocked: true,
+      draftRetained: true,
+      failedStateRolledBack: true,
+      duplicateSubmitSuppressed: true,
+      retryCommittedExactlyOnce: true
+    },
+    templateRecovery: {
+      message: "Injected template persistence failure",
+      dialogRemainedOpen: true,
+      pendingDismissalBlocked: true,
+      draftRetained: true,
+      failedStateRolledBack: true,
+      duplicateSubmitSuppressed: true,
+      retryCommittedExactlyOnce: true
+    },
+    recoveredCaptureState: { filterCount: 0, revision: 6, sortCount: 1 },
     tableRect: { top: 180, right: 1180, bottom: 760, left: 120, width: 1060, height: 580 },
     tabsRect: { top: 126, right: 620, bottom: 176, left: 110, width: 510, height: 50 },
     visibleTabs: requiredDatabaseCreatedViewTabs(),
@@ -4192,8 +6614,139 @@ function databaseCreatedViewsContractEntry(viewportName, snapshotPaths) {
       imagePath: snapshotPaths.imagePath,
       metadataPath: snapshotPaths.metadataPath,
       height: 580,
-      width: 1060
+      width: 1060,
+      completeSurfaceState: databaseCreatedViewsCompleteSurfaceState(viewportName)
     }
+  };
+}
+
+function databaseCreatedViewsCompleteSurfaceState(viewportName) {
+  const viewport = viewportName === "wide"
+    ? { width: 1728, height: 1100 }
+    : viewportName === "desktop"
+      ? { width: 1440, height: 1000 }
+      : { width: 1040, height: 820 };
+  const left = 248;
+  const right = viewport.width;
+  const width = right - left;
+  const tableBottom = viewport.height - 70;
+  const summaryTop = viewport.height - 70;
+  const footerTop = viewport.height - 27;
+  return {
+    surfaceRect: createdViewsRect(left, 43, width, viewport.height - 43),
+    headerRect: createdViewsRect(264, 43, width - 32, 145),
+    titleRect: createdViewsRect(288, 127, 330, 34),
+    subtitleRect: createdViewsRect(288, 163, 330, 15),
+    openWindowRect: createdViewsRect(right - 72, 136, 32, 32),
+    propertiesRect: createdViewsRect(264, 188, width - 32, 54),
+    tabsRect: createdViewsRect(left, 242, width, 37),
+    allTabRect: createdViewsRect(272, 242, 44, 36),
+    ascTabRect: createdViewsRect(332, 242, 133, 36),
+    descTabRect: createdViewsRect(481, 242, 142, 36),
+    activeTabRect: createdViewsRect(481, 242, 142, 36),
+    viewActionsRect: createdViewsRect(right - 245, 244, 221, 32),
+    tableScrollRect: createdViewsRect(left, 279, width, tableBottom - 279),
+    tableHeaderRect: createdViewsRect(left, 279, width, 53),
+    firstRowRect: createdViewsRect(left, 332, width, 69),
+    middleRowRect: createdViewsRect(left, 401, width, 69),
+    lastRowRect: createdViewsRect(left, 470, width, 69),
+    summaryRect: createdViewsRect(left, summaryTop, width, 43),
+    footerRect: createdViewsRect(left, footerTop, width, 27),
+    rowCountRect: createdViewsRect(right - 174, footerTop + 7, 156, 14),
+    titleText: "Created Views Smoke DB",
+    subtitleText: "4 fields · 3 rows",
+    visibleTabTexts: requiredDatabaseCreatedViewTabs(),
+    activeTabText: "Created date desc",
+    rowTexts: [
+      "Newest created row Open December 31, 2025 Newest row notes",
+      "Middle created row Open December 31, 2024 Middle row notes",
+      "Oldest created row Open December 31, 2023 Oldest row notes"
+    ],
+    rowCountText: "3 of 3 rows · loaded in 0 ms",
+    renderedDataRowCount: 3,
+    filterPopoverCount: 0,
+    errorStatusCount: 0,
+    surfaceVisibility: "visible",
+    surfaceOpacity: 1,
+    headerVisibility: "visible",
+    headerOpacity: 1,
+    tabsVisibility: "visible",
+    tabsOpacity: 1,
+    tableVisibility: "visible",
+    tableOpacity: 1,
+    footerVisibility: "visible",
+    footerOpacity: 1,
+    viewport,
+    documentHorizontalOverflow: 0
+  };
+}
+
+function createdViewsRect(left, top, width, height) {
+  return {
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height
+  };
+}
+
+function databaseInteractionCompleteSurfaceState(viewportName, phase) {
+  const viewport = viewportName === "wide"
+    ? { width: 1728, height: 1100 }
+    : viewportName === "compact"
+      ? { width: 1040, height: 820 }
+      : { width: 1440, height: 1000 };
+  const surfaceRect = interactionRect(100, 300, 800, 300);
+  const controls = phase === "settings-scope-menu"
+    ? {
+      header: interactionRect(100, 300, 800, 50),
+      viewSettings: interactionRect(110, 360, 780, 44),
+      databaseSettings: interactionRect(110, 410, 780, 44)
+    }
+    : phase === "filter-menu"
+      ? {
+        header: interactionRect(110, 310, 780, 40),
+        empty: interactionRect(120, 355, 300, 24),
+        rootGroup: interactionRect(110, 385, 780, 190),
+        conjunction: interactionRect(160, 400, 100, 30),
+        addCondition: interactionRect(130, 530, 120, 30),
+        addGroup: interactionRect(270, 530, 100, 30)
+      }
+      : {
+        header: interactionRect(110, 310, 780, 40),
+        priority: interactionRect(120, 355, 160, 28),
+        rule: interactionRect(110, 390, 780, 70),
+        property: interactionRect(190, 405, 260, 32),
+        direction: interactionRect(470, 405, 260, 32),
+        addSort: interactionRect(120, 480, 120, 30),
+        clearAll: interactionRect(790, 315, 90, 28)
+      };
+  return {
+    phase,
+    surfaceRect,
+    surfaceVisibility: "visible",
+    surfaceOpacity: 1,
+    runningAnimationCount: 0,
+    controlRects: controls,
+    controlTexts: Object.fromEntries(Object.keys(controls).map((key) => [key, key])),
+    tableRect: interactionRect(248, 43, viewport.width - 248, viewport.height - 43),
+    activeTabRect: interactionRect(272, 242, 72, 36),
+    activeTabText: "Default",
+    viewport,
+    documentHorizontalOverflow: 0
+  };
+}
+
+function interactionRect(left, top, width, height) {
+  return {
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height
   };
 }
 
@@ -4224,7 +6777,7 @@ function pageBacklinksContractEntry(viewportName, snapshotPaths) {
         sourceType: "Page",
         sourcePath: "Smoke",
         context: "Body · L5",
-        excerpt: "See [Backlink Target Page](databases/system/pages--db_pages/pages/Backlink_Target_Page--pg_backlink_target.md)."
+        excerpt: "See Backlink Target Page."
       },
       {
         ariaLabel: "Open Database row backlink Property Source Row",
@@ -4242,6 +6795,12 @@ function pageBacklinksContractEntry(viewportName, snapshotPaths) {
   return {
     viewport: viewportName,
     noHorizontalOverflow: true,
+    externalRefresh: {
+      removedWithoutNavigation: true,
+      restoredWithoutNavigation: true,
+      removedCount: 1,
+      restoredCount: 2
+    },
     opened: {
       activation: "keyboard-enter",
       ariaLabel: "Open Page backlink Backlink Source Page",
@@ -4299,12 +6858,87 @@ async function writePageSecondarySnapshotFiles({ entry, imagePath, metadataPath,
       expanded: entry.expanded,
       expectedBacklinks: 5,
       expectedTocItems: 4,
-      phase: "page-secondary"
+      history: entry.history,
+      historyPreview: entry.historyPreview,
+      phase: "page-history-restore-preview"
+    }
+  }, null, 2)}\n`, "utf8");
+  await writeFile(entry.toc.snapshot.imagePath, `fake ${viewportName} floating toc screenshot`, "utf8");
+  await writeFile(entry.toc.snapshot.metadataPath, `${JSON.stringify({
+    name: `floating-toc-navigation-${viewportName}`,
+    viewport: pageSecondaryViewport(viewportName),
+    rect: { top: 0, right: 1280, bottom: 900, left: 0, width: 1280, height: 900 },
+    image: entry.toc.snapshot.imagePath,
+    metadata: {
+      itemTexts: entry.toc.expanded.itemTexts,
+      layout: entry.toc.layout,
+      navigation: entry.toc.navigation,
+      phase: "floating-toc-navigation"
+    }
+  }, null, 2)}\n`, "utf8");
+  await writeFile(entry.toc.collapsedSnapshot.imagePath, `fake ${viewportName} auto-hidden toc screenshot`, "utf8");
+  await writeFile(entry.toc.collapsedSnapshot.metadataPath, `${JSON.stringify({
+    name: `floating-toc-auto-hidden-${viewportName}`,
+    viewport: pageSecondaryViewport(viewportName),
+    rect: { top: 0, right: 1280, bottom: 900, left: 0, width: 1280, height: 900 },
+    image: entry.toc.collapsedSnapshot.imagePath,
+    metadata: {
+      autoHidden: entry.toc.autoHidden,
+      hoverExpanded: entry.toc.hoverExpanded,
+      keyboardAfterPointer: entry.toc.keyboardAfterPointer,
+      pointerNavigation: entry.toc.pointerNavigation,
+      phase: "floating-toc-auto-hidden"
     }
   }, null, 2)}\n`, "utf8");
 }
 
 function pageSecondaryContractEntry(viewportName, snapshotPaths) {
+  const tocImagePath = snapshotPaths.imagePath.replace(/\.png$/, "-toc.png");
+  const tocMetadataPath = snapshotPaths.metadataPath.replace(/\.json$/, "-toc.json");
+  const tocCollapsedImagePath = snapshotPaths.imagePath.replace(/\.png$/, "-toc-collapsed.png");
+  const tocCollapsedMetadataPath = snapshotPaths.metadataPath.replace(/\.json$/, "-toc-collapsed.json");
+  const viewport = pageSecondaryViewport(viewportName);
+  const contentRect = {
+    left: viewportName === "compact" ? 72 : 300,
+    right: viewportName === "compact" ? viewport.width - 24 : 1060,
+    width: viewportName === "compact" ? viewport.width - 96 : 760
+  };
+  const itemTexts = ["Page Secondary Target", "Overview", "Deep Work", "Nested Insight", "Final Section", "Work reflectionJump"];
+  const collapsedTocState = {
+    activeIsTocItem: false,
+    activeIsToggle: false,
+    contentRect,
+    focusedWithin: false,
+    hostClass: "cm-md-floating-toc-host cm-md-toc-collapsed",
+    hostRect: {
+      top: 96,
+      right: viewport.width - 12,
+      bottom: viewport.height - 32,
+      left: viewport.width - 44,
+      width: 32,
+      height: viewport.height - 128
+    },
+    hostBackgroundAlpha: 0,
+    hostOpacity: "0.34",
+    hovered: false,
+    itemTexts,
+    navDisplay: "none",
+    railMarkers: 6,
+    toggleExpanded: "false"
+  };
+  const expandedTocState = {
+    ...structuredClone(collapsedTocState),
+    hostClass: "cm-md-floating-toc-host cm-md-toc-expanded",
+    hostBackgroundAlpha: 0.9,
+    hostOpacity: "1",
+    hostRect: {
+      ...collapsedTocState.hostRect,
+      left: viewport.width - (viewportName === "compact" ? 232 : 252),
+      width: viewportName === "compact" ? 220 : 240
+    },
+    navDisplay: "block",
+    toggleExpanded: "true"
+  };
   return {
     viewport: viewportName,
     collapsed: {
@@ -4329,6 +6963,60 @@ function pageSecondaryContractEntry(viewportName, snapshotPaths) {
       sourceLinkMounted: true
     },
     noHorizontalOverflow: true,
+    coverOffsetRecovery: {
+      message: "Injected cover position persistence failure",
+      failedValueRolledBack: true,
+      retainedDraft: true,
+      competingControlsBlocked: true,
+      duplicateRetrySuppressed: true,
+      retryPersistedExactInput: true,
+      discardPreservedStoredValue: true,
+      discardResetDraft: true,
+      discardedDraftDiffered: true,
+      baselineCoverCleared: true,
+      baselineOffset: 50,
+      baselineStateRestored: true
+    },
+    pagePropertyRecovery: {
+      message: "Injected page property persistence failure",
+      failedValueRolledBack: true,
+      draftRetained: true,
+      competingControlsBlocked: true,
+      duplicateRetrySuppressed: true,
+      retryPersistedExactInput: true,
+      discardPreservedStoredValue: true,
+      discardResetDraft: true,
+      baselineStateRestored: true
+    },
+    pageTitleRecovery: {
+      message: "Injected page title persistence failure",
+      failedMetadataRolledBack: true,
+      failedMarkdownRolledBack: true,
+      draftRetained: true,
+      competingControlsBlocked: true,
+      duplicateRetrySuppressed: true,
+      retryPersistedExactInput: true,
+      discardPreservedStoredTitle: true,
+      discardResetDraft: true,
+      baselineStateRestored: true
+    },
+    history: pageHistoryContractState(viewportName),
+    historyPreview: {
+      status: "Ready",
+      versionCount: 2,
+      selectedVersionCount: 1,
+      previewLabel: `Page snapshot · Page Secondary Target ${viewportName}`,
+      restoreButtonText: "Restore",
+      diffLineCount: 20,
+      storageLeakMatches: []
+    },
+    restore: {
+      confirmation: `Restore Page Secondary Target ${viewportName} from Jun 11, 2026, 5:00 AM?`,
+      message: "Page restored from local Git history.",
+      previewCleared: true,
+      restoredMarker: `Historical page detail ${viewportName}`,
+      persisted: true
+    },
     snapshot: {
       imagePath: snapshotPaths.imagePath,
       metadataPath: snapshotPaths.metadataPath,
@@ -4336,19 +7024,104 @@ function pageSecondaryContractEntry(viewportName, snapshotPaths) {
       width: 280
     },
     toc: {
-      collapsed: {
-        hostClass: "cm-md-floating-toc-host cm-md-toc-collapsed",
-        itemTexts: [],
-        navDisplay: "none",
-        toggleExpanded: "false"
+      autoHidden: structuredClone(collapsedTocState),
+      collapsed: structuredClone(collapsedTocState),
+      collapsedSnapshot: {
+        imagePath: tocCollapsedImagePath,
+        metadataPath: tocCollapsedMetadataPath,
+        height: pageSecondaryViewport(viewportName).height,
+        width: pageSecondaryViewport(viewportName).width
       },
-      expanded: {
-        hostClass: "cm-md-floating-toc-host cm-md-toc-expanded",
-        itemTexts: ["Page Secondary Target", "Overview", "Deep Work", "Nested Insight", "Final Section"],
-        navDisplay: "block",
-        toggleExpanded: "true"
+      escaped: structuredClone(collapsedTocState),
+      expanded: structuredClone(expandedTocState),
+      focusExpanded: {
+        ...structuredClone(expandedTocState),
+        activeIsToggle: true,
+        focusedWithin: true
+      },
+      hoverExpanded: {
+        ...structuredClone(expandedTocState),
+        hovered: true
+      },
+      keyboardAfterPointer: {
+        ...structuredClone(expandedTocState),
+        activeIsTocItem: true,
+        focusedWithin: true,
+        hovered: false
+      },
+      pointerNavigation: {
+        ...structuredClone(expandedTocState),
+        activeIsTocItem: true,
+        focusedWithin: true,
+        hovered: true
+      },
+      navigation: {
+        activeClass: "cm-md-toc-item",
+        activeInEditor: false,
+        activeIsTocItem: true,
+        headingText: "Nested Insight",
+        headingIsActiveLine: false
+      },
+      layout: {
+        viewportWidth: viewport.width,
+        contentRect,
+        hostPosition: "fixed",
+        layoutStable: true,
+        overlapsContent: true,
+        backgroundColor: "rgb(255, 255, 255)",
+        hostOpacity: "1",
+        navOverflowY: "auto",
+        navScrollHeight: 600,
+        navClientHeight: 420
+      },
+      snapshot: {
+        imagePath: tocImagePath,
+        metadataPath: tocMetadataPath,
+        height: pageSecondaryViewport(viewportName).height,
+        width: pageSecondaryViewport(viewportName).width
       }
     }
+  };
+}
+
+function pageHistoryContractState(viewportName) {
+  return {
+    panel: { top: 200, right: 900, bottom: 680, left: 188, width: 712, height: 480 },
+    statusRect: { top: 206, right: 898, bottom: 224, left: 850, width: 48, height: 18 },
+    previewRect: { top: 378, right: 900, bottom: 670, left: 188, width: 712, height: 292 },
+    previewLabelRect: { top: 390, right: 520, bottom: 403, left: 197, width: 323, height: 13 },
+    restoreButtonRect: { top: 385, right: 891, bottom: 411, left: 829, width: 62, height: 26 },
+    versionRects: [{
+      label: "Current page details",
+      rect: { top: 290, right: 900, bottom: 330, left: 188, width: 712, height: 40 },
+      selected: false
+    }, {
+      label: "Historical page details",
+      rect: { top: 333, right: 900, bottom: 373, left: 188, width: 712, height: 40 },
+      selected: true
+    }],
+    status: "Ready",
+    message: "2 local Git versions found.",
+    versionCount: 2,
+    selectedVersionCount: 1,
+    previewLabel: `Page snapshot · Page Secondary Target ${viewportName}`,
+    restoreButtonText: "Restore",
+    diffLineCount: 20,
+    addedLineCount: 1,
+    removedLineCount: 1,
+    backlinkExcerpts: Array.from({ length: 5 }, (_unused, index) =>
+      `Backlink source ${index + 1} links to Page Secondary Target ${viewportName}.`
+    ),
+    storageLeakMatches: [],
+    statusInsidePanel: true,
+    versionsInsidePanel: true,
+    previewInsidePanel: true,
+    previewLabelInsidePreview: true,
+    restoreInsidePreview: true,
+    horizontalOverflow: 0,
+    secondaryExpanded: true,
+    contentVisibility: "visible",
+    contentOpacity: "1"
   };
 }
 
@@ -4373,11 +7146,50 @@ async function writePluginManagerSnapshotFiles({ entry, imagePath, metadataPath,
       permissionSummary: entry.permissionSummary,
       providerSourceDrilldown: entry.providerSourceDrilldown,
       lifecycle: entry.lifecycle,
+      snapshotState: entry.snapshotState,
       sourceDrilldown: entry.sourceDrilldown,
       summary: entry.summary,
       viewport: viewportName
     }
   }, null, 2)}\n`, "utf8");
+  const expectedPath = imagePath.replace(/\.png$/, ".expected.png");
+  const diffPath = imagePath.replace(/\.png$/, ".diff.png");
+  const diffMetadataPath = imagePath.replace(/\.png$/, ".diff.json");
+  const policyPath = imagePath.replace(/\.png$/, ".policy.json");
+  await Promise.all([
+    writeFile(expectedPath, "fake committed plugin manager baseline", "utf8"),
+    writeFile(diffPath, "fake zero-pixel plugin manager diff", "utf8"),
+    writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+    writeFile(diffMetadataPath, JSON.stringify({
+      kind: "lotion-png-visual-diff",
+      status: "passed",
+      actualPath: imagePath,
+      expectedPath
+    }), "utf8")
+  ]);
+  entry.perceptualBaseline = {
+    kind: "lotion-png-visual-diff",
+    status: "passed",
+    actualPath: imagePath,
+    expectedPath,
+    diffPath,
+    metadataPath: diffMetadataPath,
+    policyPath,
+    dimensionsMatch: true,
+    diffPixels: 0,
+    diffRatio: 0,
+    threshold: 0.1,
+    includeAA: false,
+    maxDiffPixels: 0,
+    maxDiffRatio: 0,
+    policy: {
+      surface: "plugin-manager",
+      viewport: { name: viewportName },
+      imageSha256: "d".repeat(64),
+      verifiedAt: "2026-07-22",
+      sourceTask: "tasks/done/plugin-manager-complete-surface-committed-perceptual-baselines.md"
+    }
+  };
 }
 
 function pluginManagerContractEntry(viewportName, snapshotPaths) {
@@ -4386,7 +7198,7 @@ function pluginManagerContractEntry(viewportName, snapshotPaths) {
     viewport: viewportName,
     summary: {
       pluginRows: listedPlugins.length,
-      providerRows: 4,
+      providerRows: 14,
       settingsHosts: 0
     },
     listedPlugins,
@@ -4433,6 +7245,16 @@ function pluginManagerContractEntry(viewportName, snapshotPaths) {
     notification: {
       text: "Plugin notify smoke",
       renderedText: "Plugin notify smoke"
+    },
+    snapshotState: {
+      allPluginRowsWithinManager: true,
+      allProviderRowsWithinManager: true,
+      lastSectionWithinManager: true,
+      managementScrollTop: 0,
+      managerHeight: viewportName === "compact" ? 2598 : 2284,
+      pluginRowCount: 7,
+      providerRowCount: 14,
+      summaryWithinManager: true
     },
     snapshot: {
       imagePath: snapshotPaths.imagePath,
@@ -4489,7 +7311,24 @@ function searchAiContractEntry(viewportName, { imagePath, metadataPath }) {
       text: "Local semantic index Open Advanced results Search & AI Settings"
     },
     chat: {
-      selected: `Selected Source ${search.rowTitle} Open LLM Chat LLM settings`
+      selected: `Selected Source ${search.rowTitle} Row page · ${search.databaseName}`
+    },
+    visibleState: {
+      activePrimaryTab: "LLM Chat",
+      primaryTabs: [
+        { label: "Search", fullyVisible: true },
+        { label: "LLM Chat", fullyVisible: true }
+      ],
+      selectedSource: {
+        title: search.rowTitle,
+        subtitle: `Row page · ${search.databaseName}`,
+        clientWidth: 806,
+        scrollWidth: 806,
+        fullyVisible: true,
+        rect: { top: 220, right: 840, bottom: 300, left: 40, width: 800, height: 80 }
+      },
+      storageLeakMatches: [],
+      surface: { top: 100, right: 880, bottom: 470, left: 0, width: 880, height: 370 }
     },
     snapshot: {
       imagePath,
@@ -4498,8 +7337,60 @@ function searchAiContractEntry(viewportName, { imagePath, metadataPath }) {
   };
 }
 
+async function attachSearchAiPerceptualBaseline(snapshot, viewportName) {
+  const expectedPath = snapshot.imagePath.replace(/\.png$/, ".expected.png");
+  const diffPath = snapshot.imagePath.replace(/\.png$/, ".diff.png");
+  const diffMetadataPath = snapshot.imagePath.replace(/\.png$/, ".diff.json");
+  const policyPath = snapshot.imagePath.replace(/\.png$/, ".policy.json");
+  await Promise.all([
+    writeFile(expectedPath, "fake committed Search & AI chat-handoff baseline", "utf8"),
+    writeFile(diffPath, "fake zero-pixel Search & AI chat-handoff diff", "utf8"),
+    writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+    writeFile(diffMetadataPath, JSON.stringify({
+      kind: "lotion-png-visual-diff",
+      status: "passed",
+      actualPath: snapshot.imagePath,
+      expectedPath
+    }), "utf8")
+  ]);
+  snapshot.perceptualBaseline = {
+    kind: "lotion-png-visual-diff",
+    status: "passed",
+    actualPath: snapshot.imagePath,
+    expectedPath,
+    diffPath,
+    metadataPath: diffMetadataPath,
+    policyPath,
+    dimensionsMatch: true,
+    diffPixels: 0,
+    diffRatio: 0,
+    threshold: 0.1,
+    includeAA: false,
+    maxDiffPixels: 0,
+    maxDiffRatio: 0,
+    policy: {
+      surface: "search-ai-chat-handoff",
+      viewport: { name: viewportName },
+      imageSha256: "d".repeat(64),
+      verifiedAt: "2026-07-23",
+      sourceTask: "tasks/done/search-ai-selected-source-identity-and-chat-handoff-baselines.md"
+    }
+  };
+}
+
 function whiteThemeContractEntry(viewportName, snapshotRoot) {
   const states = Object.fromEntries(requiredWhiteThemePhases().map((phase) => [phase, whiteThemeState(phase)]));
+  states.page.scrollState = {
+    scrollTop: {
+      ".main-content": 0,
+      ".page-editor": 0
+    },
+    floatingToc: {
+      borderLeftColor: "rgba(0, 0, 0, 0)",
+      collapsed: true,
+      width: viewportName === "compact" ? 38 : 44
+    }
+  };
   return {
     viewport: viewportName,
     pageState: states.page,
@@ -4554,6 +7445,46 @@ async function writeWhiteThemeSnapshotFiles({ snapshot, viewportName }) {
     image: snapshot.imagePath,
     metadata: { phase: snapshot.phase }
   }, null, 2)}\n`, "utf8");
+  if (snapshot.phase === "page" && ["desktop", "compact", "wide"].includes(viewportName)) {
+    const expectedPath = snapshot.imagePath.replace(/\.png$/, ".expected.png");
+    const diffPath = snapshot.imagePath.replace(/\.png$/, ".diff.png");
+    const diffMetadataPath = snapshot.imagePath.replace(/\.png$/, ".diff.json");
+    const policyPath = snapshot.imagePath.replace(/\.png$/, ".policy.json");
+    await Promise.all([
+      writeFile(expectedPath, "fake committed white-theme page baseline", "utf8"),
+      writeFile(diffPath, "fake zero-pixel white-theme page diff", "utf8"),
+      writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+      writeFile(diffMetadataPath, JSON.stringify({
+        kind: "lotion-png-visual-diff",
+        status: "passed",
+        actualPath: snapshot.imagePath,
+        expectedPath
+      }), "utf8")
+    ]);
+    snapshot.perceptualBaseline = {
+      kind: "lotion-png-visual-diff",
+      status: "passed",
+      actualPath: snapshot.imagePath,
+      expectedPath,
+      diffPath,
+      metadataPath: diffMetadataPath,
+      policyPath,
+      dimensionsMatch: true,
+      diffPixels: 0,
+      diffRatio: 0,
+      threshold: 0.1,
+      includeAA: false,
+      maxDiffPixels: 0,
+      maxDiffRatio: 0,
+      policy: {
+        surface: "white-theme-page",
+        viewport: { name: viewportName },
+        imageSha256: "b".repeat(64),
+        verifiedAt: "2026-07-22",
+        sourceTask: "tasks/done/white-theme-page-committed-perceptual-baselines.md"
+      }
+    };
+  }
 }
 
 async function advancedSearchContractEntry({ artifactRoot, viewportName }) {
@@ -4587,6 +7518,12 @@ async function advancedSearchContractEntry({ artifactRoot, viewportName }) {
       providerValue: "local",
       queryValue: "retention complaints",
       resultCount: 1,
+      resultsViewport: { clientHeight: 230, scrollHeight: 230, scrollTop: 0 },
+      resultVisibility: [{
+        title: "Customer Feedback",
+        fullyVisible: true,
+        rect: { top: 520, right: 1144, bottom: 590, left: 356, width: 788, height: 70 }
+      }],
       snippets: ["Retention complaints from customers and support notes."],
       sources: ["Row page"],
       statusLabel: "Stale",
@@ -4626,6 +7563,9 @@ async function advancedSearchContractEntry({ artifactRoot, viewportName }) {
       height: 680,
       width: 860
     });
+    if (phase === "stale-results") {
+      await attachAdvancedSearchPerceptualBaseline(visualSnapshots.at(-1), viewportName);
+    }
   }
 
   return {
@@ -4654,12 +7594,55 @@ function advancedSearchVisibleState(overrides = {}) {
     queryPlaceholder: "Ask semantically across pages, databases, and row pages...",
     queryValue: "",
     resultCount: 0,
+    resultsViewport: { clientHeight: 180, scrollHeight: 180, scrollTop: 0 },
+    resultVisibility: [],
     snippets: [],
     sources: [],
     statusLabel: "Not built",
     storeValue: "json",
     titles: [],
     ...overrides
+  };
+}
+
+async function attachAdvancedSearchPerceptualBaseline(snapshot, viewportName) {
+  const expectedPath = snapshot.imagePath.replace(/\.png$/, ".expected.png");
+  const diffPath = snapshot.imagePath.replace(/\.png$/, ".diff.png");
+  const diffMetadataPath = snapshot.imagePath.replace(/\.png$/, ".diff.json");
+  const policyPath = snapshot.imagePath.replace(/\.png$/, ".policy.json");
+  await Promise.all([
+    writeFile(expectedPath, "fake committed Advanced Search stale-result baseline", "utf8"),
+    writeFile(diffPath, "fake zero-pixel Advanced Search stale-result diff", "utf8"),
+    writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+    writeFile(diffMetadataPath, JSON.stringify({
+      kind: "lotion-png-visual-diff",
+      status: "passed",
+      actualPath: snapshot.imagePath,
+      expectedPath
+    }), "utf8")
+  ]);
+  snapshot.perceptualBaseline = {
+    kind: "lotion-png-visual-diff",
+    status: "passed",
+    actualPath: snapshot.imagePath,
+    expectedPath,
+    diffPath,
+    metadataPath: diffMetadataPath,
+    policyPath,
+    dimensionsMatch: true,
+    diffPixels: 0,
+    diffRatio: 0,
+    threshold: 0.1,
+    includeAA: false,
+    maxDiffPixels: 0,
+    maxDiffRatio: 0,
+    policy: {
+      surface: "advanced-search-stale-results",
+      viewport: { name: viewportName },
+      imageSha256: "c".repeat(64),
+      verifiedAt: "2026-07-23",
+      sourceTask: "tasks/done/advanced-search-compact-result-visibility-and-stale-result-baselines.md"
+    }
   };
 }
 
@@ -4697,14 +7680,83 @@ async function llmChatContractEntry({ artifactRoot, viewportName }) {
   const makeSnapshot = async (phase, visibleState, extraMetadata = {}) => {
     const imagePath = join(snapshotRoot, `llm-chat-${phase}.png`);
     const metadataPath = join(snapshotRoot, `llm-chat-${phase}.json`);
-    await writeLLMChatSnapshotFiles({ extraMetadata, imagePath, metadataPath, phase, visibleState, viewportName });
-    return {
+    const normalizedVisibleState = {
+      ...visibleState,
+      transcriptViewport: visibleState.transcriptViewport || {
+        clientHeight: 290,
+        scrollHeight: 290,
+        scrollTop: 0
+      },
+      messages: (visibleState.messages || []).map((message, index) => ({
+        ...message,
+        fullyVisible: true,
+        rect: {
+          top: 380 + index * 74,
+          right: 1020,
+          bottom: 440 + index * 74,
+          left: 620,
+          width: 400,
+          height: 60
+        }
+      }))
+    };
+    await writeLLMChatSnapshotFiles({
+      extraMetadata,
+      imagePath,
+      metadataPath,
+      phase,
+      visibleState: normalizedVisibleState,
+      viewportName
+    });
+    const snapshot = {
       phase,
       imagePath,
       metadataPath,
       height: 720,
-      width: 440
+      width: 440,
+      visibleState: normalizedVisibleState
     };
+    if (phase === "conversation") {
+      const expectedPath = imagePath.replace(/\.png$/, ".expected.png");
+      const diffPath = imagePath.replace(/\.png$/, ".diff.png");
+      const diffMetadataPath = imagePath.replace(/\.png$/, ".diff.json");
+      const policyPath = imagePath.replace(/\.png$/, ".policy.json");
+      await Promise.all([
+        writeFile(expectedPath, "fake committed LLM Chat conversation baseline", "utf8"),
+        writeFile(diffPath, "fake zero-pixel LLM Chat conversation diff", "utf8"),
+        writeFile(policyPath, JSON.stringify({ kind: "lotion-production-visual-baseline-policy" }), "utf8"),
+        writeFile(diffMetadataPath, JSON.stringify({
+          kind: "lotion-png-visual-diff",
+          status: "passed",
+          actualPath: imagePath,
+          expectedPath
+        }), "utf8")
+      ]);
+      snapshot.perceptualBaseline = {
+        kind: "lotion-png-visual-diff",
+        status: "passed",
+        actualPath: imagePath,
+        expectedPath,
+        diffPath,
+        metadataPath: diffMetadataPath,
+        policyPath,
+        dimensionsMatch: true,
+        diffPixels: 0,
+        diffRatio: 0,
+        threshold: 0.1,
+        includeAA: false,
+        maxDiffPixels: 0,
+        maxDiffRatio: 0,
+        policy: {
+          surface: "llm-chat-conversation",
+          viewport: { name: viewportName },
+          imageSha256: "e".repeat(64),
+          verifiedAt: "2026-07-23",
+          sourceTask: "tasks/done/llm-chat-compact-transcript-visibility-and-conversation-baselines.md"
+        }
+      };
+    }
+    return snapshot;
   };
 
   const emptySnapshot = await makeSnapshot("empty", {
@@ -5195,6 +8247,11 @@ function searchUiContractEntry(viewportName, visualSnapshot) {
     hits: 140,
     firstRenderMs: 110,
     repeatedRenderMs: 90,
+    harnessCache: {
+      generationCounts: { relevance: 1, created_asc: 1, updated_desc: 1 },
+      queryCounts: { relevance: 4, created_asc: 1, updated_desc: 2 },
+      queryTimings: [{ cacheHit: true, delayMs: 350, originalMs: 12, prepareMs: 0.1, sortMode: "relevance", totalMs: 362.1 }]
+    },
     sorting: {
       createdAsc: "Search UI Hit 0",
       updatedDesc: "Search UI Hit 139",
@@ -5208,7 +8265,12 @@ function searchUiContractEntry(viewportName, visualSnapshot) {
       geometry: {
         active: true,
         dialogInsideViewport: true,
-        sortInsideViewport: true
+        sortInsideViewport: true,
+        filtersInsideDialog: true,
+        sortInsideDialog: true,
+        sortInsideFilters: true,
+        sortOverlapsFilter: false,
+        filtersOverflowX: 0
       }
     },
     inputLatency: {
@@ -5245,10 +8307,40 @@ function searchUiMetadata(viewportName) {
     firstRenderMs: 110,
     repeatedRenderMs: 90,
     inputMaxMs: 9,
+    layout: searchUiLayout(),
     rows: [
       { badge: "页面", match: "标题", title: "Search UI Hit 0", preview: "the deterministic search body 0" },
       { badge: "页面", match: "正文", title: `Search UI Hit ${viewportName === "desktop" ? 1 : 2}`, preview: "the deterministic search body" }
     ]
+  };
+}
+
+function searchUiLayout() {
+  const panel = { top: 80, right: 920, bottom: 680, left: 320, width: 600, height: 600 };
+  const filters = { top: 130, right: 919, bottom: 205, left: 321, width: 598, height: 75 };
+  const sortLabel = { top: 168, right: 907, bottom: 196, left: 750, width: 157, height: 28 };
+  const sortSelect = { top: 168, right: 907, bottom: 196, left: 780, width: 127, height: 28 };
+  const results = { top: 245, right: 919, bottom: 679, left: 321, width: 598, height: 434 };
+  return {
+    panel,
+    filters,
+    sortLabel,
+    sortSelect,
+    results,
+    filterButtons: Array.from({ length: 6 }, (_unused, index) => ({
+      label: `Filter ${index + 1}`,
+      rect: { top: 140, right: 390 + index * 55, bottom: 168, left: 340 + index * 55, width: 50, height: 28 }
+    })),
+    visibleRows: [{
+      title: "Search UI Hit 0",
+      rect: { top: 250, right: 900, bottom: 310, left: 340, width: 560, height: 60 },
+      fullyVisible: true
+    }],
+    filterCount: 6,
+    filtersOverflowX: 0,
+    sortInsidePanel: true,
+    sortInsideFilters: true,
+    sortOverlapsFilter: false
   };
 }
 
@@ -5317,6 +8409,113 @@ async function writeNavigationAnchorMetadata(path, viewportName, metadata) {
     image: path.replace(/\.json$/, ".png"),
     metadata
   }, null, 2)}\n`, "utf8");
+}
+
+function rowPropertyNames() {
+  return [
+    "Original Notion HTML",
+    "Original Notion CSV",
+    "Notes",
+    "Empty text",
+    "Status",
+    "Tags",
+    "Done",
+    "Blocked",
+    "Due date",
+    "Empty date",
+    "Score",
+    "Related"
+  ];
+}
+
+function createRowPropertyRecoveryEvidence(viewportName) {
+  return {
+    message: "Injected row-property persistence failure",
+    failedInput: {
+      rowId: "row_visual",
+      fieldId: "notes",
+      value: `Recovered row property ${viewportName}`
+    },
+    failedValueRolledBack: true,
+    draftRetained: true,
+    controlsBlocked: true,
+    duplicateRetrySuppressed: true,
+    retryPersisted: true,
+    discardPreservedStoredValue: true,
+    discardResetDraft: true,
+    baselineRestored: true
+  };
+}
+
+function createRowPropertyOptionRecoveryEvidence(viewportName) {
+  return {
+    message: "Injected row-property option persistence failure",
+    failedInput: [
+      { id: "status_todo", name: "Todo", color: "gray" },
+      { id: "status_done", name: "Done", color: "blue" }
+    ],
+    failedSchemaRolledBack: true,
+    dismissalBlocked: true,
+    duplicateRetrySuppressed: true,
+    retryPersisted: true,
+    discardPreservedStoredSchema: true,
+    discardResetControl: true,
+    baselineRestored: true,
+    viewport: viewportName
+  };
+}
+
+function createRowPropertyCompletePanelState(viewportName) {
+  const viewport = {
+    width: viewportName === "desktop" ? 1440 : viewportName === "wide" ? 1728 : 1040,
+    height: viewportName === "wide" ? 1100 : viewportName === "desktop" ? 1000 : 820
+  };
+  const rows = {};
+  rowPropertyNames().forEach((name, index) => {
+    const top = 100 + index * 36;
+    const row = {
+      labelRect: { left: 140, top: top + 2, right: 300, bottom: top + 32, width: 160, height: 30 },
+      rowOpacity: 1,
+      rowRect: { left: 130, top, right: 810, bottom: top + 34, width: 680, height: 34 },
+      rowVisibility: "visible",
+      valueRect: { left: 420, top: top + 2, right: 800, bottom: top + 32, width: 380, height: 30 }
+    };
+    if (name.startsWith("Original Notion")) {
+      row.linkRect = { left: 420, top: top + 4, right: 750, bottom: top + 30, width: 330, height: 26 };
+      row.linkOpenRect = { left: 760, top: top + 5, right: 790, bottom: top + 29, width: 30, height: 24 };
+    } else if (name === "Status" || name === "Tags") {
+      row.optionPillRect = { left: 420, top: top + 5, right: 480, bottom: top + 29, width: 60, height: 24 };
+      row.searchChipRect = { left: 490, top: top + 5, right: 560, bottom: top + 29, width: 70, height: 24 };
+      row.searchChipText = name === "Status" ? "Done" : "Focus";
+    } else if (name === "Done" || name === "Blocked") {
+      row.inputRect = { left: 420, top: top + 7, right: 440, bottom: top + 27, width: 20, height: 20 };
+    } else if (name === "Related") {
+      row.entityChipRect = { left: 420, top: top + 5, right: 650, bottom: top + 29, width: 230, height: 24 };
+    } else {
+      row.controlRect = { left: 420, top: top + 4, right: 790, bottom: top + 30, width: 370, height: 26 };
+    }
+    rows[name] = row;
+  });
+  return {
+    contentOpacity: 1,
+    contentOverflow: "visible",
+    contentRect: { left: 120, top: 90, right: 820, bottom: 550, width: 700, height: 460 },
+    contentScrollHeight: 460,
+    contentScrollTop: 0,
+    contentVisibility: "visible",
+    panelOpacity: 1,
+    panelRect: { left: 110, top: 60, right: 830, bottom: 570, width: 720, height: 510 },
+    panelVisibility: "visible",
+    propertiesOpacity: 1,
+    propertiesRect: { left: 120, top: 90, right: 820, bottom: 550, width: 700, height: 460 },
+    propertiesVisibility: "visible",
+    rows,
+    valueColumnLeft: 420,
+    viewport: {
+      ...viewport,
+      scrollWidth: viewport.width
+    }
+  };
 }
 
 function fakeLayoutPage({ metrics, viewport }) {

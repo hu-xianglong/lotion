@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "database-interaction-settings",
+  "theme": "light",
+  "viewport": {
+    "name": "compact",
+    "width": 1040,
+    "height": 820
+  },
+  "image": {
+    "path": "test/baselines/production-visual/database-interaction-settings-compact.png",
+    "sha256": "ac831692fb9ca9745d9106168af46ceacaf52b9823cbe917eac08ddb9a0fcdf4",
+    "width": 1040,
+    "height": 820
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

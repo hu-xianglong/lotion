@@ -119,6 +119,8 @@ export interface DatabaseSummary {
   /** Same shape as PageMeta.icon. */
   icon?: string;
   tags?: string[];
+  /** Ordered saved views used for full-page sidebar shortcuts. */
+  views?: Array<Pick<TableView, "id" | "name" | "type">>;
 }
 
 export interface DatabaseStats {
@@ -257,6 +259,28 @@ export interface DatabaseSchema {
   /** Original Notion source hash for imported databases or synthesized placeholders. */
   notion_source_hash?: string;
   tags?: string[];
+  deletedFields?: DeletedFieldTombstone[];
+  deletedRows?: DeletedRowTombstone[];
+  /** Prevents schema, view, and template mutations while leaving row content editable. */
+  locked?: boolean;
+}
+
+export interface DeletedRowTombstone {
+  record: DatabaseRecord;
+  position: number;
+  deletedAt: string;
+  /** Page-index state is detached while the row is deleted but retained here
+   * so restore can recover navigation metadata without keeping a ghost page. */
+  page?: { meta: PageMeta; bodyPath?: string };
+}
+
+export interface DeletedFieldTombstone {
+  field: FieldSchema;
+  values: Record<ID, RecordValue>;
+  position: number;
+  views: Array<{ viewId: ID; visibleIndex: number; orderIndex: number; wrapped: boolean }>;
+  dependencies: string[];
+  deletedAt: string;
 }
 
 export interface FieldSchema {
@@ -315,6 +339,7 @@ export type DatabaseRecord = Record<string, RecordValue>;
 
 export type BuiltInViewType = "table" | "list" | "calendar" | "gallery";
 export type DatabaseViewType = BuiltInViewType | "kanban" | (string & {});
+export type PageOpenMode = "side_peek" | "center_peek" | "full_page";
 export type ColumnSummaryType =
   | "none"
   | "count"
@@ -343,6 +368,13 @@ export interface TableView {
   fieldOrder: ID[];
   sorts: ViewSort[];
   filters: ViewFilter[];
+  /** Versioned nested filter tree. Legacy `filters` remain an implicit AND
+   * group and are migrated into this shape on the next persisted view write. */
+  filterExpression?: FilterGroup;
+  /** Shared grouping contract used by table, list, and provider views. */
+  groups?: ViewGroup[];
+  /** Saved presentation preference; an open peek itself is transient. */
+  pageOpenMode?: PageOpenMode;
   /** Provider-specific view configuration. For example, Kanban stores
    *  `{ groupBy: "status" }` here. */
   config?: Record<string, unknown>;
@@ -362,6 +394,16 @@ export interface TableView {
   /** Gallery view: which field provides the cover image path. Falls
    *  back to the row's hidden system `cover` cell when omitted. */
   coverFieldId?: ID;
+  /** Monotonic persisted revision used by patch-based view mutations. Legacy
+   * view files are read as revision 0 and gain a revision on their next write. */
+  revision?: number;
+  /** ISO timestamp for the most recent persisted view mutation. */
+  updatedAt?: string;
+  /** Stable zero-based tab position. Legacy files without a position are
+   * normalized from their current deterministic order. */
+  position?: number;
+  /** Last field pinned to the left in table layouts. */
+  frozenThroughFieldId?: ID;
 }
 
 export interface ViewSort {
@@ -369,10 +411,43 @@ export interface ViewSort {
   direction: "asc" | "desc";
 }
 
+export interface ViewGroup {
+  version: 1;
+  id: ID;
+  fieldId: ID;
+  order: "asc" | "desc" | "manual";
+  groupOrder?: string[];
+  hiddenGroupKeys?: string[];
+  collapsedGroupKeys?: string[];
+  hideEmpty?: boolean;
+}
+
 export interface ViewFilter {
   fieldId: ID;
-  operator: "is" | "is_not" | "contains" | "gt" | "lt" | "checked";
+  operator: FilterOperator;
   value: RecordValue;
+}
+
+export type FilterOperator =
+  | "is" | "is_not" | "contains" | "not_contains" | "gt" | "lt"
+  | "checked" | "unchecked" | "is_empty" | "is_not_empty"
+  | "within_past" | "within_next";
+
+export interface FilterCondition {
+  version: 1;
+  kind: "condition";
+  id: ID;
+  fieldId: ID;
+  operator: FilterOperator;
+  value: RecordValue;
+}
+
+export interface FilterGroup {
+  version: 1;
+  kind: "group";
+  id: ID;
+  conjunction: "and" | "or";
+  children: Array<FilterGroup | FilterCondition>;
 }
 
 export interface DatabaseBundle {
@@ -435,6 +510,7 @@ export interface CreateDatabaseInput {
 export interface UpdateDatabaseMetaInput {
   databaseId: ID;
   tags?: string[];
+  locked?: boolean;
 }
 
 export interface SaveDatabaseTemplateInput {
@@ -456,7 +532,14 @@ export interface DeleteDatabaseTemplateInput {
 export interface CreateViewInput {
   databaseId: ID;
   name: string;
+  type?: DatabaseViewType;
+  sourceMode?: "empty" | "duplicate";
   sourceViewId?: ID;
+}
+
+export interface ReorderViewsInput {
+  databaseId: ID;
+  viewIds: ID[];
 }
 
 export interface DuplicateViewInput {
@@ -484,7 +567,20 @@ export interface AddFieldInput {
   rollup?: RollupFieldConfig;
   dateFormat?: DateDisplayFormat;
   timeFormat?: TimeDisplayFormat;
+  visibility?: "all" | "current" | "hidden";
+  viewId?: ID;
+  sourceFieldId?: ID;
+  insertAfterFieldId?: ID;
+  insertBeforeFieldId?: ID;
 }
+
+export interface ReorderFieldsInput {
+  databaseId: ID;
+  fieldIds: ID[];
+}
+
+export interface RestoreFieldInput { databaseId: ID; fieldId: ID; }
+export interface PermanentlyDeleteFieldInput { databaseId: ID; fieldId: ID; }
 
 export interface UpdateFieldInput {
   databaseId: ID;
@@ -526,11 +622,52 @@ export interface DeleteRowInput {
   databaseId: ID;
   rowId: ID;
 }
+export interface DuplicateRowInput { databaseId: ID; rowId: ID; }
+export interface RestoreRowInput { databaseId: ID; rowId: ID; }
+export interface PermanentlyDeleteRowInput { databaseId: ID; rowId: ID; }
+export interface BatchRowsInput {
+  databaseId: ID;
+  updates?: Array<{ rowId: ID; fieldId: ID; value: RecordValue }>;
+  duplicateRowIds?: ID[];
+  deleteRowIds?: ID[];
+}
+export interface BatchRowsResult {
+  bundle: DatabaseBundle;
+  errors: Array<{ rowId: ID; message: string }>;
+  createdRowIds: ID[];
+}
 
 export interface UpdateViewInput {
   databaseId: ID;
   view: TableView;
 }
+
+export type TableViewPatch = Partial<Omit<TableView, "id" | "databaseId" | "revision" | "updatedAt">>;
+
+export interface PatchViewInput {
+  databaseId: ID;
+  viewId: ID;
+  patch: TableViewPatch;
+  expectedRevision: number;
+}
+
+export type PatchViewResult =
+  | {
+      ok: true;
+      bundle: DatabaseBundle;
+      view: TableView;
+    }
+  | {
+      ok: false;
+      error: {
+        code: "VIEW_CONFLICT";
+        message: string;
+        expectedRevision: number;
+        actualRevision: number;
+      };
+      bundle: DatabaseBundle;
+      currentView: TableView;
+    };
 
 export interface GitStatus {
   installed: boolean;
@@ -681,4 +818,24 @@ export interface PagesTreeDatabaseFolder {
 export interface PagesTree {
   topLevelPages: PageMeta[];
   databases: PagesTreeDatabaseFolder[];
+}
+
+export type StartupCacheStatus = "hit" | "rebuilt";
+
+export interface StartupCacheDiagnostics {
+  status: StartupCacheStatus;
+  reason: string;
+  path: string;
+  bytes: number;
+  validationMs: number;
+  readMs: number;
+  buildMs: number;
+  writeMs: number;
+}
+
+export interface StartupWorkspaceIndex {
+  pages: PageMeta[];
+  databases: DatabaseSummary[];
+  pagesTree: PagesTree;
+  cache: StartupCacheDiagnostics;
 }

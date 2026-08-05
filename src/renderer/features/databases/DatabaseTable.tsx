@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type WheelEvent } from "react";
-import type { ColumnSummaryType, DatabaseBundle, DatabaseRecord, DatabaseSummary, EntityRef, FieldSchema, FieldType, RecordValue, SelectOption, SystemTimeFieldId, TableView } from "../../../shared/types";
-import { formatDateForField, isDateLikeFieldType, parseDateValue } from "../../../shared/date-values";
+import type { BatchRowsInput, BatchRowsResult, ColumnSummaryType, CreateViewInput, DatabaseBundle, DatabaseRecord, DatabaseSummary, EntityRef, FieldSchema, FieldType, RecordValue, SelectOption, TableView, TableViewPatch, UpdateCellInput } from "../../../shared/types";
+import { formatDateForField, isDateLikeFieldType, parseDateValue, type DateTimeDisplayDefaults } from "../../../shared/date-values";
 import type { DatabaseViewProvider, Disposable, WorkspaceAPI } from "../../../shared/plugin-api";
 import { useDatabaseCache } from "../../context/database-cache";
 import { useLotionActions } from "../../context/lotion-actions";
@@ -23,7 +23,20 @@ import { perfLog } from "../../lib/perf-log";
 import { pluginHost } from "../../plugin-host";
 import { isReactProvider } from "../../../shared/plugin-react";
 import { formulaColumnLabel } from "../../../shared/formula";
-import { resolveRowIcon } from "../../../shared/row-icons";
+import { databaseCapabilities } from "../../../shared/database-capabilities";
+import { DatabaseSettingsMenu } from "./DatabaseSettingsMenu";
+import { CreateViewDialog } from "./CreateViewDialog";
+import { ViewContextMenu } from "./ViewContextMenu";
+import { PropertyManagerDialog } from "./PropertyManagerDialog";
+import { ColumnHeaderMenu } from "./ColumnHeaderMenu";
+import { flattenSimpleAndFilters } from "../../../shared/filter-expression";
+import { RowContextMenu } from "./RowContextMenu";
+import { DeletedRowsDialog } from "./DeletedRowsDialog";
+import { databaseRowLink } from "../../../shared/database-row-link";
+import { EMPTY_GROUP_KEY, groupDatabaseRecords } from "../../../shared/database-grouping";
+import { GroupSettingsDialog } from "./GroupSettingsDialog";
+import { normalizePageOpenMode } from "../../../shared/database-page-open";
+import { useDateTimeDisplayDefaults } from "../../lib/settings";
 
 const DEFAULT_COLUMN_WIDTH = 180;
 const MIN_COLUMN_WIDTH = 80;
@@ -33,6 +46,186 @@ const VIRTUALIZATION_ROW_LIMIT = 120;
 const DEFAULT_EMBEDDED_TABLE_ROW_LIMIT = 20;
 const EMBEDDED_LOAD_MORE_ROWS = 50;
 const CELL_COMMIT_DEBOUNCE_MS = 800;
+const LAST_ACTIVE_VIEW_STORAGE_PREFIX = "lotion.database.lastActiveView.";
+
+export type BulkRowAction = "apply" | "duplicate" | "delete";
+export type BulkRowActionStatus = "submitted" | "failed" | "ignored";
+export type RowCreationStatus = "submitted" | "failed" | "ignored";
+export type CellEditQueueResult = "submitted" | "discarded" | "ignored";
+export interface CellEditQueueSnapshot {
+  status: "idle" | "saving" | "error";
+  error?: string;
+  queuedCount: number;
+  failedInput?: UpdateCellInput;
+}
+
+export function rowCreationControlsBlocked(pending: boolean, error: string): boolean {
+  return pending || Boolean(error);
+}
+
+export function createCellEditQueue({
+  operation,
+  onStateChange
+}: {
+  operation: (input: UpdateCellInput) => Promise<void>;
+  onStateChange: (snapshot: CellEditQueueSnapshot) => void;
+}) {
+  type QueueItem = {
+    input: UpdateCellInput;
+    resolve: (result: CellEditQueueResult) => void;
+  };
+  const queue: QueueItem[] = [];
+  let running = false;
+  let failed = false;
+  let errorMessage = "";
+
+  function snapshot(): CellEditQueueSnapshot {
+    return failed
+      ? { status: "error", error: errorMessage, queuedCount: Math.max(0, queue.length - 1), failedInput: queue[0]?.input }
+      : running
+        ? { status: "saving", queuedCount: Math.max(0, queue.length - 1) }
+        : { status: "idle", queuedCount: 0 };
+  }
+
+  function emit() {
+    onStateChange(snapshot());
+  }
+
+  async function drain(): Promise<void> {
+    if (running || failed) return;
+    const item = queue[0];
+    if (!item) {
+      emit();
+      return;
+    }
+    running = true;
+    emit();
+    try {
+      await operation(item.input);
+      queue.shift();
+      item.resolve("submitted");
+      running = false;
+      emit();
+      void drain();
+    } catch (error) {
+      running = false;
+      failed = true;
+      errorMessage = error instanceof Error ? error.message : String(error);
+      emit();
+    }
+  }
+
+  function enqueue(input: UpdateCellInput): Promise<CellEditQueueResult> {
+    const last = queue.at(-1);
+    if (
+      last
+      && last.input.databaseId === input.databaseId
+      && last.input.rowId === input.rowId
+      && last.input.fieldId === input.fieldId
+      && recordValueEquals(last.input.value, input.value)
+    ) {
+      return Promise.resolve("ignored");
+    }
+    let resolve!: (result: CellEditQueueResult) => void;
+    const result = new Promise<CellEditQueueResult>((next) => { resolve = next; });
+    queue.push({ input, resolve });
+    if (failed || running) emit();
+    void drain();
+    return result;
+  }
+
+  function retry(): boolean {
+    if (!failed || running) return false;
+    failed = false;
+    errorMessage = "";
+    void drain();
+    return true;
+  }
+
+  function discard(): boolean {
+    if (!failed || running) return false;
+    const item = queue.shift();
+    item?.resolve("discarded");
+    failed = false;
+    errorMessage = "";
+    emit();
+    void drain();
+    return true;
+  }
+
+  return {
+    enqueue,
+    retry,
+    discard,
+    getSnapshot: snapshot
+  };
+}
+
+export function bulkRowsResultFeedback(result: BatchRowsResult, successMessage: string): { kind: "error" | "success"; message: string } {
+  return result.errors.length > 0
+    ? { kind: "error", message: `${result.errors.length} row action${result.errors.length === 1 ? "" : "s"} failed: ${result.errors.map((error) => `${error.rowId}: ${error.message}`).join("; ")}` }
+    : { kind: "success", message: successMessage };
+}
+
+export async function runBulkRowAction({
+  guard,
+  onError,
+  onPendingChange,
+  onSuccess,
+  operation
+}: {
+  guard: { current: boolean };
+  onError: (message: string) => void;
+  onPendingChange: (pending: boolean) => void;
+  onSuccess: (result: BatchRowsResult) => void;
+  operation: () => Promise<BatchRowsResult>;
+}): Promise<BulkRowActionStatus> {
+  if (guard.current) return "ignored";
+  guard.current = true;
+  onError("");
+  onPendingChange(true);
+  try {
+    const result = await operation();
+    onSuccess(result);
+    return "submitted";
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return "failed";
+  } finally {
+    guard.current = false;
+    onPendingChange(false);
+  }
+}
+
+export async function runRowCreation({
+  guard,
+  onError,
+  onPendingChange,
+  onSuccess,
+  operation
+}: {
+  guard: { current: boolean };
+  onError: (message: string) => void;
+  onPendingChange: (pending: boolean) => void;
+  onSuccess: () => void;
+  operation: () => Promise<void>;
+}): Promise<RowCreationStatus> {
+  if (guard.current) return "ignored";
+  guard.current = true;
+  onError("");
+  onPendingChange(true);
+  try {
+    await operation();
+    onSuccess();
+    return "submitted";
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return "failed";
+  } finally {
+    guard.current = false;
+    onPendingChange(false);
+  }
+}
 
 function tablePerfLog(label: string, detail: Record<string, unknown>): void {
   perfLog(label, detail);
@@ -56,11 +249,9 @@ interface DatabaseTableProps {
   /** Cover image handlers — same shape as icons. */
   onPickCover?: () => void;
   onClearCover?: () => void;
-  onCommitCoverOffset?: (offset: number) => void;
+  onCommitCoverOffset?: (offset: number) => void | Promise<void>;
   onUpdateTags?: (tags: string[]) => void;
   onOpenInNewWindow?: () => void;
-  favorited?: boolean;
-  onToggleFavorite?: () => void;
 }
 
 export const DatabaseTable = memo(function DatabaseTable({
@@ -79,47 +270,92 @@ export const DatabaseTable = memo(function DatabaseTable({
   onClearCover,
   onCommitCoverOffset,
   onUpdateTags,
-  onOpenInNewWindow,
-  favorited,
-  onToggleFavorite
+  onOpenInNewWindow
 }: DatabaseTableProps) {
   const renderStartedAt = performance.now();
   const { t, locale } = useI18n();
-  const { openRowPage, selectDatabase, selectPage } = useLotionActions();
+  const dateTimeDefaults = useDateTimeDisplayDefaults();
+  const { openRowPage, openRowPageInNewWindow, selectDatabase, selectPage } = useLotionActions();
   const cache = useDatabaseCache();
   const [fieldName, setFieldName] = useState("");
   const [fieldType, setFieldType] = useState<FieldSchema["type"]>("text");
   const [formula, setFormula] = useState("=IF(title=\"Done\", 1, 0)");
   const [editingField, setEditingField] = useState<FieldSchema>();
-  const [fieldContextMenu, setFieldContextMenu] = useState<{
-    fieldId: string;
-    left: number;
-    top: number;
-    copyingTarget?: SystemTimeFieldId;
-    message?: string;
-  } | null>(null);
   const [editingView, setEditingView] = useState<TableView>();
+  const [createViewOpen, setCreateViewOpen] = useState(false);
+  const [propertyManagerOpen, setPropertyManagerOpen] = useState(false);
+  const [viewMenu, setViewMenu] = useState<{ viewId: string; anchor: { left: number; top: number } } | null>(null);
+  const [columnMenu, setColumnMenu] = useState<{ fieldId: string; anchor: { left: number; top: number } } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ rowId: string; anchor: { left: number; top: number } } | null>(null);
+  const [deletedRowsOpen, setDeletedRowsOpen] = useState(false);
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
+  const lastSelectedIndexRef = useRef<number | null>(null);
+  const [bulkFieldId, setBulkFieldId] = useState("title");
+  const [bulkValue, setBulkValue] = useState("");
+  const [bulkFeedback, setBulkFeedback] = useState<{ kind: "error" | "success"; message: string; retryable?: boolean }>();
+  const [bulkPendingAction, setBulkPendingAction] = useState<BulkRowAction | null>(null);
+  const bulkActionRef = useRef(false);
+  const bulkRetryRef = useRef<{ action: BulkRowAction; input: BatchRowsInput; successMessage: string } | null>(null);
+  const [rowCreationError, setRowCreationError] = useState("");
+  const [rowCreationPending, setRowCreationPending] = useState(false);
+  const rowCreationGuardRef = useRef(false);
+  const rowCreationRetryRef = useRef<(() => Promise<void>) | null>(null);
+  const rowCreationBlocked = rowCreationControlsBlocked(rowCreationPending, rowCreationError);
+  const [cellEditState, setCellEditState] = useState<CellEditQueueSnapshot>({ status: "idle", queuedCount: 0 });
+  const [cellEditorResetVersion, setCellEditorResetVersion] = useState(0);
+  const cellEditOperationRef = useRef<(input: UpdateCellInput) => Promise<void>>(async () => {});
+  cellEditOperationRef.current = async (input) => {
+    await cache.updateCell(input);
+  };
+  const cellEditQueueRef = useRef<ReturnType<typeof createCellEditQueue> | null>(null);
+  if (!cellEditQueueRef.current) {
+    cellEditQueueRef.current = createCellEditQueue({
+      operation: (input) => cellEditOperationRef.current(input),
+      onStateChange: setCellEditState
+    });
+  }
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [rowRecovery, setRowRecovery] = useState<{
+    rowId: string;
+    title: string;
+    status: "deleted" | "delete-error" | "restore-error";
+    error?: string;
+  } | null>(null);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
-  const [activeViewId, setActiveViewId] = useState(view.id);
+  const [activeViewId, setActiveViewId] = useState(() => preferredActiveViewId(bundle, view, !embedded));
   const previousDatabaseIdRef = useRef(bundle.schema.id);
   const previousPropViewIdRef = useRef(view.id);
   const [viewProviderVersion, setViewProviderVersion] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const [sortAnchor, setSortAnchor] = useState<{ left: number; top: number } | null>(null);
   const [filterAnchor, setFilterAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [filterInitialFieldId, setFilterInitialFieldId] = useState<string>();
+  const [settingsAnchor, setSettingsAnchor] = useState<{ left: number; top: number } | null>(null);
+  useEffect(() => { if (searchOpen) searchInputRef.current?.focus(); }, [searchOpen]);
+  function closeMenuLayers() {
+    setSettingsAnchor(null); setViewMenu(null); setColumnMenu(null); setRowMenu(null); setSortAnchor(null); setFilterAnchor(null);
+  }
+  function openSettingsMenu(anchor: { left: number; top: number }) { closeMenuLayers(); setSettingsAnchor(anchor); }
+  function openViewMenu(viewId: string, anchor: { left: number; top: number }) { closeMenuLayers(); setViewMenu({ viewId, anchor }); }
+  function openColumnMenu(fieldId: string, anchor: { left: number; top: number }) { closeMenuLayers(); setColumnMenu({ fieldId, anchor }); }
+  function openRowMenu(rowId: string, anchor: { left: number; top: number }) { closeMenuLayers(); setRowMenu({ rowId, anchor }); }
+  function openSortMenu(anchor: { left: number; top: number }) { closeMenuLayers(); setSortAnchor(anchor); }
   const activeView = bundle.views.find((item) => item.id === activeViewId) || bundle.views[0] || view;
+  const viewMutationState = cache.getViewMutationState(bundle.schema.id, activeView.id);
+  const capabilities = useMemo(() => databaseCapabilities(bundle.schema), [bundle.schema]);
   const viewProviders = useMemo(() => pluginHost.views.list(), [viewProviderVersion]);
   const activePluginView = useMemo(
     () => pluginHost.views.get(activeView.type),
     [activeView.type, viewProviderVersion]
   );
   const activeViewTypeLabel = activePluginView?.label || formatViewTypeLabel(activeView.type);
-  const openRecordPage = useCallback((rowId: string) => {
-    openRowPage(bundle.schema.id, rowId);
-  }, [bundle.schema.id, openRowPage]);
+  const openRecordPage = useCallback((rowId: string, peekOrigin?: HTMLElement) => {
+    openRowPage(bundle.schema.id, rowId, { pageOpenMode: normalizePageOpenMode(activeView.pageOpenMode, activeView.type), peekOrigin });
+  }, [activeView.pageOpenMode, activeView.type, bundle.schema.id, openRowPage]);
   const openEntityRef = useCallback((ref: EntityRef) => {
     if (ref.kind === "page") {
       selectPage(ref.entityId);
@@ -198,6 +434,21 @@ export const DatabaseTable = memo(function DatabaseTable({
     });
     return result;
   }, [activeView.id, baseRecords, bundle.schema.id, embedded, fields, searchQuery]);
+  const primaryGroup = activeView.groups?.[0];
+  const primaryGroupField = primaryGroup ? bundle.schema.fields.find((field) => field.id === primaryGroup.fieldId) : undefined;
+  const recordGroups = useMemo(() => primaryGroup && primaryGroupField ? groupDatabaseRecords(records, primaryGroupField, primaryGroup) : undefined, [primaryGroup, primaryGroupField, records]);
+  const secondaryGroup = activeView.groups?.[1];
+  const secondaryGroupField = secondaryGroup ? bundle.schema.fields.find((field) => field.id === secondaryGroup.fieldId) : undefined;
+  const displayedRecordGroups = useMemo(() => recordGroups?.map((group) => ({
+    ...group,
+    collapsed: Boolean(primaryGroup?.collapsedGroupKeys?.includes(group.key)),
+    subgroups: secondaryGroup && secondaryGroupField
+      ? groupDatabaseRecords(group.records, secondaryGroupField, secondaryGroup).map((subgroup) => ({
+          ...subgroup,
+          collapsed: Boolean(secondaryGroup.collapsedGroupKeys?.includes(subgroup.key))
+        }))
+      : undefined
+  })), [primaryGroup?.collapsedGroupKeys, recordGroups, secondaryGroup, secondaryGroupField]);
   const embeddedBaseRowLimit = embedded && activeView.type === "table"
     ? activeView.pageSize && activeView.pageSize > 0
       ? activeView.pageSize
@@ -235,7 +486,7 @@ export const DatabaseTable = memo(function DatabaseTable({
     : 0;
   const columnSummaries = useMemo(() => {
     const start = performance.now();
-    const result = computeColumnSummaries(fields, records, activeView, locale);
+    const result = computeColumnSummaries(fields, records, activeView, locale, dateTimeDefaults);
     tablePerfLog("table.computeColumnSummaries", {
       databaseId: bundle.schema.id,
       viewId: activeView.id,
@@ -246,7 +497,19 @@ export const DatabaseTable = memo(function DatabaseTable({
       summaries: result.byFieldId.size
     });
     return result;
-  }, [activeView, bundle.schema.id, embedded, fields, locale, records]);
+  }, [activeView, bundle.schema.id, dateTimeDefaults, embedded, fields, locale, records]);
+  const rowSelectionScope = JSON.stringify({
+    databaseId: bundle.schema.id,
+    viewId: activeView.id,
+    filterExpression: activeView.filterExpression ?? null,
+    filters: activeView.filters ?? [],
+    sorts: activeView.sorts ?? []
+  });
+
+  useEffect(() => {
+    setSelectedRowIds(new Set());
+    lastSelectedIndexRef.current = null;
+  }, [rowSelectionScope]);
 
   useEffect(() => {
     setEmbeddedExtraRows(0);
@@ -259,13 +522,42 @@ export const DatabaseTable = memo(function DatabaseTable({
     previousPropViewIdRef.current = view.id;
 
     if ((databaseChanged || propViewChanged) && bundle.views.some((item) => item.id === view.id)) {
-      setActiveViewId(view.id);
+      setActiveViewId(databaseChanged ? preferredActiveViewId(bundle, view, !embedded) : view.id);
       return;
     }
     if (!bundle.views.some((item) => item.id === activeViewId)) {
       setActiveViewId(bundle.views[0]?.id || view.id);
     }
-  }, [activeViewId, bundle.views, view.id]);
+  }, [activeViewId, bundle, embedded, view]);
+
+  useEffect(() => {
+    function selectSavedView(event: Event) {
+      const detail = (event as CustomEvent<{ databaseId?: string; viewId?: string }>).detail;
+      if (detail?.databaseId !== bundle.schema.id || !detail.viewId) return;
+      if (bundle.views.some((candidate) => candidate.id === detail.viewId)) setActiveViewId(detail.viewId);
+    }
+    window.addEventListener("lotion:select-database-view", selectSavedView);
+    return () => window.removeEventListener("lotion:select-database-view", selectSavedView);
+  }, [bundle.schema.id, bundle.views]);
+
+  useEffect(() => {
+    if (embedded) return;
+    window.dispatchEvent(new CustomEvent("lotion:database-views-changed", {
+      detail: {
+        databaseId: bundle.schema.id,
+        views: bundle.views.map(({ id, name, type }) => ({ id, name, type }))
+      }
+    }));
+  }, [bundle.schema.id, bundle.views, embedded]);
+
+  useEffect(() => {
+    if (embedded) return;
+    try {
+      window.localStorage.setItem(`${LAST_ACTIVE_VIEW_STORAGE_PREFIX}${bundle.schema.id}`, activeView.id);
+    } catch {
+      // Local preferences are best-effort (private mode/full storage can fail).
+    }
+  }, [activeView.id, bundle.schema.id, embedded]);
 
   useEffect(() => {
     if (!templateMenuOpen) return;
@@ -277,24 +569,6 @@ export const DatabaseTable = memo(function DatabaseTable({
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [templateMenuOpen]);
-
-  useEffect(() => {
-    if (!fieldContextMenu) return;
-    function closeFieldContextMenu(event: MouseEvent) {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".field-context-menu")) return;
-      setFieldContextMenu(null);
-    }
-    function closeFieldContextMenuWithKeyboard(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") setFieldContextMenu(null);
-    }
-    document.addEventListener("mousedown", closeFieldContextMenu);
-    document.addEventListener("keydown", closeFieldContextMenuWithKeyboard);
-    return () => {
-      document.removeEventListener("mousedown", closeFieldContextMenu);
-      document.removeEventListener("keydown", closeFieldContextMenuWithKeyboard);
-    };
-  }, [fieldContextMenu]);
 
   async function addField() {
     if (!fieldName.trim()) return;
@@ -318,13 +592,74 @@ export const DatabaseTable = memo(function DatabaseTable({
     });
   }
 
+  function queueCellEdit(rowId: string, fieldId: string, value: RecordValue) {
+    void cellEditQueueRef.current?.enqueue({
+      databaseId: bundle.schema.id,
+      rowId,
+      fieldId,
+      value
+    });
+  }
+
+  function discardFailedCellEdit() {
+    if (!cellEditQueueRef.current?.discard()) return;
+    setCellEditorResetVersion((current) => current + 1);
+  }
+
+  function submitRowCreation(operation: () => Promise<void>, retry = false): Promise<RowCreationStatus> {
+    if (!retry && rowCreationRetryRef.current) return Promise.resolve("ignored");
+    if (!retry && !rowCreationGuardRef.current) rowCreationRetryRef.current = operation;
+    return runRowCreation({
+      guard: rowCreationGuardRef,
+      onError: setRowCreationError,
+      onPendingChange: setRowCreationPending,
+      onSuccess: () => {
+        rowCreationRetryRef.current = null;
+        setRowCreationError("");
+      },
+      operation
+    });
+  }
+
   async function addRow(templateId?: string) {
-    const previousIds = new Set(bundle.records.map((record) => String(record.id)));
-    const next = await cache.addRow(bundle.schema.id, templateId);
-    if (templateId) {
-      const created = next.records.find((record) => !previousIds.has(String(record.id)));
-      if (created) openRecordPage(String(created.id));
-    }
+    return submitRowCreation(async () => {
+      const previousIds = new Set(bundle.records.map((record) => String(record.id)));
+      const next = await cache.addRow(bundle.schema.id, templateId);
+      if (templateId) {
+        const created = next.records.find((record) => !previousIds.has(String(record.id)));
+        if (created) openRecordPage(String(created.id));
+      }
+    });
+  }
+
+  async function addRowToGroup(groupKey: string, subgroupKey?: string) {
+    return submitRowCreation(async () => {
+      const group = recordGroups?.find((candidate) => candidate.key === groupKey);
+      if (!primaryGroupField || !group) throw new Error(`Grouping bucket is no longer available: ${groupKey}`);
+      const initialValues: Record<string, RecordValue> = {};
+      if (groupKey !== EMPTY_GROUP_KEY) {
+        initialValues[primaryGroupField.id] = groupValue(primaryGroupField, groupKey, group.label);
+      }
+      const subgroup = secondaryGroup && secondaryGroupField && subgroupKey
+        ? groupDatabaseRecords(group.records, secondaryGroupField, secondaryGroup).find((candidate) => candidate.key === subgroupKey)
+        : undefined;
+      if (subgroupKey && (!secondaryGroupField || !subgroup)) throw new Error(`Sub-grouping bucket is no longer available: ${subgroupKey}`);
+      if (secondaryGroupField && subgroup && subgroupKey && subgroupKey !== EMPTY_GROUP_KEY) {
+        initialValues[secondaryGroupField.id] = groupValue(secondaryGroupField, subgroupKey, subgroup.label);
+      }
+      await cache.addRow(bundle.schema.id, undefined, initialValues);
+    });
+  }
+
+  function toggleGroupCollapsed(groupIndex: number, groupKey: string) {
+    const target = activeView.groups?.[groupIndex];
+    if (!target) return;
+    const collapsed = new Set(target.collapsedGroupKeys ?? []);
+    if (collapsed.has(groupKey)) collapsed.delete(groupKey); else collapsed.add(groupKey);
+    runViewMutation(updateView({
+      ...activeView,
+      groups: activeView.groups?.map((group, index) => index === groupIndex ? { ...group, collapsedGroupKeys: [...collapsed] } : group)
+    }));
   }
 
   function loadMoreEmbeddedRows() {
@@ -342,28 +677,108 @@ export const DatabaseTable = memo(function DatabaseTable({
     scroller.scrollTop += event.deltaY;
   }
 
-  async function deleteRow(rowId: string) {
-    await cache.deleteRow({ databaseId: bundle.schema.id, rowId });
+  async function deleteRow(rowId: string, rethrow = false) {
+    const title = String(bundle.records.find((record) => String(record.id) === rowId)?.title ?? "Untitled");
+    try {
+      await cache.deleteRow({ databaseId: bundle.schema.id, rowId });
+      setRowRecovery({ rowId, title, status: "deleted" });
+    } catch (error) {
+      setRowRecovery({ rowId, title, status: "delete-error", error: mutationErrorMessage(error) });
+      if (rethrow) throw error;
+    }
   }
 
-  async function createView() {
-    const existingNames = new Set(bundle.views.map((item) => item.name));
-    let name = `View ${bundle.views.length + 1}`;
-    let suffix = bundle.views.length + 1;
-    while (existingNames.has(name)) {
-      suffix += 1;
-      name = `View ${suffix}`;
+  async function restoreDeletedRow(rowId: string, title: string) {
+    try {
+      await cache.restoreRow({ databaseId: bundle.schema.id, rowId });
+      setRowRecovery(null);
+    } catch (error) {
+      setRowRecovery({ rowId, title, status: "restore-error", error: mutationErrorMessage(error) });
     }
-    const previousViewIds = new Set(bundle.views.map((item) => item.id));
-    const next = await cache.createView({
-      databaseId: bundle.schema.id,
-      name,
-      sourceViewId: activeView.id
+  }
+
+  useEffect(() => {
+    if (embedded) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      const editing = isEditableKeyboardTarget(event.target);
+      if (mod && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        closeMenuLayers();
+        setSearchOpen(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      } else if (mod && event.key === "Enter" && !editing) {
+        event.preventDefault();
+        void addRow();
+      } else if (event.key === "Escape" && !event.defaultPrevented && selectedRowIds.size > 0 && !document.querySelector('[role="dialog"], [role="menu"]')) {
+        setSelectedRowIds(new Set());
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [bundle.schema.id, embedded, selectedRowIds.size]);
+
+  function toggleRowSelection(rowId: string, index: number, modifiers: { shiftKey: boolean; toggleKey: boolean }) {
+    setSelectedRowIds((current) => {
+      const next = new Set(modifiers.toggleKey ? current : current);
+      if (modifiers.shiftKey && lastSelectedIndexRef.current !== null) {
+        const [start, end] = [lastSelectedIndexRef.current, index].sort((a, b) => a - b);
+        for (let candidate = start; candidate <= end; candidate += 1) { const id = tableRecords[candidate]?.id; if (id != null) next.add(String(id)); }
+      } else if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
+      lastSelectedIndexRef.current = index;
+      return next;
     });
+  }
+
+  function toggleAllRows() {
+    const visibleIds = tableRecords.map((record) => String(record.id));
+    setSelectedRowIds((current) => visibleIds.every((id) => current.has(id)) ? new Set() : new Set(visibleIds));
+  }
+
+  async function applyBulkEdit() {
+    const field = bundle.schema.fields.find((candidate) => candidate.id === bulkFieldId);
+    if (!field) return;
+    const value: RecordValue = field.type === "number" && bulkValue !== "" ? Number(bulkValue) : field.type === "checkbox" ? bulkValue === "true" : bulkValue;
+    await runBulkAction("apply", { databaseId: bundle.schema.id, updates: [...selectedRowIds].map((rowId) => ({ rowId, fieldId: field.id, value })) }, "Rows updated.");
+  }
+
+  function runBulkAction(action: BulkRowAction, input: BatchRowsInput, successMessage: string) {
+    if (!bulkActionRef.current) {
+      bulkRetryRef.current = { action, input, successMessage };
+    }
+    return runBulkRowAction({
+      guard: bulkActionRef,
+      operation: () => cache.batchRows(input),
+      onError: (message) => setBulkFeedback({ kind: "error", message, retryable: true }),
+      onPendingChange: (pending) => setBulkPendingAction(pending ? action : null),
+      onSuccess: (result) => {
+        bulkRetryRef.current = null;
+        setSelectedRowIds(new Set());
+        lastSelectedIndexRef.current = null;
+        setBulkFeedback(bulkRowsResultFeedback(result, successMessage));
+      }
+    });
+  }
+
+  function dismissBulkFeedback() {
+    if (bulkActionRef.current) return;
+    bulkRetryRef.current = null;
+    setBulkFeedback(undefined);
+  }
+
+  function renderBulkValueEditor() {
+    const field = bundle.schema.fields.find((candidate) => candidate.id === bulkFieldId);
+    if (field?.type === "checkbox") return <select aria-label="Bulk value" value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="false">Unchecked</option><option value="true">Checked</option></select>;
+    if (field?.type === "select") return <select aria-label="Bulk value" value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Empty</option>{(field.options ?? []).map((option) => <option key={option.id} value={option.name}>{option.name}</option>)}</select>;
+    return <input aria-label="Bulk value" type={field?.type === "number" ? "number" : field?.type === "date" ? "date" : "text"} value={bulkValue} onChange={(event) => setBulkValue(event.target.value)} placeholder="Value" />;
+  }
+
+  async function createView(input: CreateViewInput) {
+    const previousViewIds = new Set(bundle.views.map((item) => item.id));
+    const next = await cache.createView(input);
     const createdView = next.views.find((item) => !previousViewIds.has(item.id));
     if (createdView) {
       setActiveViewId(createdView.id);
-      setEditingView(createdView);
     }
   }
 
@@ -377,12 +792,17 @@ export const DatabaseTable = memo(function DatabaseTable({
     if (duplicatedView) setActiveViewId(duplicatedView.id);
   }
 
-  async function updateView(nextView: TableView) {
-    await cache.updateView({
-      databaseId: bundle.schema.id,
-      view: nextView
-    });
+  async function updateView(nextView: TableView, baseline?: TableView) {
+    const current = baseline ?? bundle.views.find((item) => item.id === nextView.id) ?? nextView;
+    const patch = diffTableView(current, nextView);
+    if (Object.keys(patch).length > 0) {
+      await cache.mutateView(bundle.schema.id, nextView.id, patch);
+    }
     setActiveViewId(nextView.id);
+  }
+
+  function runViewMutation(promise: Promise<unknown>): void {
+    void promise.catch(() => undefined);
   }
 
   async function deleteView(targetView: TableView) {
@@ -420,6 +840,33 @@ export const DatabaseTable = memo(function DatabaseTable({
   async function hideColumn(fieldId: string) {
     const visibleFieldIds = activeView.visibleFieldIds.filter((id) => id !== fieldId);
     await updateView({ ...activeView, visibleFieldIds });
+  }
+
+  async function duplicateColumn(field: FieldSchema) {
+    await cache.addField(bundle.schema.id, {
+      name: `${field.name} copy`,
+      type: field.type,
+      sourceFieldId: field.id,
+      visibility: "current",
+      viewId: activeView.id,
+      insertAfterFieldId: field.id
+    });
+  }
+
+  async function insertColumn(field: FieldSchema, side: "left" | "right") {
+    await cache.addField(bundle.schema.id, {
+      name: "New property",
+      type: "text",
+      visibility: "current",
+      viewId: activeView.id,
+      ...(side === "left" ? { insertBeforeFieldId: field.id } : { insertAfterFieldId: field.id })
+    });
+  }
+
+  function openColumnFilter(field: FieldSchema, anchor: { left: number; top: number }) {
+    closeMenuLayers();
+    setFilterInitialFieldId(field.id);
+    setFilterAnchor(anchor);
   }
 
   async function reorderColumn(sourceFieldId: string, targetFieldId: string) {
@@ -592,6 +1039,7 @@ export const DatabaseTable = memo(function DatabaseTable({
   }, [activeView]);
 
   const [draftWidths, setDraftWidths] = useState<Record<string, number>>({});
+  const draftWidthsRef = useRef<Record<string, number>>({});
   const widths = useMemo(
     () => ({ ...(activeView.columnWidths || {}), ...draftWidths }),
     [activeView.columnWidths, draftWidths]
@@ -605,22 +1053,23 @@ export const DatabaseTable = memo(function DatabaseTable({
 
     function onMove(event: MouseEvent) {
       const next = Math.max(MIN_COLUMN_WIDTH, Math.round(startWidth + (event.clientX - startX)));
-      setDraftWidths((current) => ({ ...current, [fieldId]: next }));
+      draftWidthsRef.current = { ...draftWidthsRef.current, [fieldId]: next };
+      setDraftWidths(draftWidthsRef.current);
     }
     function onUp() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       document.body.classList.remove("is-resizing-column");
-      setDraftWidths((current) => {
-        const finalWidth = current[fieldId];
-        const rest = Object.fromEntries(Object.entries(current).filter(([id]) => id !== fieldId));
-        if (finalWidth != null) {
-          const baseView = activeViewRef.current;
-          const columnWidths = { ...(baseView.columnWidths || {}), [fieldId]: finalWidth };
-          void updateView({ ...baseView, columnWidths });
-        }
-        return rest;
-      });
+      const finalWidth = draftWidthsRef.current[fieldId];
+      draftWidthsRef.current = Object.fromEntries(
+        Object.entries(draftWidthsRef.current).filter(([id]) => id !== fieldId)
+      );
+      setDraftWidths(draftWidthsRef.current);
+      if (finalWidth != null) {
+        const baseView = activeViewRef.current;
+        const columnWidths = { ...(baseView.columnWidths || {}), [fieldId]: finalWidth };
+        runViewMutation(updateView({ ...baseView, columnWidths }));
+      }
     }
 
     document.body.classList.add("is-resizing-column");
@@ -629,6 +1078,26 @@ export const DatabaseTable = memo(function DatabaseTable({
   }
 
   const actionsColumnWidth = embedded ? 0 : 88;
+  const frozenIndex = activeView.frozenThroughFieldId
+    ? fields.findIndex((field) => field.id === activeView.frozenThroughFieldId)
+    : -1;
+  const frozenLeftByFieldId = useMemo(() => {
+    let left = 38;
+    const result = new Map<string, number>();
+    fields.forEach((field, index) => {
+      if (index <= frozenIndex) result.set(field.id, left);
+      left += widths[field.id] ?? DEFAULT_COLUMN_WIDTH;
+    });
+    return result;
+  }, [fields, frozenIndex, widths]);
+  function frozenCellProps(field: FieldSchema, index: number) {
+    const left = frozenLeftByFieldId.get(field.id);
+    if (left === undefined) return {};
+    return {
+      className: `frozen-column${index === frozenIndex ? " frozen-column-edge" : ""}`,
+      style: { left }
+    };
+  }
   const totalTableWidth = fields.reduce(
     (sum, field) => sum + (widths[field.id] ?? DEFAULT_COLUMN_WIDTH),
   0
@@ -652,33 +1121,26 @@ export const DatabaseTable = memo(function DatabaseTable({
       <thead>
         <tr>
           <th className="row-num" aria-label={t("formula.rowNumber")} title={t("formula.rowNumber")}>
-            <span className="formula-row-reference">#</span>
+            {!embedded ? <input type="checkbox" aria-label="Select all visible rows" checked={tableRecords.length > 0 && tableRecords.every((record) => selectedRowIds.has(String(record.id)))} onChange={toggleAllRows} /> : <span className="formula-row-reference">#</span>}
           </th>
-          {fields.map((field) => {
+          {fields.map((field, fieldIndex) => {
             const formulaColumn = formulaColumnLabel(bundle.schema.fields.findIndex((candidate) => candidate.id === field.id));
             const dropTargetClass = dropTargetFieldId === field.id && dragFieldId && dragFieldId !== field.id ? " drop-target" : "";
             const draggingClass = dragFieldId === field.id ? " dragging" : "";
             return (
               <th
                 key={field.id}
-                className={`column-header${dropTargetClass}${draggingClass}`}
-                draggable
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setFieldContextMenu({
-                    fieldId: field.id,
-                    left: Math.max(8, Math.min(event.clientX, window.innerWidth - 268)),
-                    top: Math.max(8, Math.min(event.clientY, window.innerHeight - 240))
-                  });
-                }}
+                className={`column-header${dropTargetClass}${draggingClass}${frozenCellProps(field, fieldIndex).className ? ` ${frozenCellProps(field, fieldIndex).className}` : ""}`}
+                style={frozenCellProps(field, fieldIndex).style}
+                draggable={capabilities.canManageSchema}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = "move";
                   event.dataTransfer.setData("text/plain", field.id);
                   setDragFieldId(field.id);
                 }}
                 onDragOver={(event) => {
-                  if (!dragFieldId || dragFieldId === field.id) return;
+                  const source = dragFieldId || event.dataTransfer.getData("text/plain");
+                  if (!source || source === field.id) return;
                   event.preventDefault();
                   event.dataTransfer.dropEffect = "move";
                   if (dropTargetFieldId !== field.id) setDropTargetFieldId(field.id);
@@ -688,10 +1150,10 @@ export const DatabaseTable = memo(function DatabaseTable({
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  const source = dragFieldId;
+                  const source = dragFieldId || event.dataTransfer.getData("text/plain");
                   setDragFieldId(null);
                   setDropTargetFieldId(null);
-                  if (source) void reorderColumn(source, field.id);
+                  if (source) runViewMutation(reorderColumn(source, field.id));
                 }}
                 onDragEnd={() => {
                   setDragFieldId(null);
@@ -700,7 +1162,14 @@ export const DatabaseTable = memo(function DatabaseTable({
               >
                 <button
                   className="field-header-button"
-                  onClick={() => setEditingField(field)}
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openColumnMenu(field.id, { left: rect.left, top: rect.bottom + 4 });
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    openColumnMenu(field.id, { left: event.clientX, top: event.clientY });
+                  }}
                   title={translateFieldType(t, field.type)}
                 >
                   <span
@@ -724,7 +1193,11 @@ export const DatabaseTable = memo(function DatabaseTable({
               </th>
             );
           })}
-          {!embedded && <th className="row-actions"></th>}
+          {!embedded && (
+            <th className="row-actions property-add-column">
+              <button type="button" aria-label="Add or manage properties" title={capabilities.structuralDisabledReason || "Add or manage properties"} disabled={!capabilities.canManageSchema} onClick={() => setPropertyManagerOpen(true)}>+</button>
+            </th>
+          )}
         </tr>
       </thead>
     );
@@ -738,10 +1211,12 @@ export const DatabaseTable = memo(function DatabaseTable({
           className={filterAnchor ? "toolbar-icon active" : "toolbar-icon"}
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
-            setFilterAnchor({ left: rect.left, top: rect.bottom + 4 });
+            setFilterInitialFieldId(undefined);
+            closeMenuLayers(); setFilterAnchor({ left: rect.left, top: rect.bottom + 4 });
           }}
           title="Filter"
           aria-label="Filter"
+          disabled={!capabilities.canManageSchema}
         >
           <FilterIcon />
         </button>
@@ -750,14 +1225,16 @@ export const DatabaseTable = memo(function DatabaseTable({
           className={sortAnchor ? "toolbar-icon active" : "toolbar-icon"}
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
-            setSortAnchor({ left: rect.left, top: rect.bottom + 4 });
+            openSortMenu({ left: rect.left, top: rect.bottom + 4 });
           }}
           title="Sort"
           aria-label="Sort"
+          disabled={!capabilities.canManageSchema}
         >
           <SortIcon />
         </button>
         <button
+          ref={searchTriggerRef}
           type="button"
           className={searchOpen ? "toolbar-icon active" : "toolbar-icon"}
           onClick={() => {
@@ -774,8 +1251,11 @@ export const DatabaseTable = memo(function DatabaseTable({
         {showSettings && (
           <button
             type="button"
-            className="toolbar-icon"
-            onClick={() => setEditingView(activeView)}
+            className={settingsAnchor ? "toolbar-icon active" : "toolbar-icon"}
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              openSettingsMenu({ left: rect.left, top: rect.bottom + 4 });
+            }}
             title={t("toolbar.viewSettings")}
             aria-label={t("toolbar.viewSettings")}
           >
@@ -794,10 +1274,11 @@ export const DatabaseTable = memo(function DatabaseTable({
       : undefined;
     return (
       <div className="new-row-menu-wrap">
-        <button className="primary" onClick={() => void addRow(defaultTemplate?.id)}>{t("toolbar.addRow")}</button>
+        <button className="primary" disabled={rowCreationBlocked} onClick={() => void addRow(defaultTemplate?.id)}>{rowCreationPending ? "Creating…" : t("toolbar.addRow")}</button>
         <button
           type="button"
           className={templateMenuOpen ? "new-row-menu-toggle active" : "new-row-menu-toggle"}
+          disabled={rowCreationBlocked}
           onClick={() => setTemplateMenuOpen((open) => !open)}
           title={t("templates.newWithTemplate")}
           aria-label={t("templates.newWithTemplate")}
@@ -858,12 +1339,6 @@ export const DatabaseTable = memo(function DatabaseTable({
     });
   }
 
-  async function updateOptionColor(field: FieldSchema, optionId: string, color: string) {
-    if (!usesOptions(field.type)) return;
-    const options = (field.options || []).map((option) => option.id === optionId ? { ...option, color } : option);
-    await updateOptions(field, options);
-  }
-
   async function updateOptions(field: FieldSchema, options: SelectOption[]) {
     if (!usesOptions(field.type)) return;
     await updateField(field, {
@@ -876,44 +1351,6 @@ export const DatabaseTable = memo(function DatabaseTable({
       dateFormat: field.dateFormat,
       timeFormat: field.timeFormat
     });
-  }
-
-  async function copyFieldToSystemTimeFromView(field: FieldSchema, targetFieldId: SystemTimeFieldId) {
-    if (fieldContextMenu?.copyingTarget) return;
-    const targetLabel = targetFieldId === "created_time"
-      ? (locale === "zh" ? "创建时间" : "Created time")
-      : (locale === "zh" ? "最后更新时间" : "Last updated time");
-    const confirmed = window.confirm(locale === "zh"
-      ? `将“${field.name}”中的有效日期复制到“${targetLabel}”？现有系统时间会被覆盖。`
-      : `Copy valid dates from “${field.name}” to ${targetLabel}? Existing system timestamps will be overwritten.`);
-    if (!confirmed) return;
-    setFieldContextMenu((current) => current?.fieldId === field.id
-      ? { ...current, copyingTarget: targetFieldId, message: "" }
-      : current);
-    try {
-      const result = await cache.copyFieldToSystemTime({
-        databaseId: bundle.schema.id,
-        sourceFieldId: field.id,
-        targetFieldId
-      });
-      const message = locale === "zh"
-        ? `已复制 ${result.copiedRows} 行；${result.unchangedRows} 行无需修改；跳过 ${result.skippedEmptyRows} 个空值和 ${result.skippedInvalidRows} 个非法值。`
-        : `Copied ${result.copiedRows} rows; ${result.unchangedRows} unchanged; skipped ${result.skippedEmptyRows} empty and ${result.skippedInvalidRows} invalid values.`;
-      setFieldContextMenu((current) => current?.fieldId === field.id
-        ? { ...current, message }
-        : current);
-    } catch (error) {
-      const message = locale === "zh"
-        ? `复制失败：${error instanceof Error ? error.message : String(error)}`
-        : `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
-      setFieldContextMenu((current) => current?.fieldId === field.id
-        ? { ...current, message }
-        : current);
-    } finally {
-      setFieldContextMenu((current) => current?.fieldId === field.id
-        ? { ...current, copyingTarget: undefined }
-        : current);
-    }
   }
 
   const wrapFieldSet = useMemo(
@@ -938,8 +1375,6 @@ export const DatabaseTable = memo(function DatabaseTable({
           onClearCover={onClearCover}
           onCommitCoverOffset={onCommitCoverOffset}
           onOpenInNewWindow={onOpenInNewWindow}
-          favorited={favorited}
-          onToggleFavorite={onToggleFavorite}
         />
       )}
       {!embedded && onUpdateTags && (
@@ -957,7 +1392,10 @@ export const DatabaseTable = memo(function DatabaseTable({
           refreshing={embeddedRefreshing}
           onOpen={onOpenEmbedded}
           onRefresh={onRefreshEmbedded}
-          onOpenSettings={() => setEditingView(activeView)}
+          onOpenSettings={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            openSettingsMenu({ left: rect.left, top: rect.bottom + 4 });
+          }}
         />
       )}
       <DatabaseViewTabsBar
@@ -971,8 +1409,45 @@ export const DatabaseTable = memo(function DatabaseTable({
           console.log(`[lotion] view switch click db=${bundle.schema.id} view=${item.id}`);
           setActiveViewId(item.id);
         }}
-        onCreateView={() => void createView()}
+        onCreateView={() => setCreateViewOpen(true)}
+        onReorderViews={async (viewIds) => {
+          await cache.reorderViews({ databaseId: bundle.schema.id, viewIds });
+        }}
+        onOpenViewMenu={(targetView, anchor) => openViewMenu(targetView.id, anchor)}
+        structuralDisabledReason={!capabilities.canManageSchema ? capabilities.structuralDisabledReason : undefined}
+        menuLayerOpen={Boolean(searchOpen || settingsAnchor || viewMenu || columnMenu || rowMenu || sortAnchor || filterAnchor)}
       />
+      {capabilities.locked && <div className="database-locked-indicator" role="status" title={capabilities.structuralDisabledReason}>🔒 Locked · Row editing remains available</div>}
+      {rowRecovery && <div className={`database-mutation-toast ${rowRecovery.status.endsWith("error") ? "error" : ""}`} role={rowRecovery.status.endsWith("error") ? "alert" : "status"} aria-live="polite">
+        <span>{rowRecovery.status === "deleted" ? `Moved “${rowRecovery.title}” to deleted items.` : rowRecovery.status === "delete-error" ? `Delete failed: ${rowRecovery.error}` : `Undo failed: ${rowRecovery.error}`}</span>
+        {rowRecovery.status === "delete-error"
+          ? <button type="button" onClick={() => void deleteRow(rowRecovery.rowId)}>Retry delete</button>
+          : <button type="button" onClick={() => void restoreDeletedRow(rowRecovery.rowId, rowRecovery.title)}>{rowRecovery.status === "deleted" ? "Undo" : "Retry undo"}</button>}
+        <button type="button" aria-label="Dismiss notification" onClick={() => setRowRecovery(null)}>×</button>
+      </div>}
+      {rowCreationError && <div className="database-mutation-toast error row-creation-feedback" role="alert" aria-live="assertive">
+        <span>Row creation failed: {rowCreationError}</span>
+        <button type="button" disabled={rowCreationPending} onClick={() => { const retry = rowCreationRetryRef.current; if (retry) void submitRowCreation(retry, true); }}>Retry</button>
+        <button type="button" aria-label="Dismiss row creation error" disabled={rowCreationPending} onClick={() => { rowCreationRetryRef.current = null; setRowCreationError(""); }}>×</button>
+      </div>}
+      {cellEditState.status === "error" && <div className="database-mutation-toast error cell-edit-feedback" role="alert" aria-live="assertive" data-row-id={cellEditState.failedInput?.rowId} data-field-id={cellEditState.failedInput?.fieldId} data-value={String(cellEditState.failedInput?.value ?? "")}>
+        <span>Cell save failed: {cellEditState.error}{cellEditState.queuedCount > 0 ? ` · ${cellEditState.queuedCount} later edit${cellEditState.queuedCount === 1 ? "" : "s"} queued` : ""}</span>
+        <button type="button" onClick={() => { cellEditQueueRef.current?.retry(); }}>Retry</button>
+        <button type="button" onClick={discardFailedCellEdit}>Discard failed edit</button>
+      </div>}
+      {viewMutationState.status !== "idle" && (
+        <div
+          className={`view-save-status ${viewMutationState.status}`}
+          role={viewMutationState.status === "error" ? "alert" : "status"}
+          title={viewMutationState.error}
+        >
+          {viewMutationState.status === "saving"
+            ? t("common.saving")
+            : viewMutationState.status === "error"
+              ? <><span>View save failed: {viewMutationState.error}</span><button type="button" onClick={() => { void cache.retryViewMutation(bundle.schema.id, activeView.id).catch(() => undefined); }}>Retry</button></>
+              : "Saved"}
+        </div>
+      )}
 
       {searchOpen && (
         <div className="table-search-bar">
@@ -980,6 +1455,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           <input
             ref={searchInputRef}
             type="search"
+            aria-label="Search this view"
             value={searchQuery}
             placeholder={t("toolbar.searchPlaceholder") || "Search in this view…"}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -987,6 +1463,7 @@ export const DatabaseTable = memo(function DatabaseTable({
               if (e.key === "Escape") {
                 setSearchQuery("");
                 setSearchOpen(false);
+                requestAnimationFrame(() => searchTriggerRef.current?.focus());
               }
             }}
           />
@@ -998,13 +1475,16 @@ export const DatabaseTable = memo(function DatabaseTable({
         </div>
       )}
 
+      {selectedRowIds.size > 0 && <fieldset className="bulk-row-action-bar bulk-row-action-controls" disabled={bulkPendingAction !== null} role="toolbar" aria-label="Bulk row actions" aria-busy={bulkPendingAction !== null}><strong>{selectedRowIds.size} selected</strong><select aria-label="Bulk property" value={bulkFieldId} onChange={(event) => { if (bulkActionRef.current) return; setBulkFieldId(event.target.value); setBulkValue(""); }}>{bundle.schema.fields.filter((field) => !field.system && field.type !== "formula" && field.type !== "rollup").map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}</select>{renderBulkValueEditor()}<button onClick={() => void applyBulkEdit()}>{bulkPendingAction === "apply" ? "Applying…" : "Apply"}</button><button onClick={() => void runBulkAction("duplicate", { databaseId: bundle.schema.id, duplicateRowIds: [...selectedRowIds] }, "Rows duplicated.")}>{bulkPendingAction === "duplicate" ? "Duplicating…" : "Duplicate"}</button><button className="danger" onClick={() => { if (window.confirm(`Delete ${selectedRowIds.size} selected rows?`)) void runBulkAction("delete", { databaseId: bundle.schema.id, deleteRowIds: [...selectedRowIds] }, "Rows moved to Deleted items."); }}>{bulkPendingAction === "delete" ? "Deleting…" : "Delete"}</button><button aria-label="Clear selection" onClick={() => { if (bulkActionRef.current) return; setSelectedRowIds(new Set()); lastSelectedIndexRef.current = null; }}>×</button></fieldset>}
+      {bulkFeedback && <div className={`bulk-row-feedback ${bulkFeedback.kind}`} role={bulkFeedback.kind === "error" ? "alert" : "status"}><span>{bulkFeedback.message}</span>{bulkFeedback.retryable && <button type="button" disabled={bulkPendingAction !== null} onClick={() => { const retry = bulkRetryRef.current; if (retry) void runBulkAction(retry.action, retry.input, retry.successMessage); }}>Retry</button>}<button aria-label="Dismiss bulk action result" disabled={bulkPendingAction !== null} onClick={dismissBulkFeedback}>×</button></div>}
+
       {activeView.type === "gallery" && (
         <GalleryBody
           records={records}
           fields={fields}
           view={activeView}
-          databaseIcon={bundle.schema.icon}
-          onOpenRow={(rowId) => openRowPage(bundle.schema.id, rowId)}
+          onOpenRow={openRecordPage}
+          onOpenRowMenu={(record, anchor) => openRowMenu(String(record.id), anchor)}
         />
       )}
       {activeView.type === "calendar" && (
@@ -1012,16 +1492,16 @@ export const DatabaseTable = memo(function DatabaseTable({
           records={records}
           fields={fields}
           view={activeView}
-          databaseIcon={bundle.schema.icon}
-          onOpenRow={(rowId) => openRowPage(bundle.schema.id, rowId)}
+          onOpenRow={openRecordPage}
+          onOpenRowMenu={(record, anchor) => openRowMenu(String(record.id), anchor)}
         />
       )}
       {activeView.type === "list" && (
-        <ListBody
+        displayedRecordGroups ? <div className="grouped-list-sections">{displayedRecordGroups.map((group) => <section key={group.key} data-group-key={group.key}><header><button onClick={() => toggleGroupCollapsed(0, group.key)} aria-expanded={!group.collapsed}>{group.collapsed ? "▸" : "▾"} {group.label} <span>{group.records.length}</span></button><button disabled={rowCreationBlocked} aria-label={`Add row to ${group.label}`} onClick={() => void addRowToGroup(group.key)}>+ New</button></header>{!group.collapsed && (group.subgroups ? <div className="database-subgroups">{group.subgroups.map((subgroup) => <section key={subgroup.key} data-subgroup-key={subgroup.key}><header><button onClick={() => toggleGroupCollapsed(1, subgroup.key)} aria-expanded={!subgroup.collapsed}>{subgroup.collapsed ? "▸" : "▾"} {subgroup.label} <span>{subgroup.records.length}</span></button><button disabled={rowCreationBlocked} aria-label={`Add row to ${group.label} / ${subgroup.label}`} onClick={() => void addRowToGroup(group.key, subgroup.key)}>+ New</button></header>{!subgroup.collapsed && <ListBody records={subgroup.records} fields={fields} onOpenRow={openRecordPage} onOpenRowMenu={(record, anchor) => openRowMenu(String(record.id), anchor)} />}</section>)}</div> : <ListBody records={group.records} fields={fields} onOpenRow={openRecordPage} onOpenRowMenu={(record, anchor) => openRowMenu(String(record.id), anchor)} />)}</section>)}</div> : <ListBody
           records={records}
           fields={fields}
-          databaseIcon={bundle.schema.icon}
-          onOpenRow={(rowId) => openRowPage(bundle.schema.id, rowId)}
+          onOpenRow={openRecordPage}
+          onOpenRowMenu={(record, anchor) => openRowMenu(String(record.id), anchor)}
         />
       )}
       {activePluginView && (
@@ -1030,6 +1510,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           bundle={bundle}
           view={activeView}
           records={records}
+          onOpenRow={openRecordPage}
         />
       )}
       {activeView.type === "table" && (
@@ -1050,34 +1531,38 @@ export const DatabaseTable = memo(function DatabaseTable({
             rowNodesRef={rowNodesRef}
             onWheel={embedded ? forwardEmbeddedWheel : undefined}
             onAddRow={() => void addRow()}
+            addRowDisabled={rowCreationBlocked}
             renderColGroup={renderTableColGroup}
             renderHead={renderTableHead}
             renderCell={(record, field) => (
               <Cell
+                key={`${String(record.id)}:${field.id}:${cellEditorResetVersion}`}
                 field={field}
                 value={record[field.id]}
                 wrap={wrapFieldSet.has(field.id)}
                 record={record}
                 databaseId={bundle.schema.id}
-                databaseIcon={bundle.schema.icon}
-                onChange={(value) => updateCell(String(record.id), field, value)}
-                onOptionColorChange={(optionId, color) => updateOptionColor(field, optionId, color)}
+                onChange={(value) => queueCellEdit(String(record.id), field.id, value)}
                 onOptionsChange={(options) => updateOptions(field, options)}
                 onOpenRowPage={openRecordPage}
                 onOpenEntityRef={openEntityRef}
+                dateTimeDefaults={dateTimeDefaults}
               />
             )}
+            getFieldCellProps={frozenCellProps}
             getRowNumber={getFormulaRowNumber}
+            selectedRowIds={selectedRowIds}
+            onToggleRowSelection={toggleRowSelection}
+            onToggleAllRows={toggleAllRows}
+            recordGroups={displayedRecordGroups}
+            onToggleGroup={toggleGroupCollapsed}
+            onAddGroupRow={(key, subgroupKey) => void addRowToGroup(key, subgroupKey)}
+            onOpenRowMenu={(record, anchor) => openRowMenu(String(record.id), anchor)}
             rowNumberLabel={t("formula.rowNumber")}
             renderRowActions={
               embedded
                 ? undefined
-                : (record) => (
-                  <>
-                    <button onClick={() => openRecordPage(String(record.id))}>{t("rowPage.open")}</button>
-                    <button onClick={() => deleteRow(String(record.id))}>{t("common.delete")}</button>
-                  </>
-                )
+                : (record) => <button className="row-menu-handle" aria-label={`Row actions ${String(record.title ?? "Untitled")}`} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openRowMenu(String(record.id), { left: rect.left, top: rect.bottom + 4 }); }}>•••</button>
             }
             addRowLabel={t("toolbar.addRow")}
           />
@@ -1104,7 +1589,7 @@ export const DatabaseTable = memo(function DatabaseTable({
                           className={summary ? "column-summary-select active" : "column-summary-select"}
                           value={selectedSummary}
                           aria-label={`${field.name} summary`}
-                          onChange={(event) => void updateColumnSummary(field.id, event.target.value as ColumnSummaryType)}
+                          onChange={(event) => runViewMutation(updateColumnSummary(field.id, event.target.value as ColumnSummaryType))}
                         >
                           {summaryOptionsForField(field).map((option) => (
                             <option key={option} value={option}>
@@ -1145,84 +1630,6 @@ export const DatabaseTable = memo(function DatabaseTable({
         </span>
       </div>
 
-      {!embedded && (
-        <div className="field-adder">
-          <input placeholder={t("toolbar.newField")} value={fieldName} onChange={(event) => setFieldName(event.target.value)} />
-          <select value={fieldType} onChange={(event) => setFieldType(event.target.value as FieldSchema["type"])}>
-            <option value="text">{t("type.text")}</option>
-            <option value="number">{t("type.number")}</option>
-            <option value="select">{t("type.select")}</option>
-            <option value="multi_select">{t("type.multiSelect")}</option>
-            <option value="date">{t("type.date")}</option>
-            <option value="url">{t("type.url")}</option>
-            <option value="person">{t("type.person")}</option>
-            <option value="entity_ref">{t("type.entityRef")}</option>
-            <option value="checkbox">{t("type.checkbox")}</option>
-            <option value="formula">{t("type.formula")}</option>
-            <option value="rollup">{t("type.rollup")}</option>
-          </select>
-          {fieldType === "formula" && (
-            <input className="formula-input" value={formula} onChange={(event) => setFormula(event.target.value)} />
-          )}
-          <button onClick={addField}>{t("toolbar.addField")}</button>
-        </div>
-      )}
-
-      {fieldContextMenu && (() => {
-        const field = bundle.schema.fields.find((candidate) => candidate.id === fieldContextMenu.fieldId);
-        if (!field) return null;
-        const dateLike = isDateLikeFieldType(field.type);
-        return (
-          <div
-            className="field-context-menu"
-            role="menu"
-            aria-label={`${field.name} ${t("field.columnMenu")}`}
-            style={{ left: fieldContextMenu.left, top: fieldContextMenu.top }}
-            onContextMenu={(event) => event.preventDefault()}
-          >
-            <div className="field-context-menu-title">{field.name}</div>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setFieldContextMenu(null);
-                setEditingField(field);
-              }}
-            >
-              {t("field.edit")}
-            </button>
-            {dateLike && (
-              <>
-                <div className="field-context-menu-divider" />
-                {field.id !== "created_time" && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={!!fieldContextMenu.copyingTarget}
-                    onClick={() => void copyFieldToSystemTimeFromView(field, "created_time")}
-                  >
-                    {fieldContextMenu.copyingTarget === "created_time" ? t("field.copyingTimeValues") : t("field.copyToCreatedTime")}
-                  </button>
-                )}
-                {field.id !== "updated_time" && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={!!fieldContextMenu.copyingTarget}
-                    onClick={() => void copyFieldToSystemTimeFromView(field, "updated_time")}
-                  >
-                    {fieldContextMenu.copyingTarget === "updated_time" ? t("field.copyingTimeValues") : t("field.copyToUpdatedTime")}
-                  </button>
-                )}
-              </>
-            )}
-            {fieldContextMenu.message && (
-              <output className="field-context-menu-result" role="status">{fieldContextMenu.message}</output>
-            )}
-          </div>
-        );
-      })()}
-
       {editingField && (
         <FieldSettingsDialog
           field={editingField}
@@ -1234,19 +1641,83 @@ export const DatabaseTable = memo(function DatabaseTable({
           onToggleWrap={() => toggleColumnWrap(editingField.id)}
           onHide={
             activeView.visibleFieldIds.includes(editingField.id) && activeView.visibleFieldIds.length > 1
-              ? () => {
-                  void hideColumn(editingField.id);
-                  setEditingField(undefined);
-                }
+              ? () => hideColumn(editingField.id)
               : undefined
           }
           onClose={() => setEditingField(undefined)}
           onSave={(input) => updateField(editingField, input)}
-          onCopyToSystemTime={(targetFieldId) => cache.copyFieldToSystemTime({
-            databaseId: bundle.schema.id,
-            sourceFieldId: editingField.id,
-            targetFieldId
-          })}
+        />
+      )}
+
+      {columnMenu && (() => {
+        const field = bundle.schema.fields.find((candidate) => candidate.id === columnMenu.fieldId);
+        if (!field) return null;
+        const close = () => setColumnMenu(null);
+        return (
+          <ColumnHeaderMenu
+            anchor={columnMenu.anchor}
+            field={field}
+            wrapped={wrapFieldSet.has(field.id)}
+            frozen={activeView.frozenThroughFieldId === field.id}
+            canHide={activeView.visibleFieldIds.length > 1}
+            onClose={close}
+            onEdit={() => { close(); setEditingField(field); }}
+            onSort={(direction) => updateView({ ...activeView, sorts: [{ fieldId: field.id, direction }] })}
+            onFilter={() => { const anchor = columnMenu.anchor; close(); openColumnFilter(field, anchor); }}
+            onCalculate={() => updateColumnSummary(field.id, field.type === "number" || field.type === "formula" ? "average" : "count")}
+            onWrap={() => toggleColumnWrap(field.id)}
+            onHide={() => hideColumn(field.id)}
+            onDuplicate={() => duplicateColumn(field)}
+            onInsert={(side) => insertColumn(field, side)}
+            onFreeze={() => updateView({ ...activeView, frozenThroughFieldId: activeView.frozenThroughFieldId === field.id ? undefined : field.id })}
+            onCopyToSystemTime={async (targetFieldId) => {
+              const targetLabel = targetFieldId === "created_time" ? "Created time" : "Last updated time";
+              if (!window.confirm(`Copy valid dates from “${field.name}” to ${targetLabel}? Existing system timestamps will be overwritten.`)) {
+                throw new Error("Copy cancelled");
+              }
+              return cache.copyFieldToSystemTime({
+                databaseId: bundle.schema.id,
+                sourceFieldId: field.id,
+                targetFieldId
+              });
+            }}
+            onDelete={async () => {
+              if (window.confirm(`Delete property “${field.name}”? You can restore it from Manage properties.`)) await cache.deleteField(bundle.schema.id, field.id);
+            }}
+          />
+        );
+      })()}
+
+      {rowMenu && (() => {
+        const record = bundle.records.find((candidate) => String(candidate.id) === rowMenu.rowId);
+        if (!record) return null;
+        const close = () => setRowMenu(null);
+        return <RowContextMenu anchor={rowMenu.anchor} record={record} onClose={close}
+          onOpen={() => { close(); openRecordPage(rowMenu.rowId); }}
+          onOpenNew={() => { close(); openRowPageInNewWindow(bundle.schema.id, rowMenu.rowId); }}
+          onRename={async () => { const name = window.prompt("Rename row", String(record.title ?? "")); if (name?.trim()) await updateCell(rowMenu.rowId, bundle.schema.fields.find((field) => field.id === "title")!, name.trim()); }}
+          onDuplicate={async () => { await cache.duplicateRow({ databaseId: bundle.schema.id, rowId: rowMenu.rowId }); }}
+          onCopyLink={() => { close(); void navigator.clipboard.writeText(databaseRowLink(bundle.schema.id, rowMenu.rowId)); }}
+          onEdit={() => { close(); openRowPage(bundle.schema.id, rowMenu.rowId); }}
+          onDelete={async () => { if (window.confirm(`Delete “${String(record.title ?? "Untitled")}”? You can restore it from Deleted items.`)) await deleteRow(rowMenu.rowId, true); }} />;
+      })()}
+
+      {deletedRowsOpen && <DeletedRowsDialog rows={bundle.schema.deletedRows ?? []} onClose={() => setDeletedRowsOpen(false)} onRestore={async (rowId) => { await cache.restoreRow({ databaseId: bundle.schema.id, rowId }); }} onPermanentlyDelete={async (rowId) => { await cache.permanentlyDeleteRow({ databaseId: bundle.schema.id, rowId }); }} />}
+
+      {groupSettingsOpen && <GroupSettingsDialog view={activeView} fields={bundle.schema.fields.filter((field) => !field.hidden)} records={records} onClose={() => setGroupSettingsOpen(false)} onSave={async (groups) => { await updateView({ ...activeView, groups }); }} />}
+
+      {propertyManagerOpen && (
+        <PropertyManagerDialog
+          fields={bundle.schema.fields}
+          deletedFields={bundle.schema.deletedFields ?? []}
+          activeView={activeView}
+          onClose={() => setPropertyManagerOpen(false)}
+          onEdit={(field) => { setPropertyManagerOpen(false); setEditingField(field); }}
+          onAdd={async (input) => { await cache.addField(bundle.schema.id, input); }}
+          onReorder={async (fieldIds) => { await cache.reorderFields({ databaseId: bundle.schema.id, fieldIds }); }}
+          onDelete={async (field) => { await cache.deleteField(bundle.schema.id, field.id); }}
+          onRestore={async (fieldId) => { await cache.restoreField({ databaseId: bundle.schema.id, fieldId }); }}
+          onPermanentlyDelete={async (fieldId) => { await cache.permanentlyDeleteField({ databaseId: bundle.schema.id, fieldId }); }}
         />
       )}
 
@@ -1259,10 +1730,40 @@ export const DatabaseTable = memo(function DatabaseTable({
           canDelete={bundle.views.length > 1}
           isDefault={bundle.schema.defaultViewId === editingView.id}
           onClose={() => setEditingView(undefined)}
-          onSave={updateView}
+          onSave={(nextView) => updateView(nextView, editingView)}
           onDuplicate={duplicateView}
           onDelete={deleteView}
           onSetDefault={setDefaultView}
+        />
+      )}
+
+      {createViewOpen && (
+        <CreateViewDialog
+          databaseId={bundle.schema.id}
+          currentView={activeView}
+          existingNames={bundle.views.map((item) => item.name)}
+          onClose={() => setCreateViewOpen(false)}
+          onCreate={createView}
+        />
+      )}
+
+      {viewMenu && bundle.views.find((candidate) => candidate.id === viewMenu.viewId) && (
+        <ViewContextMenu
+          anchor={viewMenu.anchor}
+          view={bundle.views.find((candidate) => candidate.id === viewMenu.viewId)!}
+          existingNames={bundle.views.map((candidate) => candidate.name)}
+          isDefault={bundle.schema.defaultViewId === viewMenu.viewId}
+          canDelete={bundle.views.length > 1}
+          structuralDisabledReason={!capabilities.canManageSchema ? capabilities.structuralDisabledReason : undefined}
+          onClose={() => setViewMenu(null)}
+          onRename={(name) => updateView({ ...bundle.views.find((candidate) => candidate.id === viewMenu.viewId)!, name })}
+          onEdit={() => {
+            setEditingView(bundle.views.find((candidate) => candidate.id === viewMenu.viewId));
+            setViewMenu(null);
+          }}
+          onDuplicate={() => duplicateView(bundle.views.find((candidate) => candidate.id === viewMenu.viewId)!)}
+          onSetDefault={() => setDefaultView(bundle.views.find((candidate) => candidate.id === viewMenu.viewId)!)}
+          onDelete={() => deleteView(bundle.views.find((candidate) => candidate.id === viewMenu.viewId)!)}
         />
       )}
 
@@ -1281,7 +1782,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           view={activeView}
           anchor={sortAnchor}
           onClose={() => setSortAnchor(null)}
-          onChange={(sorts) => void updateView({ ...activeView, sorts })}
+          onChange={(sorts) => updateView({ ...activeView, sorts })}
         />
       )}
 
@@ -1290,8 +1791,44 @@ export const DatabaseTable = memo(function DatabaseTable({
           fields={bundle.schema.fields.filter((f) => !f.hidden)}
           view={activeView}
           anchor={filterAnchor}
-          onClose={() => setFilterAnchor(null)}
-          onChange={(filters) => void updateView({ ...activeView, filters })}
+          initialFieldId={filterInitialFieldId}
+          onClose={() => { setFilterAnchor(null); setFilterInitialFieldId(undefined); }}
+          onChange={(filterExpression) => updateView({ ...activeView, filterExpression, filters: flattenSimpleAndFilters(filterExpression) })}
+        />
+      )}
+
+      {settingsAnchor && (
+        <DatabaseSettingsMenu
+          anchor={settingsAnchor}
+          view={activeView}
+          capabilities={capabilities}
+          onClose={() => setSettingsAnchor(null)}
+          onEditView={() => {
+            setSettingsAnchor(null);
+            setEditingView(activeView);
+          }}
+          onFilter={() => {
+            const anchor = settingsAnchor;
+            setSettingsAnchor(null);
+            setFilterAnchor(anchor);
+          }}
+          onSort={() => {
+            const anchor = settingsAnchor;
+            setSettingsAnchor(null);
+            setSortAnchor(anchor);
+          }}
+          onGroup={() => { setSettingsAnchor(null); setGroupSettingsOpen(true); }}
+          onPageOpenMode={(pageOpenMode) => updateView({ ...activeView, pageOpenMode })}
+          onEditProperties={() => {
+            setSettingsAnchor(null);
+            setPropertyManagerOpen(true);
+          }}
+          onTemplates={() => {
+            setSettingsAnchor(null);
+            setTemplateDialogOpen(true);
+          }}
+          onDeletedItems={() => { setSettingsAnchor(null); setDeletedRowsOpen(true); }}
+          onToggleLock={() => cache.updateMeta({ databaseId: bundle.schema.id, locked: !bundle.schema.locked }).then(() => undefined)}
         />
       )}
     </div>
@@ -1304,24 +1841,30 @@ export interface CellProps {
   wrap: boolean;
   record: DatabaseRecord;
   databaseId: string;
-  databaseIcon?: string;
   onChange: (value: RecordValue) => void;
-  onOptionColorChange: (optionId: string, color: string) => void;
-  onOptionsChange: (options: SelectOption[]) => void;
+  onOptionsChange: (options: SelectOption[]) => Promise<void> | void;
   onOpenRowPage?: (rowId: string) => void;
   onOpenEntityRef?: (ref: EntityRef) => void;
+  dateTimeDefaults?: DateTimeDisplayDefaults;
+}
+
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!target || typeof (target as { closest?: unknown }).closest !== "function") return false;
+  return Boolean((target as Element).closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only']"));
 }
 
 function PluginViewBody({
   provider,
   bundle,
   view,
-  records
+  records,
+  onOpenRow
 }: {
   provider: DatabaseViewProvider;
   bundle: DatabaseBundle;
   view: TableView;
   records: DatabaseRecord[];
+  onOpenRow: (rowId: string, origin?: HTMLElement) => void;
 }) {
   const cache = useDatabaseCache();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1330,7 +1873,7 @@ function PluginViewBody({
     getDatabase: (id) => cache.loadBundle(id),
     addField: (databaseId, input) => cache.addField(databaseId, input),
     updateField: (input) => cache.updateField(input),
-    addRow: (databaseId) => cache.addRow(databaseId),
+    addRow: (databaseId, initialValues) => cache.addRow(databaseId, undefined, initialValues),
     updateCell: (input) => cache.updateCell(input),
     deleteRow: (databaseId, rowId) => cache.deleteRow({ databaseId, rowId }),
     createView: (input) => cache.createView(input),
@@ -1348,6 +1891,7 @@ function PluginViewBody({
       bundle: scopedBundle,
       view,
       container,
+      openRow: onOpenRow,
       workspace
     }) as Disposable | void;
 
@@ -1355,7 +1899,7 @@ function PluginViewBody({
       maybeDisposable?.dispose?.();
       container.replaceChildren();
     };
-  }, [bundle, provider, records, view, workspace]);
+  }, [bundle, onOpenRow, provider, records, view, workspace]);
 
   return (
     <div className="plugin-view-host" ref={containerRef} />
@@ -1368,22 +1912,22 @@ export function Cell({
   wrap,
   record,
   databaseId,
-  databaseIcon,
   onChange,
   onOptionsChange,
   onOpenRowPage,
-  onOpenEntityRef
+  onOpenEntityRef,
+  dateTimeDefaults
 }: CellProps) {
   const { t } = useI18n();
   const empty = t("cell.empty");
-  const rowIcon = resolveRowIcon(record, databaseIcon);
+  const rowIcon = String(record.row_icon ?? "");
 
   // System fields, imported timestamp fields, formula fields, and rollup fields are
   // read-only regardless of provider — they're managed by the host or
   // by computed field evaluation, not direct user input.
   if (field.system || field.type === "formula" || field.type === "rollup" || field.type === "created_time" || field.type === "updated_time") {
     const displayValue = isDateLikeFieldType(field.type)
-      ? formatDateForField(value, field)
+      ? formatDateForField(value, field, dateTimeDefaults)
       : String(value ?? "");
     return (
       <span className={wrap ? "readonly-cell wrap" : "readonly-cell"} title={String(value ?? "")}>
@@ -1438,7 +1982,7 @@ export function Cell({
     const rowId = String(record.id);
     return (
       <span className="title-cell-with-icon">
-        <EntityIcon kind="row_page" icon={rowIcon} size={16} />
+        <EntityIcon kind="row_page" icon={rowIcon || undefined} size={16} />
         <span className="title-cell-editor">{editor}</span>
         {onOpenRowPage && (
           <button
@@ -1717,13 +2261,14 @@ function computeColumnSummaries(
   fields: FieldSchema[],
   records: DatabaseRecord[],
   view: TableView,
-  locale: "en" | "zh"
+  locale: "en" | "zh",
+  dateTimeDefaults?: DateTimeDisplayDefaults
 ): { byFieldId: Map<string, { type: ColumnSummaryType; value: string }>; hasAny: boolean } {
   const byFieldId = new Map<string, { type: ColumnSummaryType; value: string }>();
   for (const field of fields) {
     const type = selectedSummaryType(view, field);
     if (type === "none") continue;
-    const value = computeColumnSummaryValue(type, field, records, locale);
+    const value = computeColumnSummaryValue(type, field, records, locale, dateTimeDefaults);
     if (!value) continue;
     byFieldId.set(field.id, { type, value });
   }
@@ -1769,7 +2314,8 @@ function computeColumnSummaryValue(
   type: ColumnSummaryType,
   field: FieldSchema,
   records: DatabaseRecord[],
-  locale: "en" | "zh"
+  locale: "en" | "zh",
+  dateTimeDefaults?: DateTimeDisplayDefaults
 ): string {
   if (type === "count") return records.length.toLocaleString(locale === "zh" ? "zh-CN" : "en-US");
 
@@ -1792,7 +2338,7 @@ function computeColumnSummaryValue(
         ? item.date.getTime() < best.date.getTime() ? item : best
         : item.date.getTime() > best.date.getTime() ? item : best
     );
-    return formatDateForField(selected.value, field);
+    return formatDateForField(selected.value, field, dateTimeDefaults);
   }
 
   const numbers = nonEmptyValues
@@ -1850,6 +2396,21 @@ function parseSummaryNumber(value: RecordValue | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function groupValue(field: FieldSchema, key: string, label: string): RecordValue {
+  if (field.type === "checkbox") return key === "boolean:true";
+  return label;
+}
+
+function mutationErrorMessage(error: unknown): string {
+  return cleanMutationErrorMessage(error instanceof Error ? error.message : String(error));
+}
+
+function cleanMutationErrorMessage(message: string): string {
+  return message
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, "")
+    .replace(/^(?:DatabaseMutationError|DatabaseLockedError|DatabaseViewError):\s*/, "");
+}
+
 function formatSummaryNumber(value: number, locale: "en" | "zh"): string {
   return value.toLocaleString(locale === "zh" ? "zh-CN" : "en-US", {
     minimumFractionDigits: 2,
@@ -1898,4 +2459,31 @@ function translateFieldType(t: ReturnType<typeof useI18n>["t"], type: FieldType)
   if (type === "formula") return t("type.formula");
   if (type === "rollup") return t("type.rollup");
   return formatFieldType(type);
+}
+
+export function preferredActiveViewId(
+  bundle: DatabaseBundle,
+  requestedView: TableView,
+  restoreLocalPreference = true
+): string {
+  if (!restoreLocalPreference) return requestedView.id;
+  if (requestedView.id !== bundle.schema.defaultViewId) return requestedView.id;
+  try {
+    const saved = window.localStorage.getItem(`${LAST_ACTIVE_VIEW_STORAGE_PREFIX}${bundle.schema.id}`);
+    if (saved && bundle.views.some((candidate) => candidate.id === saved)) return saved;
+  } catch {
+    // Local preferences are best-effort (private mode/full storage can fail).
+  }
+  return requestedView.id;
+}
+
+export function diffTableView(current: TableView, next: TableView): TableViewPatch {
+  const patch: TableViewPatch = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (key === "id" || key === "databaseId" || key === "revision" || key === "updatedAt") continue;
+    const currentValue = current[key as keyof TableView];
+    if (JSON.stringify(currentValue) === JSON.stringify(value)) continue;
+    (patch as Record<string, unknown>)[key] = value;
+  }
+  return patch;
 }

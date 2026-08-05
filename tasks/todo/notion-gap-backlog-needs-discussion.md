@@ -40,27 +40,27 @@ Remaining high-value priority candidates:
    - Unified Cmd-K style surface for pages, databases, row pages, commands,
      and eventually plugin commands.
    - Decision: this must support both navigation and command execution.
-   - Split task: `tasks/todo/unified-command-palette-navigation-and-actions.md`.
+   - Split task: `tasks/done/unified-command-palette-navigation-and-actions.md`.
 
 2. Search / AI Q&A.
    - Advanced Search is the local semantic retrieval foundation.
    - LLM Chat is the assistant UI and safe-write foundation.
    - Decision: this is a high-priority Notion-parity surface with cited
      answers, database-property awareness, and later page-history awareness.
-   - Split task: `tasks/todo/ai-qa-agent-search-and-history.md`.
+   - Split task: `tasks/done/ai-qa-agent-search-and-history.md`.
 
 3. Git history and restore.
    - Diff viewer, restore previous version, conflict handling, and status per
      page.
    - Decision: this is core page experience plus Git/backup settings, not a
      settings-only workflow.
-   - Split task: `tasks/todo/github-backup-page-history-redesign.md`.
+   - Split task: `tasks/done/github-backup-page-history-redesign.md`.
 
 4. Keyboard shortcut settings.
    - Central registry, discoverable shortcuts, user overrides, conflict
      detection, reset/disable, and shortcut labels in command palette/tooltips.
    - Decision: this is a high-priority keyboard-first product surface.
-   - Split task: `tasks/todo/keyboard-shortcut-settings-and-registry.md`.
+   - Split task: `tasks/done/keyboard-shortcut-settings-and-registry.md`.
 
 5. Tag pages and richer backlinks.
    - Backlinks now have a page panel for incoming page/row references with
@@ -167,13 +167,13 @@ Needs discussion:
 Decisions:
 
 - Semantic/vector search direction is now split into
-  `tasks/todo/advanced-search-lancedb-qwen3-local-embedding.md`; keep this
+  `tasks/done/advanced-search-lancedb-qwen3-local-vector-index.md`; keep this
   bucket focused on command palette ergonomics and search result preview/jump
   behavior.
 - AI Q&A is high priority and split into
-  `tasks/todo/ai-qa-agent-search-and-history.md`.
+  `tasks/done/ai-qa-agent-search-and-history.md`.
 - Keyboard shortcut settings are high priority and split into
-  `tasks/todo/keyboard-shortcut-settings-and-registry.md`.
+  `tasks/done/keyboard-shortcut-settings-and-registry.md`.
 
 ### Settings And Preferences
 
@@ -201,7 +201,7 @@ Decision:
 
 - Git history and restore are core page experience surfaces, backed by local Git
   first and remote Git only when configured. Continue through
-  `tasks/todo/github-backup-page-history-redesign.md`.
+  `tasks/done/github-backup-page-history-redesign.md`.
 
 ### LLM-First
 
@@ -218,7 +218,7 @@ Decisions:
 - Embeddings for local semantic search should use Qwen3 through Ollama first.
 - LLM writes must stay previewable/confirmable before apply.
 - Agent/Q&A depth is now split into
-  `tasks/todo/ai-qa-agent-search-and-history.md`.
+  `tasks/done/ai-qa-agent-search-and-history.md`.
 
 ### Plugin Platform
 

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/constants.js";
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertPageSecondaryArtifactContract } from "./lib/page-secondary-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertIntersectsViewport,
   assertNoDocumentHorizontalOverflow,
@@ -23,6 +26,8 @@ import {
   writeJson
 } from "./ui-harness.mjs";
 
+const execFileAsync = promisify(execFile);
+
 const result = await withLotionUIHarness("page-secondary-ui", async ({ artifactRoot, cdpUrl, page, openWorkspace, registerTempWorkspace }) => {
   const expectedViewports = pageSecondaryViewports();
   const viewportResults = [];
@@ -37,13 +42,41 @@ const result = await withLotionUIHarness("page-secondary-ui", async ({ artifactR
 
       const collapsed = await assertSecondaryCollapsed(page, fixture, viewport.name);
       await expandSecondaryPanel(page, viewport.name);
+      await waitForPageHistoryReady(page);
+      const pageTitleRecovery = await assertPageTitleRecovery(page, fixture, viewport.name);
+      const coverOffsetRecovery = await assertCoverOffsetRecovery(page, fixture, viewport.name);
+      await expandSecondaryPanel(page, viewport.name);
+      const pagePropertyRecovery = await assertPagePropertyRecovery(page, fixture, viewport.name);
+      await expandSecondaryPanel(page, viewport.name);
       await waitForSecondaryBacklinks(page, fixture);
       const expanded = await assertSecondaryExpanded(page, fixture, viewport.name);
-      const snapshot = await captureSecondarySnapshot({ artifactRoot, collapsed, expanded, fixture, page, viewport });
+      const historyPreview = await assertHistoryPreview(page, fixture, viewport.name);
+      const { history, snapshot } = await captureSecondarySnapshot({
+        artifactRoot,
+        collapsed,
+        expanded,
+        fixture,
+        historyPreview,
+        page,
+        viewport
+      });
+      const baselinePolicy = {
+        compact: "test/baselines/production-visual/page-history-restore-preview-compact.json",
+        desktop: "test/baselines/production-visual/page-history-restore-preview-desktop.json",
+        wide: "test/baselines/production-visual/page-history-restore-preview-wide.json"
+      }[viewport.name];
+      snapshot.perceptualBaseline = baselinePolicy && process.env.LOTION_PAGE_SECONDARY_SKIP_BASELINE !== "1"
+        ? await assertProductionVisualBaseline({
+          actualPath: snapshot.imagePath,
+          artifactRoot,
+          policyPath: baselinePolicy
+        })
+        : null;
+      const restore = await assertHistoryRestore(page, fixture, viewport.name);
       await assertSecondaryKeyboardFocus(page, viewport.name);
       await collapseSecondaryPanel(page, viewport.name);
       const editor = await assertEditorTypingWhileSecondaryCollapsed(page, fixture, viewport.name);
-      const toc = await assertFloatingToc(page, fixture, viewport.name);
+      const toc = await assertFloatingToc(page, fixture, viewport, artifactRoot);
 
       viewportResults.push({
         viewport: viewport.name,
@@ -51,7 +84,13 @@ const result = await withLotionUIHarness("page-secondary-ui", async ({ artifactR
         collapsed,
         expanded,
         editor,
+        history,
+        historyPreview,
         noHorizontalOverflow: true,
+        coverOffsetRecovery,
+        pagePropertyRecovery,
+        pageTitleRecovery,
+        restore,
         snapshot,
         toc
       });
@@ -64,7 +103,11 @@ const result = await withLotionUIHarness("page-secondary-ui", async ({ artifactR
     status: "passed"
   };
   summary.artifactContract = await assertPageSecondaryArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: expectedViewports
+      .map((viewport) => viewport.name)
+      .filter((viewportName) => process.env.LOTION_PAGE_SECONDARY_SKIP_BASELINE !== "1"
+        && ["desktop", "compact", "wide"].includes(viewportName))
   });
   return summary;
 });
@@ -81,6 +124,222 @@ function pageSecondaryViewports() {
     seen.add(key);
     return true;
   });
+}
+
+async function assertPageTitleRecovery(page, fixture, viewportName) {
+  const titleInput = page.locator(".title-input").first();
+  await titleInput.waitFor({ timeout: 8_000 });
+  const recoveredTitle = `Recovered page title ${viewportName}`;
+  await page.evaluate(() => window.lotion.debug.failNextPageMetadataWrite("Injected page title persistence failure"));
+  await titleInput.fill(recoveredTitle);
+  await titleInput.blur();
+  const alert = page.locator('.page-title-feedback[role="alert"]');
+  await alert.waitFor({ timeout: 8_000 });
+  const message = (await alert.innerText()).trim();
+  const failed = await page.evaluate(async (pageId) => {
+    const stored = await window.lotion.pages.get(pageId);
+    return { title: stored.meta.title, markdown: stored.markdown };
+  }, fixture.targetPageId);
+  const draftRetained = await titleInput.inputValue() === recoveredTitle;
+  const competingControlsBlocked = await titleInput.isDisabled();
+  const retry = alert.locator("button").filter({ hasText: "Retry" }).first();
+  await retry.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  await page.waitForFunction(async ({ pageId, title }) => {
+    return (await window.lotion.pages.get(pageId)).meta.title === title;
+  }, { pageId: fixture.targetPageId, title: recoveredTitle }, { timeout: 8_000 });
+  const recovered = await page.evaluate(async (pageId) => {
+    const stored = await window.lotion.pages.get(pageId);
+    return { title: stored.meta.title, markdown: stored.markdown };
+  }, fixture.targetPageId);
+
+  await page.evaluate(() => window.lotion.debug.failNextPageMetadataWrite("Injected discarded page title failure"));
+  await titleInput.fill(`Discarded page title ${viewportName}`);
+  await titleInput.blur();
+  await alert.waitFor({ timeout: 8_000 });
+  await alert.locator("button").filter({ hasText: "Discard title" }).first().evaluate((button) => button.click());
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  const discardedStored = await page.evaluate(async (pageId) => (await window.lotion.pages.get(pageId)).meta.title, fixture.targetPageId);
+  const discardResetDraft = await titleInput.inputValue() === recoveredTitle;
+
+  await titleInput.fill(fixture.targetTitle);
+  await titleInput.blur();
+  await page.waitForFunction(async ({ pageId, title }) => {
+    return (await window.lotion.pages.get(pageId)).meta.title === title;
+  }, { pageId: fixture.targetPageId, title: fixture.targetTitle }, { timeout: 8_000 });
+
+  return {
+    message,
+    failedMetadataRolledBack: failed.title === fixture.targetTitle,
+    failedMarkdownRolledBack: failed.markdown.trimStart().startsWith(`# ${fixture.targetTitle}`),
+    draftRetained,
+    competingControlsBlocked,
+    duplicateRetrySuppressed: true,
+    recoveredMetadataTitle: recovered.title,
+    recoveredMarkdownHeading: recovered.markdown.trimStart().split("\n", 1)[0],
+    retryPersistedExactInput: recovered.title === recoveredTitle
+      && recovered.markdown.trimStart().startsWith(`# ${recoveredTitle}`),
+    discardPreservedStoredTitle: discardedStored === recoveredTitle,
+    discardResetDraft,
+    baselineStateRestored: true
+  };
+}
+
+async function assertPagePropertyRecovery(page, fixture, viewportName) {
+  const tagsInput = page.locator(".page-properties .page-property-input").first();
+  await tagsInput.waitFor({ timeout: 8_000 });
+  const recoveredTags = ["secondary", "toc", `recovered-${viewportName}`];
+  await page.evaluate(() => window.lotion.debug.failNextPageMetadataWrite("Injected page property persistence failure"));
+  await tagsInput.fill(recoveredTags.join(", "));
+  await tagsInput.blur();
+  const alert = page.locator('.page-property-feedback[role="alert"]');
+  await alert.waitFor({ timeout: 8_000 });
+  const message = (await alert.innerText()).trim();
+  const failed = await page.evaluate(async (pageId) => (await window.lotion.pages.get(pageId)).meta.tags ?? [], fixture.targetPageId);
+  const draftRetained = await tagsInput.inputValue() === recoveredTags.join(", ");
+  const competingControlsBlocked = await page.locator(".page-properties .page-property-input:disabled").count() === 3;
+  const retry = alert.locator("button").filter({ hasText: "Retry" }).first();
+  await retry.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  await page.waitForFunction(async ({ pageId, tags }) => {
+    const stored = await window.lotion.pages.get(pageId);
+    return JSON.stringify(stored.meta.tags ?? []) === JSON.stringify(tags);
+  }, { pageId: fixture.targetPageId, tags: recoveredTags }, { timeout: 8_000 });
+  const recovered = await page.evaluate(async (pageId) => (await window.lotion.pages.get(pageId)).meta.tags ?? [], fixture.targetPageId);
+
+  await expandSecondaryPanel(page, viewportName);
+  await page.evaluate(() => window.lotion.debug.failNextPageMetadataWrite("Injected discarded page property failure"));
+  await tagsInput.fill(`discarded-${viewportName}`);
+  await tagsInput.blur();
+  await alert.waitFor({ timeout: 8_000 });
+  await alert.locator("button").filter({ hasText: "Discard changes" }).first().evaluate((button) => button.click());
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  const discardedStored = await page.evaluate(async (pageId) => (await window.lotion.pages.get(pageId)).meta.tags ?? [], fixture.targetPageId);
+  const discardResetDraft = await tagsInput.inputValue() === recoveredTags.join(", ");
+
+  await expandSecondaryPanel(page, viewportName);
+  await tagsInput.fill("secondary, toc");
+  await tagsInput.blur();
+  await page.waitForFunction(async (pageId) => {
+    const stored = await window.lotion.pages.get(pageId);
+    return JSON.stringify(stored.meta.tags ?? []) === JSON.stringify(["secondary", "toc"]);
+  }, fixture.targetPageId, { timeout: 8_000 });
+
+  return {
+    message,
+    failedValueRolledBack: JSON.stringify(failed) === JSON.stringify(["secondary", "toc"]),
+    draftRetained,
+    competingControlsBlocked,
+    duplicateRetrySuppressed: true,
+    retryPersistedExactInput: JSON.stringify(recovered) === JSON.stringify(recoveredTags),
+    discardPreservedStoredValue: JSON.stringify(discardedStored) === JSON.stringify(recoveredTags),
+    discardResetDraft,
+    baselineStateRestored: true
+  };
+}
+
+async function assertCoverOffsetRecovery(page, fixture, viewportName) {
+  const cover = page.locator(".page-cover").first();
+  await cover.waitFor({ state: "visible", timeout: 8_000 });
+  const originalOffset = 50;
+
+  const enterReposition = async () => {
+    await cover.hover();
+    await cover.getByRole("button", { name: "重新定位", exact: true }).click();
+    await cover.locator(".page-cover-reposition-actions").waitFor({ state: "visible", timeout: 5_000 });
+  };
+  const dragBy = async (deltaY) => {
+    const box = await cover.boundingBox();
+    if (!box) throw new Error(`Cover geometry missing for ${viewportName}`);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y + deltaY, { steps: 4 });
+    await page.mouse.up();
+  };
+  const readLiveOffset = async () => cover.locator("img").evaluate((image) => {
+    const match = /50% ([\d.]+)%/.exec(image.style.objectPosition);
+    return match ? Number(match[1]) : Number.NaN;
+  });
+
+  await enterReposition();
+  await dragBy(-36);
+  const recoveredOffset = await readLiveOffset();
+  await page.evaluate(() => window.lotion.debug.failNextPageMetadataWrite("Injected cover position persistence failure"));
+  await cover.getByRole("button", { name: "保存", exact: true }).click();
+  const alert = page.locator('.cover-offset-feedback[role="alert"]');
+  await alert.waitFor({ timeout: 8_000 });
+  const message = (await alert.innerText()).trim();
+  const failedStoredOffset = await page.evaluate(async (pageId) => (await window.lotion.pages.get(pageId)).meta.coverOffset, fixture.targetPageId);
+  const retainedDraft = Math.abs(await readLiveOffset() - recoveredOffset) < 0.01;
+  const competingControlsBlocked = await cover.locator(".page-cover-reposition-actions button:disabled").count() === 2;
+  const retry = alert.getByRole("button", { name: "Retry", exact: true });
+  await retry.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  await page.waitForFunction(async ({ pageId, offset }) => {
+    return Math.abs(Number((await window.lotion.pages.get(pageId)).meta.coverOffset) - offset) < 0.01;
+  }, { pageId: fixture.targetPageId, offset: recoveredOffset }, { timeout: 8_000 });
+
+  await enterReposition();
+  await dragBy(24);
+  const discardedOffset = await readLiveOffset();
+  await page.evaluate(() => window.lotion.debug.failNextPageMetadataWrite("Injected discarded cover position failure"));
+  await cover.getByRole("button", { name: "保存", exact: true }).click();
+  await alert.waitFor({ timeout: 8_000 });
+  await alert.getByRole("button", { name: "Discard position", exact: true }).click();
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  const discardStoredOffset = await page.evaluate(async (pageId) => (await window.lotion.pages.get(pageId)).meta.coverOffset, fixture.targetPageId);
+  const discardResetDraft = Math.abs(await readLiveOffset() - recoveredOffset) < 0.01;
+
+  await enterReposition();
+  const box = await cover.boundingBox();
+  if (!box) throw new Error(`Cover geometry missing while restoring ${viewportName}`);
+  const restoreStartOffset = await readLiveOffset();
+  await dragBy(((restoreStartOffset - originalOffset) / 100) * box.height);
+  const restoredLiveOffset = await readLiveOffset();
+  if (Math.abs(restoredLiveOffset - originalOffset) >= 0.01) {
+    throw new Error(`Cover offset ${viewportName} failed to restore visually: ${JSON.stringify({
+      restoreStartOffset,
+      restoredLiveOffset,
+      originalOffset
+    })}`);
+  }
+  await cover.getByRole("button", { name: "保存", exact: true }).click();
+  await page.waitForFunction(async ({ pageId, offset }) => {
+    return Math.abs(Number((await window.lotion.pages.get(pageId)).meta.coverOffset) - offset) < 0.01;
+  }, { pageId: fixture.targetPageId, offset: originalOffset }, { timeout: 8_000 });
+  await cover.hover();
+  await cover.getByRole("button", { name: "移除", exact: true }).click();
+  await cover.waitFor({ state: "detached", timeout: 8_000 });
+  const baseline = await page.evaluate(async (pageId) => {
+    const stored = await window.lotion.pages.get(pageId);
+    return { cover: stored.meta.cover, offset: stored.meta.coverOffset };
+  }, fixture.targetPageId);
+
+  return {
+    message,
+    failedValueRolledBack: Number(failedStoredOffset) === originalOffset,
+    retainedDraft,
+    competingControlsBlocked,
+    duplicateRetrySuppressed: true,
+    retryPersistedExactInput: Math.abs(Number(discardStoredOffset) - recoveredOffset) < 0.01,
+    discardPreservedStoredValue: Math.abs(Number(discardStoredOffset) - recoveredOffset) < 0.01,
+    discardResetDraft,
+    discardedDraftDiffered: Math.abs(discardedOffset - recoveredOffset) > 0.01,
+    baselineCoverCleared: !baseline.cover,
+    baselineOffset: Number(baseline.offset),
+    baselineStateRestored: !baseline.cover && Math.abs(Number(baseline.offset) - originalOffset) < 0.01
+  };
 }
 
 async function waitForPageService(page, pageId) {
@@ -117,6 +376,101 @@ async function waitForSecondaryBacklinks(page, fixture) {
   ), fixture.expectedBacklinks, { timeout: 8_000 });
 }
 
+async function assertHistoryPreview(page, fixture, viewportName) {
+  const panel = page.locator(".page-history-panel").first();
+  await waitForPageHistoryReady(page);
+  const versions = panel.locator(".page-history-version");
+  await versions.nth(1).click();
+  await panel.locator(".page-history-preview").waitFor({ timeout: 8_000 });
+  await panel.getByRole("button", { name: "Restore" }).waitFor({ timeout: 8_000 });
+  const state = await collectHistoryVisibleState(page);
+  if (
+    state.status !== "Ready" ||
+    state.versionCount !== 2 ||
+    state.selectedVersionCount !== 1 ||
+    state.restoreButtonText !== "Restore" ||
+    state.diffLineCount < 2 ||
+    !state.previewLabel.includes(fixture.targetTitle)
+  ) {
+    throw new Error(`Page history preview state mismatch for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  if (state.storageLeakMatches.length > 0) {
+    throw new Error(`Page history preview exposed storage identity for ${viewportName}: ${JSON.stringify(state.storageLeakMatches)}`);
+  }
+  return {
+    status: state.status,
+    versionCount: state.versionCount,
+    selectedVersionCount: state.selectedVersionCount,
+    previewLabel: state.previewLabel,
+    restoreButtonText: state.restoreButtonText,
+    diffLineCount: state.diffLineCount,
+    storageLeakMatches: state.storageLeakMatches
+  };
+}
+
+async function waitForPageHistoryReady(page) {
+  const panel = page.locator(".page-history-panel").first();
+  const ready = panel.locator(".page-history-status.ready");
+  try {
+    await ready.waitFor({ timeout: 4_000 });
+  } catch {
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    await ready.waitFor({ timeout: 8_000 });
+  }
+  await page.waitForFunction(() => document.querySelectorAll(".page-history-version").length === 2, null, { timeout: 8_000 });
+}
+
+async function assertHistoryRestore(page, fixture, viewportName) {
+  await expandSecondaryPanel(page, viewportName);
+  await page.locator(".page-history-preview").waitFor({ state: "visible", timeout: 8_000 });
+  await page.evaluate(() => {
+    const original = window.confirm;
+    window.__lotionPageHistoryConfirmMessage = "";
+    window.confirm = (message) => {
+      window.__lotionPageHistoryConfirmMessage = String(message);
+      window.confirm = original;
+      return true;
+    };
+  });
+  await page.locator(".page-history-preview").getByRole("button", { name: "Restore" }).click();
+  const confirmation = await page.evaluate(() => window.__lotionPageHistoryConfirmMessage ?? "");
+  if (!confirmation.includes(fixture.targetTitle)) {
+    throw new Error(`Page history restore confirmation lost page identity for ${viewportName}: ${confirmation}`);
+  }
+  await page.getByText("Page restored from local Git history.", { exact: true }).waitFor({ timeout: 8_000 });
+  await page.waitForFunction(
+    (marker) => Array.from(document.querySelectorAll(".cm-line")).some((line) => line.textContent?.includes(marker)),
+    fixture.restoredMarker,
+    { timeout: 8_000 }
+  );
+  const markdown = await waitForPageMarkdown(
+    page,
+    fixture.targetPageId,
+    fixture.restoredMarker,
+    `page history restore ${viewportName}`
+  );
+  const state = await page.locator(".page-history-panel").evaluate((panel) => ({
+    message: panel.querySelector(".page-history-message")?.textContent?.trim() ?? "",
+    previewMounted: Boolean(panel.querySelector(".page-history-preview")),
+    status: panel.querySelector(".page-history-status")?.textContent?.trim() ?? ""
+  }));
+  if (
+    !markdown.includes(fixture.restoredMarker) ||
+    state.message !== "Page restored from local Git history." ||
+    state.previewMounted ||
+    state.status !== "Ready"
+  ) {
+    throw new Error(`Page history restore result mismatch for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  return {
+    confirmation,
+    message: state.message,
+    previewCleared: !state.previewMounted,
+    restoredMarker: fixture.restoredMarker,
+    persisted: markdown.includes(fixture.restoredMarker)
+  };
+}
+
 async function assertSecondaryCollapsed(page, fixture, viewportName) {
   const panel = page.getByTestId("page-secondary-panel").first();
   const panelRect = await assertWithinViewport(page, panel, `secondary collapsed panel ${viewportName}`, 4);
@@ -134,6 +488,7 @@ async function assertSecondaryCollapsed(page, fixture, viewportName) {
 
 async function expandSecondaryPanel(page, viewportName) {
   const panel = page.getByTestId("page-secondary-panel").first();
+  await page.mouse.move(4, 4);
   await panel.hover();
   await page.waitForFunction(() => document.querySelector("[data-testid='page-secondary-panel']")?.getAttribute("aria-expanded") === "true", null, { timeout: 5_000 });
   await page.waitForFunction(() => {
@@ -194,64 +549,489 @@ async function assertEditorTypingWhileSecondaryCollapsed(page, fixture, viewport
   };
 }
 
-async function assertFloatingToc(page, fixture, viewportName) {
+async function assertFloatingToc(page, fixture, viewport, artifactRoot) {
+  const viewportName = viewport.name;
   const host = page.locator(".cm-md-floating-toc-host").first();
   const toggle = host.locator(".cm-md-toc-toggle").first();
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
   await assertWithinViewport(page, toggle, `floating toc toggle ${viewportName}`, 8);
+  await page.waitForTimeout(180);
   const collapsed = await readTocState(page);
-  if (!collapsed.hostClass.includes("cm-md-toc-collapsed") || collapsed.toggleExpanded !== "false") {
-    throw new Error(`Floating TOC should default collapsed in ${viewportName}: ${JSON.stringify(collapsed)}`);
-  }
-  if (collapsed.navDisplay !== "none") {
-    throw new Error(`Collapsed floating TOC should hide entries before hover/focus in ${viewportName}: ${JSON.stringify(collapsed)}`);
-  }
+  assertTocAutoHidden(collapsed, viewportName, "by default");
+
   await host.hover();
   await page.waitForFunction(() => {
-    const nav = document.querySelector(".cm-md-floating-toc-host .cm-md-toc-widget");
     const host = document.querySelector(".cm-md-floating-toc-host");
-    const rect = host?.getBoundingClientRect();
-    return nav && rect ? window.getComputedStyle(nav).display !== "none" && rect.width > 160 : false;
+    const toggle = host?.querySelector(".cm-md-toc-toggle");
+    return Boolean(
+      host?.classList.contains("cm-md-toc-expanded") &&
+      !host.classList.contains("cm-md-toc-collapsed") &&
+      toggle?.getAttribute("aria-expanded") === "true"
+    );
   }, null, { timeout: 5_000 });
-  const expanded = await readTocState(page);
-  if (expanded.itemTexts.length < fixture.expectedTocItems || !expanded.itemTexts.includes(fixture.deepHeading)) {
-    throw new Error(`Floating TOC did not expose expected headings in ${viewportName}: ${JSON.stringify(expanded)}`);
+  await page.waitForTimeout(180);
+  const hoverExpanded = await readTocState(page);
+  assertTocExpanded(hoverExpanded, viewportName, "on hover");
+  if (
+    hoverExpanded.itemTexts.length < fixture.expectedTocItems ||
+    !hoverExpanded.itemTexts.includes(fixture.deepHeading) ||
+    !hoverExpanded.itemTexts.includes(fixture.linkedHeading) ||
+    hoverExpanded.itemTexts.some((text) => text.includes("[[") || text.includes("https://"))
+  ) {
+    throw new Error(`Floating TOC did not expose expected headings in ${viewportName}: ${JSON.stringify(hoverExpanded)}`);
   }
+  const layout = await assertExpandedTocLayout(page, viewportName, collapsed.contentRect);
+
   const deepItem = host.locator(".cm-md-toc-item").filter({ hasText: fixture.deepHeading }).first();
   await deepItem.click();
-  const deepHeading = page.locator(".cm-line").filter({ hasText: fixture.deepHeading }).first();
-  await assertIntersectsViewport(page, deepHeading, `TOC target heading ${viewportName}`, 8);
-  const activeEditor = await page.evaluate(() => Boolean(document.activeElement?.closest(".cm-editor")));
-  if (!activeEditor) throw new Error(`TOC navigation did not return focus to the editor in ${viewportName}`);
-  await assertNoDocumentHorizontalOverflow(page, `floating toc navigation ${viewportName}`, 2);
-  return {
-    collapsed,
-    expanded
-  };
-}
+  const pointerNavigation = await readTocState(page);
+  if (!pointerNavigation.focusedWithin || !pointerNavigation.activeIsTocItem) {
+    throw new Error(`Pointer TOC navigation did not retain item focus before exit in ${viewportName}: ${JSON.stringify(pointerNavigation)}`);
+  }
 
-async function captureSecondarySnapshot({ artifactRoot, collapsed, expanded, fixture, page, viewport }) {
-  const panel = page.getByTestId("page-secondary-panel").first();
-  await panel.scrollIntoViewIfNeeded();
-  const snapshot = await captureElementSnapshot({
+  await deepItem.press("Tab");
+  await page.waitForFunction(() => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    return Boolean(
+      host?.classList.contains("cm-md-toc-expanded") &&
+      host.contains(document.activeElement)
+    );
+  }, null, { timeout: 5_000 });
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(180);
+  const keyboardAfterPointer = await readTocState(page);
+  if (
+    !keyboardAfterPointer.focusedWithin ||
+    !keyboardAfterPointer.activeIsTocItem ||
+    keyboardAfterPointer.hovered ||
+    keyboardAfterPointer.hostClass.includes("cm-md-toc-collapsed")
+  ) {
+    throw new Error(`Keyboard-owned TOC focus was lost after pointer exit in ${viewportName}: ${JSON.stringify(keyboardAfterPointer)}`);
+  }
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    return Boolean(
+      host?.classList.contains("cm-md-toc-collapsed") &&
+      !host.contains(document.activeElement)
+    );
+  }, null, { timeout: 5_000 });
+
+  await host.hover();
+  await deepItem.click();
+  await page.mouse.move(0, 0);
+  await page.waitForFunction(() => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    return Boolean(
+      host?.classList.contains("cm-md-toc-collapsed") &&
+      !host.contains(document.activeElement)
+    );
+  }, null, { timeout: 5_000 });
+  await page.waitForTimeout(180);
+  const autoHidden = await readTocState(page);
+  assertTocAutoHidden(autoHidden, viewportName, "after pointer navigation and exit");
+
+  const collapsedCaptured = await captureElementSnapshot({
     artifactRoot,
-    locator: panel,
+    locator: page.locator(".page-editor.page-layout").first(),
     metadata: {
-      collapsed,
-      expanded,
-      expectedBacklinks: fixture.expectedBacklinks,
-      expectedTocItems: fixture.expectedTocItems,
-      phase: "page-secondary"
+      autoHidden,
+      hoverExpanded,
+      keyboardAfterPointer,
+      pointerNavigation,
+      phase: "floating-toc-auto-hidden"
     },
-    name: `page-secondary-${viewport.name}`,
+    name: `floating-toc-auto-hidden-${viewportName}`,
     page,
     viewport
   });
-  return {
-    imagePath: snapshot.imagePath,
-    metadataPath: snapshot.metadataPath,
-    height: Number(snapshot.rect.height.toFixed(1)),
-    width: Number(snapshot.rect.width.toFixed(1))
+  const collapsedSnapshot = {
+    imagePath: collapsedCaptured.imagePath,
+    metadataPath: collapsedCaptured.metadataPath,
+    height: Number(collapsedCaptured.rect.height.toFixed(1)),
+    width: Number(collapsedCaptured.rect.width.toFixed(1))
   };
+
+  await toggle.focus();
+  await page.waitForFunction(() => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    return Boolean(host?.classList.contains("cm-md-toc-expanded"));
+  }, null, { timeout: 5_000 });
+  await page.waitForTimeout(180);
+  const focusExpanded = await readTocState(page);
+  assertTocExpanded(focusExpanded, viewportName, "on keyboard focus");
+  if (!focusExpanded.focusedWithin || !focusExpanded.activeIsToggle) {
+    throw new Error(`Focused TOC did not retain its rail focus in ${viewportName}: ${JSON.stringify(focusExpanded)}`);
+  }
+
+  await deepItem.press("Enter");
+  const deepHeading = page.locator(".cm-line").filter({ hasText: fixture.deepHeading }).first();
+  await assertIntersectsViewport(page, deepHeading, `TOC target heading ${viewportName}`, 8);
+  const navigation = await page.evaluate((headingText) => {
+    const heading = Array.from(document.querySelectorAll(".cm-line"))
+      .find((line) => line.textContent?.includes(headingText));
+    const active = document.activeElement;
+    return {
+      activeClass: active instanceof HTMLElement ? active.className : "",
+      activeInEditor: Boolean(active?.closest(".cm-content")),
+      activeIsTocItem: active instanceof HTMLElement && active.classList.contains("cm-md-toc-item"),
+      headingText: heading?.textContent?.trim() ?? "",
+      headingIsActiveLine: Boolean(heading?.classList.contains("cm-activeLine"))
+    };
+  }, fixture.deepHeading);
+  if (
+    navigation.activeInEditor ||
+    !navigation.activeIsTocItem ||
+    navigation.headingIsActiveLine ||
+    /^#{1,6}\s/.test(navigation.headingText)
+  ) {
+    throw new Error(`Floating TOC navigation exposed heading source or stole editor focus in ${viewportName}: ${JSON.stringify(navigation)}`);
+  }
+  const captured = await captureElementSnapshot({
+    artifactRoot,
+    locator: page.locator(".page-editor.page-layout").first(),
+    metadata: {
+      itemTexts: hoverExpanded.itemTexts,
+      layout,
+      navigation,
+      phase: "floating-toc-navigation"
+    },
+    name: `floating-toc-navigation-${viewportName}`,
+    page,
+    viewport
+  });
+  const snapshot = {
+    imagePath: captured.imagePath,
+    metadataPath: captured.metadataPath,
+    height: Number(captured.rect.height.toFixed(1)),
+    width: Number(captured.rect.width.toFixed(1))
+  };
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    return Boolean(host?.classList.contains("cm-md-toc-collapsed"));
+  }, null, { timeout: 5_000 });
+  await page.waitForTimeout(180);
+  const escaped = await readTocState(page);
+  assertTocAutoHidden(escaped, viewportName, "after Escape");
+  await assertNoDocumentHorizontalOverflow(page, `floating toc navigation ${viewportName}`, 2);
+  return {
+    autoHidden,
+    collapsed,
+    collapsedSnapshot,
+    escaped,
+    expanded: hoverExpanded,
+    focusExpanded,
+    hoverExpanded,
+    keyboardAfterPointer,
+    layout,
+    navigation,
+    pointerNavigation,
+    snapshot
+  };
+}
+
+function assertTocAutoHidden(state, viewportName, phase) {
+  if (
+    !state.hostClass.includes("cm-md-toc-collapsed") ||
+    state.toggleExpanded !== "false" ||
+    state.navDisplay !== "none" ||
+    Number(state.hostRect?.width) > 36 ||
+    Number(state.hostOpacity) < 0.2 ||
+    Number(state.hostOpacity) > 0.5 ||
+    Number(state.hostBackgroundAlpha) > 0.05 ||
+    state.focusedWithin ||
+    state.activeIsTocItem ||
+    Number(state.railMarkers) < 1
+  ) {
+    throw new Error(`Floating TOC is not auto-hidden ${phase} in ${viewportName}: ${JSON.stringify(state)}`);
+  }
+}
+
+function assertTocExpanded(state, viewportName, phase) {
+  if (
+    !state.hostClass.includes("cm-md-toc-expanded") ||
+    state.toggleExpanded !== "true" ||
+    state.navDisplay === "none" ||
+    Number(state.hostRect?.width) < 200 ||
+    Number(state.hostOpacity) < 0.95 ||
+    Number(state.hostBackgroundAlpha) < 0.82 ||
+    Number(state.hostBackgroundAlpha) > 0.95
+  ) {
+    throw new Error(`Floating TOC is not expanded ${phase} in ${viewportName}: ${JSON.stringify(state)}`);
+  }
+}
+
+async function assertExpandedTocLayout(page, viewportName, collapsedContentRect) {
+  const state = await page.evaluate((collapsedRect) => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    const content = document.querySelector(".cm-editor .cm-content");
+    const nav = host?.querySelector(".cm-md-toc-widget");
+    const hostRect = host?.getBoundingClientRect();
+    const contentRect = content?.getBoundingClientRect();
+    const hostStyle = host ? window.getComputedStyle(host) : null;
+    const navStyle = nav ? window.getComputedStyle(nav) : null;
+    const contentStyle = content ? window.getComputedStyle(content) : null;
+    const editorRoot = content?.closest(".cm-editor");
+    return {
+      viewportWidth: window.innerWidth,
+      editorClass: editorRoot?.className ?? "",
+      hostRect: hostRect ? {
+        left: hostRect.left,
+        right: hostRect.right,
+        top: hostRect.top,
+        bottom: hostRect.bottom,
+        width: hostRect.width
+      } : null,
+      contentRect: contentRect ? {
+        left: contentRect.left,
+        right: contentRect.right,
+        top: contentRect.top,
+        bottom: contentRect.bottom,
+        width: contentRect.width
+      } : null,
+      layoutStable: Boolean(
+        collapsedRect && contentRect &&
+        Math.abs(collapsedRect.left - contentRect.left) <= 1 &&
+        Math.abs(collapsedRect.right - contentRect.right) <= 1 &&
+        Math.abs(collapsedRect.width - contentRect.width) <= 1
+      ),
+      overlapsContent: Boolean(
+        hostRect && contentRect &&
+        hostRect.left < contentRect.right &&
+        hostRect.right > contentRect.left &&
+        hostRect.top < contentRect.bottom &&
+        hostRect.bottom > contentRect.top
+      ),
+      backgroundColor: hostStyle?.backgroundColor ?? "",
+      contentMarginLeft: contentStyle?.marginLeft ?? "",
+      contentMarginRight: contentStyle?.marginRight ?? "",
+      contentMaxWidth: contentStyle?.maxWidth ?? "",
+      contentWidth: contentStyle?.width ?? "",
+      hostOpacity: hostStyle?.opacity ?? "",
+      hostPosition: hostStyle?.position ?? "",
+      navOverflowY: navStyle?.overflowY ?? "",
+      navScrollHeight: nav instanceof HTMLElement ? nav.scrollHeight : 0,
+      navClientHeight: nav instanceof HTMLElement ? nav.clientHeight : 0
+    };
+  }, collapsedContentRect);
+  if (!state.layoutStable || state.hostPosition !== "fixed") {
+    throw new Error(`Expanded floating TOC changed page layout in ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  if (state.viewportWidth <= 1120 && /rgba?\([^)]*,\s*0(?:\.0+)?\)$/.test(state.backgroundColor)) {
+    throw new Error(`Compact floating TOC should use an opaque surface in ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  if (!["auto", "scroll"].includes(state.navOverflowY)) {
+    throw new Error(`Floating TOC should own vertical scrolling in ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  return state;
+}
+
+async function captureSecondarySnapshot({ artifactRoot, collapsed, expanded, fixture, historyPreview, page, viewport }) {
+  const content = page.locator(".page-secondary-content").first();
+  const originalStyle = await content.evaluate((node) => ({
+    maxHeight: node.style.maxHeight,
+    overflow: node.style.overflow
+  }));
+  await content.evaluate((node) => {
+    node.style.maxHeight = "none";
+    node.style.overflow = "visible";
+  });
+  const historyPanel = page.locator(".page-history-panel").first();
+  const previousSnapshotAttribute = await historyPanel.getAttribute("data-page-history-snapshot");
+  try {
+    await historyPanel.scrollIntoViewIfNeeded();
+    await historyPanel.evaluate((node) => {
+      node.setAttribute("data-page-history-snapshot", "true");
+      node.setAttribute("data-page-history-snapshot-translate", node.style.translate);
+      const rect = node.getBoundingClientRect();
+      node.style.translate = `${Math.round(rect.left) - rect.left}px ${Math.round(rect.top) - rect.top}px`;
+    });
+    await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.setAttribute("data-page-history-snapshot-style", "true");
+      style.textContent = `
+        [data-page-history-snapshot],
+        [data-page-history-snapshot] * {
+          font-family: Arial, sans-serif !important;
+        }
+        [data-page-history-snapshot] .page-history-version span,
+        [data-page-history-snapshot] .page-history-version small {
+          font-style: normal !important;
+          font-synthesis: none !important;
+          font-weight: 400 !important;
+          letter-spacing: 0 !important;
+        }
+      `;
+      document.head.appendChild(style);
+    });
+    await stabilizeHistorySnapshot(page, historyPanel);
+    const history = await collectHistoryVisibleState(page);
+    assertHistoryVisibleState(history, viewport.name);
+    const captured = await captureElementSnapshot({
+      artifactRoot,
+      locator: historyPanel,
+      metadata: {
+        collapsed,
+        expanded,
+        expectedBacklinks: fixture.expectedBacklinks,
+        expectedTocItems: fixture.expectedTocItems,
+        history,
+        historyPreview,
+        phase: "page-history-restore-preview"
+      },
+      name: `page-history-restore-preview-${viewport.name}`,
+      page,
+      viewport
+    });
+    return {
+      history,
+      snapshot: {
+        imagePath: captured.imagePath,
+        metadataPath: captured.metadataPath,
+        height: Number(captured.rect.height.toFixed(1)),
+        width: Number(captured.rect.width.toFixed(1))
+      }
+    };
+  } finally {
+    await historyPanel.evaluate((node, previous) => {
+      node.style.translate = node.getAttribute("data-page-history-snapshot-translate") ?? "";
+      node.removeAttribute("data-page-history-snapshot-translate");
+      if (previous === null) node.removeAttribute("data-page-history-snapshot");
+      else node.setAttribute("data-page-history-snapshot", previous);
+    }, previousSnapshotAttribute);
+    await page.evaluate(() => {
+      for (const style of document.querySelectorAll("[data-page-history-snapshot-style]")) style.remove();
+    });
+    await content.evaluate((node, style) => {
+      node.style.maxHeight = style.maxHeight;
+      node.style.overflow = style.overflow;
+    }, originalStyle);
+  }
+}
+
+async function stabilizeHistorySnapshot(page, historyPanel) {
+  const box = await historyPanel.boundingBox();
+  if (!box) throw new Error("Page history panel has no capture bounds.");
+  await page.mouse.move(box.x + Math.min(24, box.width / 2), box.y + Math.min(24, box.height / 2));
+  await historyPanel.evaluate(async (root) => {
+    if (root.contains(document.activeElement) && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    await Promise.all(root.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
+async function collectHistoryVisibleState(page) {
+  return page.locator(".page-history-panel").first().evaluate((panel) => {
+    const rect = (node) => {
+      if (!(node instanceof Element)) return null;
+      const box = node.getBoundingClientRect();
+      return {
+        top: box.top,
+        right: box.right,
+        bottom: box.bottom,
+        left: box.left,
+        width: box.width,
+        height: box.height
+      };
+    };
+    const contains = (outer, inner, tolerance = 1) => Boolean(
+      outer && inner &&
+      inner.left >= outer.left - tolerance &&
+      inner.top >= outer.top - tolerance &&
+      inner.right <= outer.right + tolerance &&
+      inner.bottom <= outer.bottom + tolerance
+    );
+    const panelRect = rect(panel);
+    const secondaryContent = panel.closest(".page-secondary-content");
+    const secondaryPanel = panel.closest("[data-testid='page-secondary-panel']");
+    const contentStyle = secondaryContent ? window.getComputedStyle(secondaryContent) : null;
+    const status = panel.querySelector(".page-history-status");
+    const preview = panel.querySelector(".page-history-preview");
+    const previewLabel = panel.querySelector(".page-history-preview-header span");
+    const restoreButton = panel.querySelector(".page-history-preview-header button");
+    const versions = Array.from(panel.querySelectorAll(".page-history-version"));
+    const backlinkExcerpts = Array.from(document.querySelectorAll(".page-backlink-excerpt"))
+      .map((item) => item.textContent?.trim() ?? "");
+    const visibleText = [panel.textContent || "", ...backlinkExcerpts].join("\n");
+    const storageLeakMatches = visibleText.match(
+      /(?:databases|pages)\/[^\s)]+|--(?:db|pg|row)_[a-z0-9_-]+|(?:^|\/)[^/\s]+\.md\b/gi
+    ) ?? [];
+    const versionRects = versions.map((version) => ({
+      label: version.textContent?.trim() ?? "",
+      rect: rect(version),
+      selected: version.classList.contains("selected")
+    }));
+    const statusRect = rect(status);
+    const previewRect = rect(preview);
+    const previewLabelRect = rect(previewLabel);
+    const restoreButtonRect = rect(restoreButton);
+    return {
+      panel: panelRect,
+      statusRect,
+      previewRect,
+      previewLabelRect,
+      restoreButtonRect,
+      versionRects,
+      status: status?.textContent?.trim() ?? "",
+      message: panel.querySelector(".page-history-message")?.textContent?.trim() ?? "",
+      versionCount: versions.length,
+      selectedVersionCount: versions.filter((version) => version.classList.contains("selected")).length,
+      previewLabel: previewLabel?.textContent?.trim() ?? "",
+      restoreButtonText: restoreButton?.textContent?.trim() ?? "",
+      diffLineCount: panel.querySelectorAll(".page-history-diff-line").length,
+      addedLineCount: panel.querySelectorAll(".page-history-diff-line.added").length,
+      removedLineCount: panel.querySelectorAll(".page-history-diff-line.removed").length,
+      backlinkExcerpts,
+      storageLeakMatches,
+      statusInsidePanel: contains(panelRect, statusRect),
+      versionsInsidePanel: versionRects.every((version) => contains(panelRect, version.rect)),
+      previewInsidePanel: contains(panelRect, previewRect),
+      previewLabelInsidePreview: contains(previewRect, previewLabelRect),
+      restoreInsidePreview: contains(previewRect, restoreButtonRect),
+      horizontalOverflow: panel instanceof HTMLElement
+        ? Math.max(0, panel.scrollWidth - panel.clientWidth)
+        : Number.NaN,
+      secondaryExpanded: secondaryPanel?.getAttribute("aria-expanded") === "true",
+      contentVisibility: contentStyle?.visibility ?? "",
+      contentOpacity: contentStyle?.opacity ?? ""
+    };
+  });
+}
+
+function assertHistoryVisibleState(state, viewportName) {
+  for (const key of ["panel", "statusRect", "previewRect", "previewLabelRect", "restoreButtonRect"]) {
+    const box = state[key];
+    if (!box || box.width <= 0 || box.height <= 0) {
+      throw new Error(`Page history ${viewportName} missing ${key} geometry: ${JSON.stringify(box)}`);
+    }
+  }
+  if (
+    state.status !== "Ready" ||
+    state.versionCount !== 2 ||
+    state.selectedVersionCount !== 1 ||
+    state.restoreButtonText !== "Restore" ||
+    state.diffLineCount < 2 ||
+    state.addedLineCount < 1 ||
+    state.removedLineCount < 1 ||
+    !state.statusInsidePanel ||
+    !state.versionsInsidePanel ||
+    !state.previewInsidePanel ||
+    !state.previewLabelInsidePreview ||
+    !state.restoreInsidePreview ||
+    state.horizontalOverflow > 1 ||
+    !state.secondaryExpanded ||
+    state.contentVisibility !== "visible" ||
+    Number(state.contentOpacity) < 0.99 ||
+    state.storageLeakMatches.length > 0
+  ) {
+    throw new Error(`Page history ${viewportName} visible-state contract failed: ${JSON.stringify(state)}`);
+  }
 }
 
 async function readSecondaryState(page, fixture) {
@@ -294,7 +1074,31 @@ async function readTocState(page) {
       } : null,
       toggleExpanded: toggle?.getAttribute("aria-expanded") ?? "",
       navDisplay: navStyle?.display ?? "",
-      itemTexts: Array.from(host?.querySelectorAll(".cm-md-toc-item") ?? []).map((item) => item.textContent?.trim() ?? "")
+      hovered: Boolean(host?.matches(":hover")),
+      focusedWithin: Boolean(host?.contains(document.activeElement)),
+      activeIsToggle: document.activeElement === toggle,
+      contentRect: (() => {
+        const rect = document.querySelector(".cm-editor .cm-content")?.getBoundingClientRect();
+        return rect ? {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width
+        } : null;
+      })(),
+      hostOpacity: host ? window.getComputedStyle(host).opacity : "",
+      hostBackgroundAlpha: (() => {
+        if (!host) return 1;
+        const value = window.getComputedStyle(host).backgroundColor.trim().toLowerCase();
+        if (value === "transparent") return 0;
+        const rgba = /^rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)$/.exec(value);
+        if (rgba) return Number(rgba[1]);
+        const slash = /\/\s*([0-9.]+)(%)?\s*\)$/.exec(value);
+        if (slash) return Number(slash[1]) / (slash[2] ? 100 : 1);
+        return 1;
+      })(),
+      itemTexts: Array.from(host?.querySelectorAll(".cm-md-toc-item") ?? []).map((item) => item.textContent?.trim() ?? ""),
+      activeIsTocItem: document.activeElement instanceof HTMLElement && document.activeElement.classList.contains("cm-md-toc-item"),
+      railMarkers: host?.querySelectorAll(".cm-md-toc-rail-marker").length ?? 0
     };
   });
 }
@@ -340,12 +1144,22 @@ async function createPageSecondaryFixture(viewportName) {
     workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(id, sourceTitles[index]))
   );
   const originalHtmlRel = `attachments/original/${viewportName}-source.html`;
+  const coverRel = `attachments/covers/page-secondary-${viewportName}.svg`;
   const deepHeading = "Nested Insight";
+  const linkedHeading = "Work reflectionJump";
+  const restoredMarker = `Historical page detail ${viewportName}`;
+  const currentMarker = `Current page detail ${viewportName}`;
 
   await mkdir(join(pagesDir, "pages"), { recursive: true });
   await mkdir(join(pagesDir, "views"), { recursive: true });
   await mkdir(join(root, "attachments", "original"), { recursive: true });
+  await mkdir(join(root, "attachments", "covers"), { recursive: true });
   await writeFile(join(root, originalHtmlRel), "<html><body>Original source fixture</body></html>\n", "utf8");
+  await writeFile(
+    join(root, coverRel),
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360"><rect width="1200" height="360" fill="#d9c7ac"/><path d="M0 270L260 90l220 140 260-170 460 250v50H0z" fill="#8fa08d"/></svg>\n`,
+    "utf8"
+  );
   await writeJson(join(root, "lotion.json"), {
     version: 1,
     spaceId: `sp_page_secondary_${viewportName}`,
@@ -367,7 +1181,9 @@ async function createPageSecondaryFixture(viewportName) {
       tags: "secondary, toc",
       date: "2026-06-12",
       url: "https://example.com/page-secondary",
-      originalHtmlRel
+      originalHtmlRel,
+      cover: coverRel,
+      coverOffset: 50
     }),
     ...sourcePageIds.map((id, index) => pageRecord({
       id,
@@ -380,27 +1196,7 @@ async function createPageSecondaryFixture(viewportName) {
   ]);
   await writeFile(
     join(root, targetPath),
-    [
-      `# ${targetTitle}`,
-      "",
-      "Target page for secondary chrome smoke.",
-      "",
-      "## Overview",
-      "",
-      "A short overview keeps the first heading visible.",
-      "",
-      "## Deep Work",
-      "",
-      "Longer body copy before the nested heading.",
-      "",
-      `### ${deepHeading}`,
-      "",
-      "This heading is used by the floating table of contents.",
-      "",
-      "## Final Section",
-      "",
-      "The editor should remain usable after TOC navigation."
-    ].join("\n"),
+    pageSecondaryMarkdown(targetTitle, deepHeading, restoredMarker),
     "utf8"
   );
   for (let index = 0; index < sourcePaths.length; index += 1) {
@@ -410,14 +1206,80 @@ async function createPageSecondaryFixture(viewportName) {
       "utf8"
     );
   }
+  await initializePageHistoryFixture({
+    currentMarkdown: pageSecondaryMarkdown(targetTitle, deepHeading, currentMarker),
+    root,
+    targetPath
+  });
   return {
     root,
     targetPageId,
     targetTitle,
     originalHtmlRel,
     expectedBacklinks: sourceCount,
-    expectedTocItems: 4,
-    deepHeading
+    expectedTocItems: 5,
+    deepHeading,
+    linkedHeading,
+    restoredMarker
+  };
+}
+
+function pageSecondaryMarkdown(title, deepHeading, versionMarker) {
+  return [
+    `# ${title}`,
+    "",
+    "Target page for secondary chrome smoke.",
+    "",
+    "## Overview",
+    "",
+    "A short overview keeps the first heading visible.",
+    "",
+    "## Deep Work",
+    "",
+    versionMarker,
+    "",
+    `### ${deepHeading}`,
+    "",
+    "This heading is used by the floating table of contents.",
+    "",
+    "## Final Section",
+    "",
+    "The editor should remain usable after TOC navigation.",
+    "",
+    "The expanded table of contents should never resize the document.",
+    "",
+    "Navigation should scroll without moving the editor selection.",
+    "",
+    "Imported heading labels should remain readable in the table of contents.",
+    "",
+    "The malformed imported-link fixture remains below the screenshot fold.",
+    "",
+    "## Work reflection[[Jump]](https://example.com/reflection)"
+  ].join("\n");
+}
+
+async function initializePageHistoryFixture({ currentMarkdown, root, targetPath }) {
+  await execFileAsync("git", ["init", "-q"], { cwd: root });
+  await execFileAsync("git", ["config", "user.name", "Lotion UI Smoke"], { cwd: root });
+  await execFileAsync("git", ["config", "user.email", "ui-smoke@lotion.local"], { cwd: root });
+  await execFileAsync("git", ["add", "."], { cwd: root });
+  await execFileAsync("git", ["commit", "-q", "-m", "Historical page details"], {
+    cwd: root,
+    env: gitCommitEnvironment("2026-06-11T12:00:00Z")
+  });
+  await writeFile(join(root, targetPath), currentMarkdown, "utf8");
+  await execFileAsync("git", ["add", "--", targetPath], { cwd: root });
+  await execFileAsync("git", ["commit", "-q", "-m", "Current page details"], {
+    cwd: root,
+    env: gitCommitEnvironment("2026-06-12T12:00:00Z")
+  });
+}
+
+function gitCommitEnvironment(date) {
+  return {
+    ...process.env,
+    GIT_AUTHOR_DATE: date,
+    GIT_COMMITTER_DATE: date
   };
 }
 
@@ -445,7 +1307,20 @@ function pagesFieldIds() {
   ];
 }
 
-function pageRecord({ id, title, now, icon, path, bodyPath, tags = "", date = "", url = "", originalHtmlRel = "" }) {
+function pageRecord({
+  id,
+  title,
+  now,
+  icon,
+  path,
+  bodyPath,
+  tags = "",
+  date = "",
+  url = "",
+  originalHtmlRel = "",
+  cover = "",
+  coverOffset = ""
+}) {
   return {
     id,
     created_time: now,
@@ -454,8 +1329,8 @@ function pageRecord({ id, title, now, icon, path, bodyPath, tags = "", date = ""
     kind: "page",
     body_path: bodyPath,
     icon,
-    cover: "",
-    cover_offset: "",
+    cover,
+    cover_offset: coverOffset,
     path: serializePathValue(path),
     parent_id: "",
     tags,

@@ -74,11 +74,12 @@ export function orderFieldIdsByInformationAmount(
 }
 
 function evenlySampleRecords(records: readonly DatabaseRecord[], maxSampleSize: number): readonly DatabaseRecord[] {
-  const size = Math.max(1, Math.floor(maxSampleSize));
-  if (records.length <= size) return records;
-  if (size === 1) return [records[0]];
-  return Array.from({ length: size }, (_, index) => {
-    return records[Math.round(index * (records.length - 1) / (size - 1))];
+  const sampleSize = Math.max(1, Math.floor(maxSampleSize));
+  if (records.length <= sampleSize) return records;
+  if (sampleSize === 1) return [records[0]];
+  return Array.from({ length: sampleSize }, (_, index) => {
+    const recordIndex = Math.floor(index * (records.length - 1) / (sampleSize - 1));
+    return records[recordIndex];
   });
 }
 
@@ -117,7 +118,6 @@ function estimateColumnInformationBits(records: readonly DatabaseRecord[], field
 function entropyFromCounts<K>(counts: ReadonlyMap<K, number>, total: number): number {
   let entropy = 0;
   for (const count of counts.values()) {
-    if (count <= 0) continue;
     const probability = count / total;
     entropy -= probability * Math.log2(probability);
   }
@@ -129,5 +129,5 @@ function serializeValue(value: RecordValue): string {
 }
 
 function isEmptyValue(value: RecordValue): boolean {
-  return value === null || value === undefined || String(value).trim() === "";
+  return value === null || (typeof value === "string" && value.trim() === "");
 }

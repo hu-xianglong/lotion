@@ -2216,8 +2216,6 @@ interface TocHeading {
   from: number;
 }
 
-const TOC_COLLAPSED_STORAGE_KEY = "lotion.tocCollapsed";
-
 class TocWidget extends WidgetType {
   private readonly key: string;
   private readonly minLevel: number;
@@ -2278,27 +2276,74 @@ class TocWidget extends WidgetType {
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "cm-md-toc-toggle";
-      toggle.title = "Toggle table of contents";
-      toggle.setAttribute("aria-label", "Toggle table of contents");
-      const toggleIcon = document.createElement("span");
-      toggleIcon.className = "cm-md-toc-toggle-icon";
-      toggle.appendChild(toggleIcon);
+      toggle.title = "Show table of contents";
+      toggle.setAttribute("aria-label", "Show table of contents");
+      const rail = document.createElement("span");
+      rail.className = "cm-md-toc-rail";
+      rail.setAttribute("aria-hidden", "true");
+      for (const heading of this.headings.slice(0, 10)) {
+        const marker = document.createElement("span");
+        marker.className = "cm-md-toc-rail-marker";
+        marker.style.width = `${Math.max(7, 17 - Math.max(0, heading.level - this.minLevel) * 3)}px`;
+        rail.appendChild(marker);
+      }
+      toggle.appendChild(rail);
       header.append(label, toggle);
-      const applyCollapsed = (collapsed: boolean) => {
-        panel.classList.toggle("cm-md-toc-collapsed", collapsed);
-        syncFloatingTocState(view, collapsed);
-        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-        toggleIcon.textContent = collapsed ? "‹" : "›";
+      let pointerInside = false;
+      let focusOwnedByPointer = false;
+      const applyExpanded = (expanded: boolean) => {
+        panel.classList.toggle("cm-md-toc-collapsed", !expanded);
+        panel.classList.toggle("cm-md-toc-expanded", expanded);
+        syncFloatingTocState(view, !expanded);
+        toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
         view.requestMeasure();
       };
-      let collapsed = readTocCollapsed();
-      applyCollapsed(collapsed);
+      const syncInteractionState = () => {
+        applyExpanded(pointerInside || panel.contains(document.activeElement));
+      };
+      applyExpanded(false);
+      panel.addEventListener("mouseenter", () => {
+        pointerInside = true;
+        applyExpanded(true);
+      });
+      panel.addEventListener("pointerdown", () => {
+        focusOwnedByPointer = true;
+      });
+      panel.addEventListener("mouseleave", () => {
+        pointerInside = false;
+        if (focusOwnedByPointer && panel.contains(document.activeElement) && document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        focusOwnedByPointer = false;
+        syncInteractionState();
+      });
+      panel.addEventListener("focusin", () => {
+        if (!pointerInside) focusOwnedByPointer = false;
+        applyExpanded(true);
+      });
+      panel.addEventListener("focusout", () => {
+        window.requestAnimationFrame(() => {
+          if (panel.isConnected) syncInteractionState();
+        });
+      });
+      panel.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") {
+          if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) {
+            focusOwnedByPointer = false;
+          }
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        pointerInside = false;
+        focusOwnedByPointer = false;
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        applyExpanded(false);
+      });
       toggle.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        collapsed = !collapsed;
-        writeTocCollapsed(collapsed);
-        applyCollapsed(collapsed);
+        applyExpanded(true);
       });
     } else {
       header.appendChild(label);
@@ -2323,11 +2368,18 @@ class TocWidget extends WidgetType {
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          view.dispatch({
-            selection: { anchor: heading.from },
-            effects: EditorView.scrollIntoView(heading.from, { y: "start" })
-          });
-          view.focus();
+          if (options.side) {
+            view.dispatch({
+              effects: EditorView.scrollIntoView(heading.from, { y: "start" })
+            });
+            button.focus({ preventScroll: true });
+          } else {
+            view.dispatch({
+              selection: { anchor: heading.from },
+              effects: EditorView.scrollIntoView(heading.from, { y: "start" })
+            });
+            view.focus();
+          }
         });
         nav.appendChild(button);
       }
@@ -2355,23 +2407,6 @@ export function clearFloatingToc(root?: HTMLElement | null): void {
 function syncFloatingTocState(view: EditorView, collapsed: boolean): void {
   view.dom.classList.add("cm-md-has-floating-toc");
   view.dom.classList.toggle("cm-md-floating-toc-collapsed", collapsed);
-}
-
-function readTocCollapsed(): boolean {
-  try {
-    const value = window.localStorage.getItem(TOC_COLLAPSED_STORAGE_KEY);
-    return value === null ? true : value === "1";
-  } catch {
-    return true;
-  }
-}
-
-function writeTocCollapsed(collapsed: boolean): void {
-  try {
-    window.localStorage.setItem(TOC_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
-  } catch {
-    /* ignore */
-  }
 }
 
 /**
@@ -3774,6 +3809,7 @@ const markdownDecorationsTheme: Extension = EditorView.theme({
   "& .cm-line.cm-md-line-blockquote": {
     borderLeft: "3px solid #c8bc9e",
     paddingLeft: "10px !important",
+    paddingRight: "100px !important",
     color: "#5d574f",
     background: "#fbf6ed",
     position: "relative"
@@ -4891,12 +4927,17 @@ function cleanHeadingText(raw: string): string {
   return raw
     .replace(/\s+#+\s*$/, "")
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[\[([^\]]+)\]\]\([^)]+\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/[*_~]+/g, "")
     .replace(/<[^>]+>/g, "")
     .replace(/\\(.)/g, "$1")
     .trim();
+}
+
+export function __testCleanHeadingText(raw: string): string {
+  return cleanHeadingText(raw);
 }
 
 function isLineInBlockCode(state: EditorState, pos: number): boolean {

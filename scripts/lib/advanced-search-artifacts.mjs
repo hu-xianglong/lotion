@@ -12,7 +12,8 @@ const REQUIRED_PHASES = [
 ];
 
 export async function assertAdvancedSearchArtifactContract(summary, {
-  expectedViewportNames = ["desktop", "compact"]
+  expectedViewportNames = ["desktop", "compact"],
+  requiredPerceptualBaselineViewportNames = ["desktop", "compact", "wide"]
 } = {}) {
   if (summary?.status !== "passed") {
     throw new Error(`Advanced Search artifact contract requires passed smoke status, saw ${summary?.status ?? "missing"}`);
@@ -30,8 +31,11 @@ export async function assertAdvancedSearchArtifactContract(summary, {
     const entry = viewports.find((candidate) => candidate.viewport === viewportName);
     if (!entry) throw new Error(`Advanced Search artifact contract missing entry for ${viewportName}`);
     assertAdvancedSearchViewport(entry, viewportName);
-    const phaseSnapshots = await assertAdvancedSearchSnapshots(entry, viewportName);
+    const phaseSnapshots = await assertAdvancedSearchSnapshots(entry, viewportName, {
+      requirePerceptualBaseline: requiredPerceptualBaselineViewportNames.includes(viewportName)
+    });
     const representative = phaseSnapshots[0];
+    const staleResults = phaseSnapshots.find((snapshot) => snapshot.phase === "stale-results");
     snapshots.push({
       viewport: viewportName,
       imageBytes: phaseSnapshots.reduce((total, snapshot) => total + snapshot.imageBytes, 0),
@@ -40,7 +44,8 @@ export async function assertAdvancedSearchArtifactContract(summary, {
       phaseCount: phaseSnapshots.length,
       phases: phaseSnapshots.map((snapshot) => snapshot.phase),
       resultCountMax: Math.max(...phaseSnapshots.map((snapshot) => snapshot.resultCount)),
-      statusLabels: phaseSnapshots.map((snapshot) => snapshot.statusLabel)
+      statusLabels: phaseSnapshots.map((snapshot) => snapshot.statusLabel),
+      ...(staleResults?.perceptualBaseline ? { perceptualBaseline: staleResults.perceptualBaseline } : {})
     });
   }
 
@@ -49,6 +54,7 @@ export async function assertAdvancedSearchArtifactContract(summary, {
     expectedViewportNames,
     observedViewportNames,
     snapshotCount: snapshots.length,
+    perceptualBaselineCount: snapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length,
     snapshots
   };
 }
@@ -70,7 +76,9 @@ function assertAdvancedSearchViewport(entry, viewportName) {
   }
 }
 
-async function assertAdvancedSearchSnapshots(entry, viewportName) {
+async function assertAdvancedSearchSnapshots(entry, viewportName, {
+  requirePerceptualBaseline = false
+} = {}) {
   const snapshots = Array.isArray(entry.visualSnapshots) ? entry.visualSnapshots : [];
   const phases = snapshots.map((snapshot) => snapshot.phase);
   const missingPhases = REQUIRED_PHASES.filter((phase) => !phases.includes(phase));
@@ -80,12 +88,16 @@ async function assertAdvancedSearchSnapshots(entry, viewportName) {
 
   const checked = [];
   for (const snapshot of snapshots.filter((candidate) => REQUIRED_PHASES.includes(candidate.phase))) {
-    checked.push(await assertSnapshot(snapshot, viewportName));
+    checked.push(await assertSnapshot(snapshot, viewportName, {
+      requirePerceptualBaseline: requirePerceptualBaseline && snapshot.phase === "stale-results"
+    }));
   }
   return checked;
 }
 
-async function assertSnapshot(snapshot, viewportName) {
+async function assertSnapshot(snapshot, viewportName, {
+  requirePerceptualBaseline = false
+} = {}) {
   if (!snapshot?.imagePath || !snapshot?.metadataPath) {
     throw new Error(`Advanced Search artifact contract missing snapshot paths for ${viewportName} ${snapshot?.phase ?? "unknown"}`);
   }
@@ -105,13 +117,64 @@ async function assertSnapshot(snapshot, viewportName) {
   const visibleState = payload.visibleState || {};
   assertGeometry(payload.geometry, viewportName, snapshot.phase);
   assertVisibleState(visibleState, viewportName, snapshot.phase);
+  const perceptualBaseline = await assertPerceptualBaseline(snapshot.perceptualBaseline, snapshot, viewportName, {
+    required: requirePerceptualBaseline
+  });
   return {
     phase: snapshot.phase,
     imageBytes: imageInfo.size,
     imagePath: snapshot.imagePath,
     metadataPath: snapshot.metadataPath,
     resultCount: visibleState.resultCount ?? 0,
-    statusLabel: visibleState.statusLabel || ""
+    statusLabel: visibleState.statusLabel || "",
+    ...(perceptualBaseline ? { perceptualBaseline } : {})
+  };
+}
+
+async function assertPerceptualBaseline(baseline, snapshot, viewportName, { required }) {
+  if (!baseline) {
+    if (required) throw new Error(`Advanced Search artifact contract missing committed stale-result baseline for ${viewportName}`);
+    return null;
+  }
+  if (baseline.kind !== "lotion-png-visual-diff" || baseline.status !== "passed") {
+    throw new Error(`Advanced Search artifact contract stale-result baseline did not pass for ${viewportName}: ${JSON.stringify({ kind: baseline.kind, status: baseline.status })}`);
+  }
+  if (baseline.actualPath !== snapshot.imagePath) {
+    throw new Error(`Advanced Search artifact contract stale-result baseline actual path mismatch for ${viewportName}: ${baseline.actualPath}`);
+  }
+  if (!baseline.dimensionsMatch || baseline.diffPixels > baseline.maxDiffPixels || baseline.diffRatio > baseline.maxDiffRatio) {
+    throw new Error(`Advanced Search artifact contract stale-result baseline exceeded tolerance for ${viewportName}: ${JSON.stringify({ dimensionsMatch: baseline.dimensionsMatch, diffPixels: baseline.diffPixels, diffRatio: baseline.diffRatio })}`);
+  }
+  for (const [label, path] of Object.entries({
+    expected: baseline.expectedPath,
+    diff: baseline.diffPath,
+    metadata: baseline.metadataPath,
+    policy: baseline.policyPath
+  })) {
+    if (!path) throw new Error(`Advanced Search artifact contract missing stale-result ${label} path for ${viewportName}`);
+    const info = await stat(path);
+    if (info.size <= 0) throw new Error(`Advanced Search artifact contract found empty stale-result ${label} artifact for ${viewportName}: ${path}`);
+  }
+  const diffMetadata = JSON.parse(await readFile(baseline.metadataPath, "utf8"));
+  if (diffMetadata.status !== "passed" || diffMetadata.expectedPath !== baseline.expectedPath || diffMetadata.actualPath !== baseline.actualPath) {
+    throw new Error(`Advanced Search artifact contract stale-result diff metadata mismatch for ${viewportName}: ${JSON.stringify(diffMetadata)}`);
+  }
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA,
+    policy: baseline.policy
   };
 }
 
@@ -172,6 +235,20 @@ function assertVisibleState(visibleState, viewportName, phase) {
       }
       if (!visibleState.titles.includes("Customer Feedback") || !visibleState.snippets.some((snippet) => /retention|complaints/i.test(snippet))) {
         throw new Error(`Advanced Search stale result content mismatch for ${viewportName}: ${JSON.stringify(visibleState)}`);
+      }
+      if (
+        visibleState.resultsViewport?.clientHeight < 180
+        || visibleState.resultsViewport?.scrollTop !== 0
+        || visibleState.resultsViewport?.scrollHeight > visibleState.resultsViewport?.clientHeight + 1
+      ) {
+        throw new Error(`Advanced Search stale result viewport is clipped for ${viewportName}: ${JSON.stringify(visibleState.resultsViewport)}`);
+      }
+      if (
+        !Array.isArray(visibleState.resultVisibility)
+        || visibleState.resultVisibility.length !== visibleState.resultCount
+        || visibleState.resultVisibility.some((result) => !result.fullyVisible)
+      ) {
+        throw new Error(`Advanced Search stale result cards are clipped for ${viewportName}: ${JSON.stringify(visibleState.resultVisibility)}`);
       }
       break;
     case "empty":

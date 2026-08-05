@@ -3,12 +3,29 @@
   "databaseId": "db_tasks",
   "name": "Done tasks",
   "type": "table",
-  "visibleFieldIds": ["title", "status", "done", "updated_time"],
-  "fieldOrder": ["title", "done", "status", "updated_time"],
+  "visibleFieldIds": [
+    "title",
+    "status",
+    "done",
+    "updated_time"
+  ],
+  "fieldOrder": [
+    "title",
+    "done",
+    "status",
+    "updated_time"
+  ],
   "sorts": [
-    { "fieldId": "updated_time", "direction": "desc" }
+    {
+      "fieldId": "updated_time",
+      "direction": "desc"
+    }
   ],
   "filters": [
-    { "fieldId": "done", "operator": "checked", "value": true }
+    {
+      "fieldId": "done",
+      "operator": "checked",
+      "value": true
+    }
   ]
 }

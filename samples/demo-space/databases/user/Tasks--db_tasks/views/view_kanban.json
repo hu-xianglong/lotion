@@ -3,8 +3,26 @@
   "databaseId": "db_tasks",
   "name": "Board",
   "type": "kanban",
-  "visibleFieldIds": ["title", "status", "priority", "tags", "due_date", "effort", "done", "score"],
-  "fieldOrder": ["title", "status", "priority", "tags", "due_date", "effort", "done", "score"],
+  "visibleFieldIds": [
+    "title",
+    "status",
+    "priority",
+    "tags",
+    "due_date",
+    "effort",
+    "done",
+    "score"
+  ],
+  "fieldOrder": [
+    "title",
+    "status",
+    "priority",
+    "tags",
+    "due_date",
+    "effort",
+    "done",
+    "score"
+  ],
   "sorts": [],
   "filters": [],
   "config": {

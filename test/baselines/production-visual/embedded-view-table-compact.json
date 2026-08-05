@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "embedded-view-table",
+  "theme": "light",
+  "viewport": {
+    "name": "compact",
+    "width": 1040,
+    "height": 820
+  },
+  "image": {
+    "path": "test/baselines/production-visual/embedded-view-table-compact.png",
+    "sha256": "702c00ac634aff5b50dcfe62bc72d8eebcceafed0c36c6add25dad2e7e878f97",
+    "width": 712,
+    "height": 565
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

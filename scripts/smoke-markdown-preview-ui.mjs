@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertMarkdownPreviewArtifactContract } from "./lib/markdown-preview-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertIntersectsViewport,
   assertNoDocumentHorizontalOverflow,
@@ -49,7 +50,10 @@ const result = await withLotionUIHarness("markdown-preview-ui", async ({ artifac
   return {
     ...smokeResult,
     artifactContract: await assertMarkdownPreviewArtifactContract(smokeResult, {
-      expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+      expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+      requiredPerceptualBaselineViewportNames: process.env.LOTION_MARKDOWN_PREVIEW_SKIP_BASELINE === "1"
+        ? []
+        : expectedViewports.map((viewport) => viewport.name)
     })
   };
 });
@@ -341,7 +345,8 @@ async function assertMarkdownPreview(page, fixture, viewport, artifactRoot) {
     throw new Error(`Collapsed callout should expose an edit source button: ${JSON.stringify(rendered)}`);
   }
   if (!rendered.imagePreview) {
-    throw new Error("Missing standalone image preview widget");
+    await scrollUntilMounted(page, ".cm-md-image-widget", "standalone image preview widget");
+    rendered.imagePreview = await renderedImagePreviewSnapshot(page);
   }
   if (rendered.imagePreview.rawSourceVisible) {
     throw new Error(`Inactive image source leaked into live preview: ${JSON.stringify(rendered.imagePreview)}`);
@@ -415,6 +420,7 @@ async function assertMarkdownPreview(page, fixture, viewport, artifactRoot) {
   }
   const importedNotionToggle = await assertImportedNotionTogglePreview(page, fixture, viewport, artifactRoot);
   rendered.importedNotionToggle = importedNotionToggle.snapshot;
+  visualSnapshots.push(importedNotionToggle.visualSnapshot);
   if (!rendered.equationPreview) {
     throw new Error("Missing lotion-equation preview widget");
   }
@@ -609,12 +615,17 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
   }
 
   await assertNoDocumentHorizontalOverflow(page, `imported Notion toggle ${viewport.name}`);
+  await page.locator(".cm-md-toggle-widget").filter({ hasText: "Appointment receipt" }).first().evaluate((element) => {
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await nextAnimationFrame(page);
   const visualSnapshot = await captureMarkdownPreviewSnapshot({
     artifactRoot,
     fixture,
     metadata: {
       phase: "imported-toggle",
-      importedToggleBodyIncludesReceipt: snapshot.bodyText.includes("receipt.jpg"),
+      importedToggleBodyTextPreserved: snapshot.bodyText.includes("Booked a vision check appointment"),
+      importedToggleImageCount: snapshot.bodyImageCount,
       importedToggleOpen: snapshot.open,
       importedToggleSummary: snapshot.summaryText
     },
@@ -625,7 +636,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
   await page.waitForFunction(() => {
     const toggle = Array.from(document.querySelectorAll(".cm-md-toggle-widget")).find((candidate) => {
       const summary = candidate.querySelector(".cm-md-toggle-summary-text");
-      return summary?.textContent?.trim() === "收据";
+      return summary?.textContent?.trim() === "Appointment receipt";
     });
     const button = toggle?.querySelector(".cm-md-toggle-disclosure");
     if (!(button instanceof HTMLElement)) return false;
@@ -683,7 +694,7 @@ async function assertImportedNotionTogglePreview(page, fixture, viewport, artifa
 }
 
 async function assertImportedHighlightSelectionAndSourceEditing(page, fixture, viewport, artifactRoot) {
-  const selectedText = "From now on, make it a personal commitment";
+  const selectedText = "Selection probe";
   await scrollEditorToTop(page);
   const line = page.locator(".cm-line").filter({ hasText: "personal commitment" }).first();
   await line.waitFor({ timeout: 8_000 });
@@ -734,6 +745,15 @@ async function assertImportedHighlightSelectionAndSourceEditing(page, fixture, v
     null,
     { timeout: 5_000 }
   );
+  await line.hover();
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector(".cm-line.cm-md-line-has-selection .cm-md-block-source-edit-widget .cm-md-edit-source");
+      return button instanceof HTMLElement && getComputedStyle(button).opacity === "1";
+    },
+    null,
+    { timeout: 5_000 }
+  );
   const snapshot = await line.evaluate((element, payload) => {
     const { expectedText, editSourceButtonState } = payload;
     const target = Array.from(element.querySelectorAll(".cm-md-notion-bg-yellow"))
@@ -755,6 +775,7 @@ async function assertImportedHighlightSelectionAndSourceEditing(page, fixture, v
     };
   }, { expectedText: selectedText, editSourceButtonState });
   snapshot.selection = selection;
+  const selectedSourceState = await readSelectedSourceState(page, selectedText);
 
   if (!snapshot.sourceEditable) {
     throw new Error(`Selected imported highlight line lost editable source: ${JSON.stringify(snapshot)}`);
@@ -769,6 +790,7 @@ async function assertImportedHighlightSelectionAndSourceEditing(page, fixture, v
   if (!snapshot.lineHasSelectionClass || !snapshot.lineIsBlockquote || lineBackgroundAlpha >= 1) {
     throw new Error(`Selected block background still obscures selection: ${JSON.stringify({ ...snapshot, lineBackgroundAlpha })}`);
   }
+  assertSelectedSourceState(selectedSourceState, viewport.name, selectedText);
 
   const visualSnapshot = await captureMarkdownPreviewSnapshot({
     artifactRoot,
@@ -777,16 +799,180 @@ async function assertImportedHighlightSelectionAndSourceEditing(page, fixture, v
       phase: "selected-imported-highlight",
       selectionBackgroundTransparent: true,
       blockBackgroundAlpha: lineBackgroundAlpha,
-      sourceEditable: snapshot.sourceEditable
+      sourceEditable: snapshot.sourceEditable,
+      selectedSourceState
     },
     page,
     viewport
   });
+  visualSnapshot.selectedSourceState = selectedSourceState;
+  const baselinePolicy = {
+    compact: "test/baselines/production-visual/markdown-preview-selected-source-compact.json",
+    desktop: "test/baselines/production-visual/markdown-preview-selected-source-desktop.json",
+    wide: "test/baselines/production-visual/markdown-preview-selected-source-wide.json"
+  }[viewport.name];
+  visualSnapshot.perceptualBaseline = baselinePolicy && process.env.LOTION_MARKDOWN_PREVIEW_SKIP_BASELINE !== "1"
+    ? await assertProductionVisualBaseline({
+      actualPath: visualSnapshot.imagePath,
+      artifactRoot,
+      policyPath: baselinePolicy
+    })
+    : null;
 
   return {
     snapshot,
     visualSnapshot
   };
+}
+
+async function readSelectedSourceState(page, selectedText) {
+  return page.evaluate((expectedText) => {
+    const editor = document.querySelector('[data-testid="markdown-editor"]');
+    const scroller = editor?.querySelector(".cm-scroller");
+    const line = Array.from(editor?.querySelectorAll(".cm-line") ?? [])
+      .find((candidate) => (candidate.textContent ?? "").includes(expectedText));
+    const highlight = Array.from(line?.querySelectorAll(".cm-md-notion-bg-yellow") ?? [])
+      .find((candidate) => (candidate.textContent ?? "").includes(expectedText));
+    const editSource = line?.querySelector(".cm-md-block-source-edit-widget .cm-md-edit-source");
+    const selection = window.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    const codeMirrorView = editor?.querySelector(".cm-content")?.cmView?.view;
+    const codeMirrorSelection = codeMirrorView?.state?.selection?.main;
+    const rect = (nodeOrRect) => {
+      const value = nodeOrRect instanceof Element ? nodeOrRect.getBoundingClientRect() : nodeOrRect;
+      return value ? {
+        left: Math.round(value.left),
+        top: Math.round(value.top),
+        right: Math.round(value.right),
+        bottom: Math.round(value.bottom),
+        width: Math.round(value.width),
+        height: Math.round(value.height)
+      } : null;
+    };
+    const contains = (outer, inner) => Boolean(outer && inner
+      && inner.left >= outer.left - 1
+      && inner.top >= outer.top - 1
+      && inner.right <= outer.right + 1
+      && inner.bottom <= outer.bottom + 1);
+    const intersects = (outer, inner) => Boolean(outer && inner
+      && inner.right > outer.left + 1
+      && inner.left < outer.right - 1
+      && inner.bottom > outer.top + 1
+      && inner.top < outer.bottom - 1);
+    const overlaps = (left, right) => Boolean(left && right
+      && left.right > right.left + 1
+      && left.left < right.right - 1
+      && left.bottom > right.top + 1
+      && left.top < right.bottom - 1);
+    const editorRect = rect(editor);
+    const scrollerRect = rect(scroller);
+    const lineRect = rect(line);
+    const highlightRect = rect(highlight);
+    const editSourceRect = rect(editSource);
+    const selectionRect = rect(range?.getBoundingClientRect());
+    const lineStyle = line ? getComputedStyle(line) : null;
+    const highlightStyle = highlight ? getComputedStyle(highlight) : null;
+    const buttonStyle = editSource ? getComputedStyle(editSource) : null;
+    return {
+      editorRect,
+      scrollerRect,
+      lineRect,
+      highlightRect,
+      editSourceRect,
+      selectionRect,
+      rawSourceText: line?.textContent ?? "",
+      selectedText: selection?.toString() ?? "",
+      selectedRangeCount: selection?.rangeCount ?? 0,
+      codeMirrorSelection: codeMirrorSelection ? {
+        anchor: codeMirrorSelection.anchor,
+        head: codeMirrorSelection.head,
+        from: codeMirrorSelection.from,
+        to: codeMirrorSelection.to
+      } : null,
+      editSourceText: editSource?.textContent?.trim() ?? "",
+      lineInsideEditor: contains(editorRect, lineRect),
+      lineIntersectsScroller: intersects(scrollerRect, lineRect),
+      highlightInsideLine: contains(lineRect, highlightRect),
+      selectionInsideLine: contains(lineRect, selectionRect),
+      selectionIntersectsScroller: intersects(scrollerRect, selectionRect),
+      editSourceInsideLine: contains(lineRect, editSourceRect),
+      editSourceIntersectsScroller: intersects(scrollerRect, editSourceRect),
+      selectionOverlapsEditSource: overlaps(selectionRect, editSourceRect),
+      highlightOverlapsEditSource: overlaps(highlightRect, editSourceRect),
+      lineVisibility: lineStyle?.visibility ?? "",
+      lineOpacity: Number(lineStyle?.opacity ?? 0),
+      highlightVisibility: highlightStyle?.visibility ?? "",
+      highlightOpacity: Number(highlightStyle?.opacity ?? 0),
+      highlightFontFamily: highlightStyle?.fontFamily ?? "",
+      highlightFontSize: highlightStyle?.fontSize ?? "",
+      highlightFontWeight: highlightStyle?.fontWeight ?? "",
+      highlightFontStretch: highlightStyle?.fontStretch ?? "",
+      highlightFontKerning: highlightStyle?.fontKerning ?? "",
+      highlightFontOpticalSizing: highlightStyle?.fontOpticalSizing ?? "",
+      editSourceVisibility: buttonStyle?.visibility ?? "",
+      editSourceOpacity: Number(buttonStyle?.opacity ?? 0),
+      documentHorizontalOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      editorHorizontalOverflow: scroller instanceof HTMLElement
+        ? Math.max(0, scroller.scrollWidth - scroller.clientWidth)
+        : -1,
+      devicePixelRatio: window.devicePixelRatio,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
+    };
+  }, selectedText);
+}
+
+function assertSelectedSourceState(state, viewportName, expectedSelectedText) {
+  for (const key of ["editorRect", "scrollerRect", "lineRect", "highlightRect", "editSourceRect", "selectionRect"]) {
+    const rect = state?.[key];
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`Markdown selected source missing ${key} geometry for ${viewportName}: ${JSON.stringify(rect)}`);
+    }
+  }
+  if (
+    !state.rawSourceText.includes('data-lotion-bg="yellow"')
+    || !state.rawSourceText.includes("**")
+    || state.selectedText !== expectedSelectedText
+    || state.selectedRangeCount < 1
+    || state.editSourceText !== "Edit source"
+    || state.lineInsideEditor !== true
+    || state.lineIntersectsScroller !== true
+    || state.highlightInsideLine !== true
+    || state.selectionInsideLine !== true
+    || state.selectionIntersectsScroller !== true
+    || state.editSourceInsideLine !== true
+    || state.editSourceIntersectsScroller !== true
+    || state.selectionOverlapsEditSource !== false
+    || state.highlightOverlapsEditSource !== false
+    || state.lineVisibility !== "visible"
+    || state.lineOpacity < 0.99
+    || state.highlightVisibility !== "visible"
+    || state.highlightOpacity < 0.99
+    || state.editSourceVisibility !== "visible"
+    || state.editSourceOpacity < 0.99
+    || state.documentHorizontalOverflow > 2
+    || state.editorHorizontalOverflow > 2
+  ) {
+    throw new Error(`Markdown selected source is clipped, hidden, or incomplete for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+}
+
+async function renderedImagePreviewSnapshot(page) {
+  return page.evaluate(() => {
+    const imageWidget = document.querySelector(".cm-md-image-widget");
+    const image = imageWidget?.querySelector("img") ?? null;
+    const edit = imageWidget?.querySelector(".cm-md-edit-source") ?? null;
+    const rawSourceVisible = Array.from(document.querySelectorAll(".cm-line"))
+      .some((line) => (line.textContent ?? "").includes("![Preview image]"));
+    return imageWidget ? {
+      src: image?.getAttribute("src") ?? "",
+      alt: image?.getAttribute("alt") ?? "",
+      rawSourceVisible,
+      hasEditSource: Boolean(edit),
+      editSourceText: edit?.textContent?.trim() ?? "",
+      editSourceOpacity: edit ? getComputedStyle(edit).opacity : ""
+    } : null;
+  });
 }
 
 function cssColorAlpha(value) {
@@ -822,11 +1008,13 @@ async function selectEditorTextByDrag(page, text) {
     const selectionRange = document.createRange();
     selectionRange.setStart(startNode.node, start - startNode.start);
     selectionRange.setEnd(endNode.node, end - endNode.start);
-    const rect = selectionRange.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
+    const rects = Array.from(selectionRange.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+    const firstRect = rects[0];
+    const lastRect = rects.at(-1);
+    if (!firstRect || !lastRect) return null;
     return {
-      from: { x: rect.left + 1, y: rect.top + rect.height / 2 },
-      to: { x: rect.right - 1, y: rect.top + rect.height / 2 }
+      from: { x: firstRect.left + 1, y: firstRect.top + firstRect.height / 2 },
+      to: { x: lastRect.right - 1, y: lastRect.top + lastRect.height / 2 }
     };
   }, text);
   if (!range) throw new Error(`Could not locate editor text range for ${JSON.stringify(text)}`);
@@ -835,13 +1023,60 @@ async function selectEditorTextByDrag(page, text) {
   await page.mouse.down();
   await page.mouse.move(range.to.x, range.to.y, { steps: 8 });
   await page.mouse.up();
+  let dragSelectedText = "";
+  try {
+    await page.waitForFunction(
+      ({ expected }) => (window.getSelection()?.toString() ?? "").includes(expected),
+      { expected: text },
+      { timeout: 1_500 }
+    );
+    dragSelectedText = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  } catch {}
+
+  // Rebuild the range through keyboard input so CodeMirror's state selection and
+  // the browser's native selection cannot diverge after a mouse drag.
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.down("Shift");
+  try {
+    for (let index = 0; index < text.length; index += 1) {
+      await page.keyboard.press("ArrowRight");
+    }
+  } finally {
+    await page.keyboard.up("Shift");
+  }
   await page.waitForFunction(
-    ({ expected }) => (window.getSelection()?.toString() ?? "").includes(expected),
+    ({ expected }) => (window.getSelection()?.toString() ?? "") === expected,
     { expected: text },
     { timeout: 5_000 }
   );
+  let normalizedDecoration = false;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    normalizedDecoration = await page.evaluate((expected) => {
+      const line = Array.from(document.querySelectorAll(".cm-line"))
+        .find((candidate) => (candidate.textContent ?? "").includes(expected));
+      const highlight = Array.from(line?.querySelectorAll(".cm-md-notion-bg-yellow") ?? [])
+        .find((candidate) => (candidate.textContent ?? "").includes(expected));
+      return highlight instanceof HTMLElement && getComputedStyle(highlight).fontWeight === "400";
+    }, text);
+    if (normalizedDecoration) break;
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.down("Shift");
+    try {
+      for (let index = 0; index < text.length; index += 1) {
+        await page.keyboard.press("ArrowRight");
+      }
+    } finally {
+      await page.keyboard.up("Shift");
+    }
+    await nextAnimationFrame(page);
+  }
+  if (!normalizedDecoration) {
+    throw new Error(`Could not normalize selected Markdown decoration state for ${JSON.stringify(text)}`);
+  }
+  await nextAnimationFrame(page);
   return {
     selected: true,
+    dragSelectedText,
     selectedText: await page.evaluate(() => window.getSelection()?.toString() ?? "")
   };
 }
@@ -849,25 +1084,117 @@ async function selectEditorTextByDrag(page, text) {
 async function captureMarkdownPreviewSnapshot({ artifactRoot, fixture, metadata, page, viewport }) {
   const editor = page.locator('[data-testid="markdown-editor"]').first();
   await assertIntersectsViewport(page, editor, `markdown visual snapshot editor ${metadata.phase} ${viewport.name}`, 4);
-  const snapshot = await captureElementSnapshot({
-    artifactRoot,
-    locator: editor,
-    metadata: {
-      pageId: fixture.pageId,
-      pageTitle: fixture.pageTitle,
-      ...metadata
-    },
-    name: `markdown-preview-${metadata.phase}-${viewport.name}`,
-    page,
-    viewport
-  });
-  return {
-    phase: metadata.phase,
-    imagePath: snapshot.imagePath,
-    metadataPath: snapshot.metadataPath,
-    height: Number(snapshot.rect.height.toFixed(1)),
-    width: Number(snapshot.rect.width.toFixed(1))
-  };
+  const selectedLineTranslateProperty = "--markdown-selected-source-translate-x";
+  const previousSelectedLineTranslation = metadata.phase === "selected-imported-highlight"
+    ? await editor.evaluate((node, property) => ({
+      priority: node.style.getPropertyPriority(property),
+      value: node.style.getPropertyValue(property)
+    }), selectedLineTranslateProperty)
+    : null;
+  const selectedButton = metadata.phase === "selected-imported-highlight"
+    ? editor.locator(".cm-line.cm-md-line-has-selection .cm-md-block-source-edit-widget .cm-md-edit-source").first()
+    : null;
+  const previousButtonStyle = selectedButton && await selectedButton.count() > 0
+    ? await selectedButton.getAttribute("style")
+    : null;
+  if (metadata.phase === "selected-imported-highlight") {
+    await editor.evaluate((node) => node.setAttribute("data-markdown-selected-source-snapshot", "true"));
+    await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.setAttribute("data-markdown-selected-source-snapshot-style", "true");
+      style.textContent = `
+        [data-markdown-selected-source-snapshot] .cm-scroller {
+          scrollbar-color: transparent transparent !important;
+          scrollbar-width: none !important;
+        }
+        [data-markdown-selected-source-snapshot] .cm-scroller::-webkit-scrollbar {
+          display: none !important;
+        }
+        [data-markdown-selected-source-snapshot] .cm-line.cm-md-line-has-selection,
+        [data-markdown-selected-source-snapshot] .cm-line.cm-md-line-has-selection * {
+          font-family: Arial, sans-serif !important;
+          font-feature-settings: normal !important;
+          font-kerning: none !important;
+          font-optical-sizing: none !important;
+          font-weight: 400 !important;
+          font-synthesis: none !important;
+          font-variant-ligatures: none !important;
+          font-size: 16px !important;
+          font-stretch: normal !important;
+          letter-spacing: normal !important;
+        }
+        [data-markdown-selected-source-snapshot] .cm-line.cm-md-line-has-selection {
+          transform: translateX(var(--markdown-selected-source-translate-x, 0px)) !important;
+        }
+      `;
+      document.head.appendChild(style);
+    });
+  }
+  if (selectedButton && await selectedButton.count() > 0) {
+    await selectedButton.evaluate((button) => {
+      button.style.opacity = "1";
+      button.style.pointerEvents = "auto";
+      button.style.transition = "none";
+    });
+  }
+  try {
+    if (metadata.phase === "selected-imported-highlight") await page.mouse.move(0, 0);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    if (metadata.phase === "selected-imported-highlight") {
+      await editor.evaluate((node, property) => {
+        const line = node.querySelector(".cm-line.cm-md-line-has-selection");
+        if (!(line instanceof HTMLElement)) throw new Error("Selected Markdown source line disappeared before snapshot.");
+        const editorRect = node.getBoundingClientRect();
+        const lineRect = line.getBoundingClientRect();
+        const translateX = Math.round(editorRect.left + 34 - lineRect.left);
+        node.style.setProperty(property, `${translateX}px`);
+      }, selectedLineTranslateProperty);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    }
+    const snapshot = await captureElementSnapshot({
+      artifactRoot,
+      deterministicTypography: false,
+      locator: editor,
+      metadata: {
+        pageId: fixture.pageId,
+        pageTitle: fixture.pageTitle,
+        ...metadata
+      },
+      name: `markdown-preview-${metadata.phase}-${viewport.name}`,
+      page,
+      viewport
+    });
+    return {
+      phase: metadata.phase,
+      imagePath: snapshot.imagePath,
+      metadataPath: snapshot.metadataPath,
+      height: Number(snapshot.rect.height.toFixed(1)),
+      width: Number(snapshot.rect.width.toFixed(1))
+    };
+  } finally {
+    if (selectedButton && await selectedButton.count() > 0) {
+      await selectedButton.evaluate((button, style) => {
+        if (style === null) button.removeAttribute("style");
+        else button.setAttribute("style", style);
+      }, previousButtonStyle);
+    }
+    if (metadata.phase === "selected-imported-highlight") {
+      await editor.evaluate((node) => node.removeAttribute("data-markdown-selected-source-snapshot"));
+      await editor.evaluate((node, payload) => {
+        if (payload.value) node.style.setProperty(payload.property, payload.value, payload.priority);
+        else node.style.removeProperty(payload.property);
+      }, {
+        property: selectedLineTranslateProperty,
+        priority: previousSelectedLineTranslation?.priority ?? "",
+        value: previousSelectedLineTranslation?.value ?? ""
+      });
+      await page.evaluate(() => {
+        for (const style of document.querySelectorAll("[data-markdown-selected-source-snapshot-style]")) {
+          style.remove();
+        }
+      });
+    }
+  }
 }
 
 async function scrollEditorToTop(page) {
@@ -1355,7 +1682,18 @@ async function assertToggleDirectEditing(page, fixture, viewport) {
 
   const editedSummary = `计划折叠块 ${viewport.name}`;
   await summary.fill(editedSummary);
+  await summary.evaluate((element) => {
+    element.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      composed: true,
+      inputType: "insertText"
+    }));
+  });
   await summary.press("Enter");
+  await summary.evaluate((element) => {
+    element.blur();
+    element.dispatchEvent(new FocusEvent("blur", { bubbles: true, composed: true }));
+  });
   await waitForPageMarkdown(page, fixture.pageId, `summary: ${editedSummary}`, "toggle summary direct edit autosave");
   await page.waitForFunction(
     (text) => {
@@ -1497,32 +1835,63 @@ async function assertMissingDatabasePlaceholderPreview(page) {
   const widget = page.locator(".cm-md-missing-database-widget").first();
   await widget.waitFor({ timeout: 8_000 });
   await widget.scrollIntoViewIfNeeded();
-  await assertIntersectsViewport(page, widget, "missing database placeholder widget", 4);
-
-  const initial = await page.evaluate(() => {
-    const widget = document.querySelector(".cm-md-missing-database-widget");
-    const outer = document.querySelector(".cm-md-missing-database-widget-outer");
-    const edit = outer?.querySelector(".cm-md-edit-source");
-    const search = outer?.querySelector(".cm-md-missing-database-search");
-    const rawSourceVisible = Array.from(document.querySelectorAll(".cm-line"))
-      .some((line) => (line.textContent ?? "").includes("database not found"));
-    const rect = widget?.getBoundingClientRect();
-    return {
-      label: widget?.querySelector(".cm-md-missing-database-label")?.textContent ?? "",
-      title: widget?.querySelector(".cm-md-missing-database-title")?.textContent ?? "",
-      message: widget?.querySelector(".cm-md-missing-database-message")?.textContent ?? "",
-      ariaLabel: widget?.getAttribute("aria-label") ?? "",
-      rawSourceVisible,
-      hasEditSource: Boolean(edit),
-      editSourceText: edit?.textContent?.trim() ?? "",
-      editSourceOpacity: edit ? getComputedStyle(edit).opacity : "",
-      hasSearch: Boolean(search),
-      searchText: search?.textContent?.trim() ?? "",
-      searchAria: search?.getAttribute("aria-label") ?? "",
-      width: rect ? Math.round(rect.width) : 0,
-      height: rect ? Math.round(rect.height) : 0
-    };
-  });
+  try {
+    await page.waitForFunction(
+      () => {
+        const node = document.querySelector(".cm-md-missing-database-widget");
+        const rect = node?.getBoundingClientRect();
+        return Boolean(rect && rect.width > 0 && rect.height > 0);
+      },
+      null,
+      { timeout: 2_000 }
+    );
+  } catch {
+    await scrollUntilMounted(page, ".cm-md-missing-database-widget", "visible missing database placeholder widget");
+    await widget.scrollIntoViewIfNeeded();
+    await page.waitForFunction(
+      () => {
+        const node = document.querySelector(".cm-md-missing-database-widget");
+        const rect = node?.getBoundingClientRect();
+        return Boolean(rect && rect.width > 0 && rect.height > 0);
+      },
+      null,
+      { timeout: 5_000 }
+    );
+  }
+  let initial = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    initial = await page.evaluate(() => {
+      const widget = document.querySelector(".cm-md-missing-database-widget");
+      const outer = document.querySelector(".cm-md-missing-database-widget-outer");
+      const edit = outer?.querySelector(".cm-md-edit-source");
+      const search = outer?.querySelector(".cm-md-missing-database-search");
+      const rawSourceVisible = Array.from(document.querySelectorAll(".cm-line"))
+        .some((line) => (line.textContent ?? "").includes("database not found"));
+      const rect = widget?.getBoundingClientRect();
+      return {
+        label: widget?.querySelector(".cm-md-missing-database-label")?.textContent ?? "",
+        title: widget?.querySelector(".cm-md-missing-database-title")?.textContent ?? "",
+        message: widget?.querySelector(".cm-md-missing-database-message")?.textContent ?? "",
+        ariaLabel: widget?.getAttribute("aria-label") ?? "",
+        rawSourceVisible,
+        hasEditSource: Boolean(edit),
+        editSourceText: edit?.textContent?.trim() ?? "",
+        editSourceOpacity: edit ? getComputedStyle(edit).opacity : "",
+        hasSearch: Boolean(search),
+        searchText: search?.textContent?.trim() ?? "",
+        searchAria: search?.getAttribute("aria-label") ?? "",
+        width: rect ? Math.round(rect.width) : 0,
+        height: rect ? Math.round(rect.height) : 0,
+        intersectsViewport: Boolean(rect
+          && rect.right >= -4
+          && rect.left <= window.innerWidth + 4
+          && rect.bottom >= -4
+          && rect.top <= window.innerHeight + 4)
+      };
+    });
+    if (initial.width > 0 && initial.height > 0 && initial.intersectsViewport) break;
+    await scrollUntilMounted(page, ".cm-md-missing-database-widget", "stable missing database placeholder widget");
+  }
   if (initial.title !== "问题列表") {
     throw new Error(`Missing database placeholder title mismatch: ${JSON.stringify(initial)}`);
   }
@@ -1545,7 +1914,7 @@ async function assertMissingDatabasePlaceholderPreview(page) {
   if (!initial.hasSearch || initial.searchText !== "Search workspace" || !initial.searchAria.includes("问题列表")) {
     throw new Error(`Missing database placeholder search affordance mismatch: ${JSON.stringify(initial)}`);
   }
-  if (initial.width < 120 || initial.height < 36) {
+  if (initial.width < 120 || initial.height < 36 || !initial.intersectsViewport) {
     throw new Error(`Missing database placeholder geometry is too small: ${JSON.stringify(initial)}`);
   }
 
@@ -1810,7 +2179,9 @@ async function assertRawMarkdownModifierOpenLink(page) {
     await scrollEditorToBottom(page);
     await targetText.waitFor({ timeout: 5_000 });
   }
-  await targetText.scrollIntoViewIfNeeded();
+  await targetText.evaluate((element) => element.scrollIntoView({ block: "center", inline: "nearest" }));
+  await nextAnimationFrame(page);
+  await assertIntersectsViewport(page, targetText, "raw Markdown modifier-open link", 4);
   const dryRun = await page.evaluate(async () => {
     const debug = window.lotion.debug;
     if (!debug?.setShellOpenDryRun || !debug?.clearShellOpenRequests || !debug?.getShellOpenRequests) {
@@ -2003,7 +2374,7 @@ async function createMarkdownPreviewFixture(viewportName) {
     '- <span data-lotion-color="red">红色文字</span> <span data-lotion-bg="blue">蓝色背景</span>',
     "> Have you ever peeked into the cockpit of a large airliner as you boarded a plane? It’s an impressive display of buttons, levers, dials, and switches under one big windshield.",
     ">",
-    '> <span data-lotion-bg="yellow">**From now on, make it a personal commitment to notice everything that pushes your buttons.**</span>',
+    '> <span data-lotion-bg="yellow">Selection probe: **From now on, make it a personal commitment to notice everything that pushes your buttons.**</span>',
     ">",
     "> Motivation doesn’t have to be accidental. You can control what songs you hear.",
     '- <span data-lotion-color="red">列表红色</span>',

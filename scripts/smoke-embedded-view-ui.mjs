@@ -19,6 +19,7 @@ import {
   writeJson
 } from "./ui-harness.mjs";
 import { assertEmbeddedViewArtifactContract } from "./lib/embedded-view-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const thresholdMs = Number(process.env.LOTION_EMBEDDED_VIEW_RENDER_THRESHOLD_MS ?? 1000);
@@ -91,14 +92,12 @@ const result = await withLotionUIHarness("embedded-view-ui", async ({ artifactRo
   };
   summary.artifactContract = await assertEmbeddedViewArtifactContract(summary, {
     expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
-    minTotalRows: Math.min(args.rowsPerDatabase, 120)
+    minTotalRows: Math.min(args.rowsPerDatabase, 120),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_EMBEDDED_VIEW_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name),
+    renderThresholdMs: thresholdMs
   });
-
-  for (const result of results) {
-    if (result.renderMs > thresholdMs) {
-      throw new Error(`${result.embeddedViews} embedded views rendered in ${result.renderMs}ms for ${result.viewport}, exceeding ${thresholdMs}ms`);
-    }
-  }
   return summary;
 });
 
@@ -131,8 +130,8 @@ async function assertEmbeddedHeaderActions(page, fixture, table, viewportName) {
   const header = table.locator(".embedded-view-header").first();
   await header.waitFor({ timeout: 8_000 });
   await header.scrollIntoViewIfNeeded();
-  const openButton = header.getByRole("button", { name: /^open$/i }).first();
-  const refreshButton = header.getByRole("button", { name: /refresh|refreshing/i }).first();
+  const openButton = header.getByRole("button", { name: /^(open|打开)$/i }).first();
+  const refreshButton = header.getByRole("button", { name: /refresh|refreshing|刷新|刷新中/i }).first();
   const settingsButton = header.getByRole("button", { name: /view settings|视图设置/i }).first();
   await openButton.waitFor({ timeout: 8_000 });
   await refreshButton.waitFor({ timeout: 8_000 });
@@ -168,12 +167,12 @@ async function assertEmbeddedHeaderActions(page, fixture, table, viewportName) {
   if (initial.title !== "Embedded DB 1") {
     throw new Error(`Embedded header title mismatch: ${JSON.stringify(initial)}`);
   }
-  if (!initial.subtitle.includes("All") || !/table/i.test(initial.subtitle)) {
+  if (!initial.subtitle.includes("All") || !/table|表格/i.test(initial.subtitle)) {
     throw new Error(`Embedded header subtitle mismatch: ${JSON.stringify(initial)}`);
   }
-  const openMeta = initial.buttons.find((button) => button.text === "Open");
-  const refreshMeta = initial.buttons.find((button) => /refresh/i.test(button.ariaLabel || button.title));
-  const settingsMeta = initial.buttons.find((button) => /view settings/i.test(button.ariaLabel || button.title));
+  const openMeta = initial.buttons.find((button) => /^(open|打开)$/i.test(button.text));
+  const refreshMeta = initial.buttons.find((button) => /refresh|刷新/i.test(button.ariaLabel || button.title));
+  const settingsMeta = initial.buttons.find((button) => /view settings|视图设置/i.test(button.ariaLabel || button.title));
   if (!openMeta?.visible || !refreshMeta?.visible || !settingsMeta?.visible) {
     throw new Error(`Embedded header actions missing visible controls: ${JSON.stringify(initial)}`);
   }
@@ -190,7 +189,8 @@ async function assertEmbeddedHeaderActions(page, fixture, table, viewportName) {
 
   await refreshButton.click();
   await page.waitForFunction(
-    () => !document.querySelector(".embedded-error") && !document.querySelector(".embedded-view-header-actions button[aria-label='Refreshing...']"),
+    () => !document.querySelector(".embedded-error") && !Array.from(document.querySelectorAll(".embedded-view-header-actions button"))
+      .some((button) => button.disabled && /refresh|刷新/i.test(`${button.getAttribute("aria-label") ?? ""} ${button.getAttribute("title") ?? ""}`)),
     null,
     { timeout: 8_000 }
   );
@@ -200,13 +200,12 @@ async function assertEmbeddedHeaderActions(page, fixture, table, viewportName) {
     title: button.getAttribute("title") ?? ""
   }));
 
-  await settingsButton.click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  const settingsMenuState = await openEmbeddedViewSettingsDialog(page, settingsButton);
   const settingsDialog = await page.locator(".view-dialog").first().evaluate((dialog) => ({
     ariaLabel: dialog.getAttribute("aria-label") ?? "",
     text: dialog.textContent ?? ""
   }));
-  if (!/view settings/i.test(settingsDialog.ariaLabel)) {
+  if (!/view settings|视图设置/i.test(settingsDialog.ariaLabel)) {
     throw new Error(`Embedded Settings did not open the view dialog: ${JSON.stringify(settingsDialog)}`);
   }
   await page.getByRole("button", { name: /cancel|取消/i }).click();
@@ -250,6 +249,12 @@ async function assertEmbeddedHeaderActions(page, fixture, table, viewportName) {
     settingsButton: { ariaLabel: settingsMeta.ariaLabel, title: settingsMeta.title, width: settingsMeta.width, height: settingsMeta.height },
     settingsFocused,
     refreshAfter,
+    settingsMenu: {
+      rootAriaLabel: settingsMenuState.root.ariaLabel,
+      rootHasViewSettings: /view settings/i.test(settingsMenuState.root.text),
+      viewAriaLabel: settingsMenuState.view.ariaLabel,
+      viewHasLayout: /layout/i.test(settingsMenuState.view.text)
+    },
     settingsDialog: {
       ariaLabel: settingsDialog.ariaLabel,
       hasRowsPerPage: /rows per page|每页行数/i.test(settingsDialog.text)
@@ -336,11 +341,11 @@ async function createEmbeddedFixture(count, rowsPerDatabase) {
 async function assertEmbeddedTablePagination(page, databaseId, totalRows, viewportName) {
   const table = page.locator(".embedded-table").first();
   const defaultState = await waitForEmbeddedRowCount(page, table, 20, totalRows, "default embedded row limit");
-  await table
+  const settingsButton = table
     .locator(".embedded-view-header-actions")
     .getByRole("button", { name: /view settings|视图设置/i })
-    .click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+    .first();
+  await openEmbeddedViewSettingsDialog(page, settingsButton);
   const pageSizeSelect = page
     .locator(".view-dialog label.form-row")
     .filter({ hasText: /rows per page|每页行数/i })
@@ -375,6 +380,26 @@ async function assertEmbeddedTablePagination(page, databaseId, totalRows, viewpo
     persistedPageSize: await savedPageSize.jsonValue(),
     loadMoreAffordance
   };
+}
+
+async function openEmbeddedViewSettingsDialog(page, settingsButton) {
+  await settingsButton.click();
+  const rootMenu = page.getByRole("menu", { name: "Database settings" }).first();
+  await rootMenu.waitFor({ timeout: 8_000 });
+  const root = await rootMenu.evaluate((menu) => ({
+    ariaLabel: menu.getAttribute("aria-label") ?? "",
+    text: menu.textContent ?? ""
+  }));
+  await rootMenu.getByRole("menuitem", { name: /^view settings/i }).click();
+  const viewMenu = page.getByRole("menu", { name: "View settings menu" }).first();
+  await viewMenu.waitFor({ timeout: 8_000 });
+  const view = await viewMenu.evaluate((menu) => ({
+    ariaLabel: menu.getAttribute("aria-label") ?? "",
+    text: menu.textContent ?? ""
+  }));
+  await viewMenu.getByRole("menuitem", { name: /^layout/i }).click();
+  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  return { root, view };
 }
 
 async function waitForEmbeddedRowCount(page, table, expectedShown, expectedTotal, label) {
@@ -493,27 +518,287 @@ async function captureEmbeddedTableSnapshot({
   table,
   viewport
 }) {
-  await table.scrollIntoViewIfNeeded();
-  const snapshot = await captureElementSnapshot({
-    artifactRoot,
-    locator: table,
-    metadata: {
-      phase: "embedded-table",
-      embeddedViews: count,
-      rowsPerDatabase,
-      columnOrder,
-      pagination
-    },
-    name: `embedded-table-${count}-${viewport.name}`,
-    page,
-    viewport
+  await page.mouse.move(Math.max(1, viewport.width - 2), Math.max(1, viewport.height - 2));
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   });
-  return {
-    imagePath: snapshot.imagePath,
-    metadataPath: snapshot.metadataPath,
-    height: Number(snapshot.rect.height.toFixed(1)),
-    width: Number(snapshot.rect.width.toFixed(1))
-  };
+  await table.evaluate((node) => node.scrollIntoView({ block: "start", inline: "nearest" }));
+  await page.waitForFunction(
+    () => Boolean(document.querySelector('.embedded-table tbody tr[data-row-id="row_0"]')),
+    null,
+    { timeout: 8_000 }
+  );
+  await prepareEmbeddedBaselineCapture(page, table);
+  try {
+    const completeSurfaceState = await collectEmbeddedSurfaceState(table);
+    assertCompleteEmbeddedSurfaceState(completeSurfaceState, viewport.name);
+    const snapshot = await captureElementSnapshot({
+      artifactRoot,
+      locator: table,
+      metadata: {
+        phase: "embedded-table",
+        completeSurfaceState,
+        embeddedViews: count,
+        rowsPerDatabase,
+        columnOrder,
+        pagination
+      },
+      name: `embedded-table-${count}-${viewport.name}`,
+      page,
+      viewport
+    });
+    const baselinePolicy = {
+      compact: "test/baselines/production-visual/embedded-view-table-compact.json",
+      desktop: "test/baselines/production-visual/embedded-view-table-desktop.json",
+      wide: "test/baselines/production-visual/embedded-view-table-wide.json"
+    }[viewport.name];
+    const perceptualBaseline = baselinePolicy && process.env.LOTION_EMBEDDED_VIEW_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: snapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
+    return {
+      imagePath: snapshot.imagePath,
+      metadataPath: snapshot.metadataPath,
+      height: Number(snapshot.rect.height.toFixed(1)),
+      width: Number(snapshot.rect.width.toFixed(1)),
+      completeSurfaceState,
+      perceptualBaseline
+    };
+  } finally {
+    await restoreEmbeddedBaselineCapture(page, table);
+  }
+}
+
+async function prepareEmbeddedBaselineCapture(page, table) {
+  await table.evaluate((node) => {
+    node.setAttribute("data-embedded-baseline-capture", "true");
+    node.setAttribute("data-embedded-baseline-translate", node.style.translate);
+    const rect = node.getBoundingClientRect();
+    node.style.translate = `${Math.round(rect.left) - rect.left}px ${Math.round(rect.top) - rect.top}px`;
+    for (const row of Array.from(node.querySelectorAll("tbody tr[data-row-id]")).slice(8)) {
+      row.setAttribute("data-embedded-baseline-hidden", "true");
+    }
+  });
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.setAttribute("data-embedded-baseline-capture-style", "true");
+    style.textContent = `
+      [data-embedded-baseline-capture] .virtual-spacer {
+        display: none !important;
+        height: 0 !important;
+      }
+      [data-embedded-baseline-capture] [data-embedded-baseline-hidden] {
+        display: none !important;
+      }
+      [data-embedded-baseline-capture],
+      [data-embedded-baseline-capture] *,
+      [data-embedded-baseline-capture] *::before,
+      [data-embedded-baseline-capture] *::after {
+        -webkit-font-smoothing: antialiased !important;
+        animation: none !important;
+        caret-color: transparent !important;
+        font-feature-settings: normal !important;
+        font-kerning: none !important;
+        font-optical-sizing: none !important;
+        font-variant-ligatures: none !important;
+        text-rendering: geometricPrecision !important;
+        transition: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.waitForTimeout(100);
+  await table.screenshot({ animations: "disabled", caret: "hide" });
+  await page.waitForTimeout(100);
+}
+
+async function restoreEmbeddedBaselineCapture(page, table) {
+  await table.evaluate((node) => {
+    node.removeAttribute("data-embedded-baseline-capture");
+    node.style.translate = node.getAttribute("data-embedded-baseline-translate") ?? "";
+    node.removeAttribute("data-embedded-baseline-translate");
+    for (const row of node.querySelectorAll("[data-embedded-baseline-hidden]")) {
+      row.removeAttribute("data-embedded-baseline-hidden");
+    }
+  });
+  await page.evaluate(() => {
+    for (const style of document.querySelectorAll("[data-embedded-baseline-capture-style]")) style.remove();
+  });
+}
+
+async function collectEmbeddedSurfaceState(table) {
+  return table.evaluate((surface) => {
+    const rect = (node) => {
+      if (!(node instanceof Element)) return null;
+      const box = node.getBoundingClientRect();
+      return {
+        left: Math.round(box.left),
+        top: Math.round(box.top),
+        right: Math.round(box.right),
+        bottom: Math.round(box.bottom),
+        width: Math.round(box.width),
+        height: Math.round(box.height)
+      };
+    };
+    const state = (node) => {
+      if (!(node instanceof Element)) return { opacity: 0, visibility: "" };
+      const style = getComputedStyle(node);
+      return { opacity: Number(style.opacity), visibility: style.visibility };
+    };
+    const header = surface.querySelector(".embedded-view-header");
+    const title = header?.querySelector(".embedded-view-title-stack strong");
+    const subtitle = header?.querySelector(".embedded-view-subtitle");
+    const open = header?.querySelector(".embedded-view-header-actions > button:not(.toolbar-icon)");
+    const refresh = header?.querySelector('button[aria-label="Refresh"]');
+    const settings = header?.querySelector('button[aria-label="View settings"]');
+    const tabs = surface.querySelector(".view-tabs-bar");
+    const stickyHeader = surface.querySelector(".table-sticky-header");
+    const body = surface.querySelector(".table-scroll");
+    const summary = surface.querySelector(".table-summary-scroll");
+    const footer = surface.querySelector(".table-footer");
+    const loadMore = footer?.querySelector(".table-load-more");
+    const rowCount = footer?.querySelector(".table-row-count");
+    const dataRows = Array.from(surface.querySelectorAll("tbody tr[data-row-id]"))
+      .filter((row) => getComputedStyle(row).display !== "none");
+    const surfaceState = state(surface);
+    const headerState = state(header);
+    const footerState = state(footer);
+    return {
+      surfaceRect: rect(surface),
+      headerRect: rect(header),
+      titleRect: rect(title),
+      subtitleRect: rect(subtitle),
+      openRect: rect(open),
+      refreshRect: rect(refresh),
+      settingsRect: rect(settings),
+      tabsRect: rect(tabs),
+      stickyHeaderRect: rect(stickyHeader),
+      bodyRect: rect(body),
+      summaryRect: rect(summary),
+      footerRect: rect(footer),
+      loadMoreRect: rect(loadMore),
+      rowCountRect: rect(rowCount),
+      firstRowRect: rect(dataRows[0]),
+      lastRowRect: rect(dataRows.at(-1)),
+      firstRowText: dataRows[0]?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      lastRowText: dataRows.at(-1)?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      renderedDataRowCount: dataRows.length,
+      virtualSpacerCount: surface.querySelectorAll(".virtual-spacer").length,
+      titleText: title?.textContent?.trim() ?? "",
+      subtitleText: subtitle?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      loadMoreText: loadMore?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      rowCountText: rowCount?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      surfaceVisibility: surfaceState.visibility,
+      surfaceOpacity: surfaceState.opacity,
+      headerVisibility: headerState.visibility,
+      headerOpacity: headerState.opacity,
+      footerVisibility: footerState.visibility,
+      footerOpacity: footerState.opacity,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      documentHorizontalOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    };
+  });
+}
+
+function assertCompleteEmbeddedSurfaceState(state, viewportName) {
+  for (const key of [
+    "surfaceRect",
+    "headerRect",
+    "titleRect",
+    "subtitleRect",
+    "openRect",
+    "refreshRect",
+    "settingsRect",
+    "tabsRect",
+    "stickyHeaderRect",
+    "bodyRect",
+    "summaryRect",
+    "footerRect",
+    "loadMoreRect",
+    "rowCountRect",
+    "firstRowRect",
+    "lastRowRect"
+  ]) {
+    if (!positiveRect(state?.[key])) {
+      throw new Error(`Embedded baseline capture missing ${key} for ${viewportName}: ${JSON.stringify(state?.[key])}`);
+    }
+  }
+  if (
+    state.titleText !== "Embedded DB 1"
+    || !state.subtitleText.includes("All")
+    || !state.firstRowText.includes("Row 0")
+    || state.renderedDataRowCount < 4
+    || !/load\s+50\s+more|加载\s*50\s*行/i.test(state.loadMoreText)
+    || !/100\s+of\s+500|共\s*500\s*行.*100/i.test(state.rowCountText)
+    || state.surfaceVisibility !== "visible"
+    || state.headerVisibility !== "visible"
+    || state.footerVisibility !== "visible"
+    || state.surfaceOpacity < 0.99
+    || state.headerOpacity < 0.99
+    || state.footerOpacity < 0.99
+    || state.documentHorizontalOverflow > 2
+    || !insideViewport(state.surfaceRect, state.viewport)
+  ) {
+    throw new Error(`Embedded baseline capture is incomplete, hidden, or offscreen for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  for (const [ownerName, owner, children] of [
+    ["surface", state.surfaceRect, [
+      state.headerRect,
+      state.tabsRect,
+      state.stickyHeaderRect,
+      state.bodyRect,
+      state.summaryRect,
+      state.footerRect
+    ]],
+    ["header", state.headerRect, [
+      state.titleRect,
+      state.subtitleRect,
+      state.openRect,
+      state.refreshRect,
+      state.settingsRect
+    ]],
+    ["body", state.bodyRect, [state.firstRowRect, state.lastRowRect]],
+    ["footer", state.footerRect, [state.loadMoreRect, state.rowCountRect]]
+  ]) {
+    if (children.some((child) => !containsRect(owner, child))) {
+      throw new Error(`Embedded baseline capture has a child escaping ${ownerName} for ${viewportName}: ${JSON.stringify({ owner, children })}`);
+    }
+  }
+  if (overlaps(state.loadMoreRect, state.rowCountRect)) {
+    throw new Error(`Embedded baseline Load more overlaps row count for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+}
+
+function positiveRect(rect) {
+  return Boolean(rect && rect.width > 0 && rect.height > 0);
+}
+
+function containsRect(outer, inner, tolerance = 1) {
+  return Boolean(outer && inner
+    && inner.left >= outer.left - tolerance
+    && inner.top >= outer.top - tolerance
+    && inner.right <= outer.right + tolerance
+    && inner.bottom <= outer.bottom + tolerance);
+}
+
+function insideViewport(rect, viewport, tolerance = 1) {
+  return Boolean(rect && viewport
+    && rect.left >= -tolerance
+    && rect.top >= -tolerance
+    && rect.right <= viewport.width + tolerance
+    && rect.bottom <= viewport.height + tolerance);
+}
+
+function overlaps(left, right, tolerance = 1) {
+  return Boolean(left && right
+    && left.right > right.left + tolerance
+    && left.left < right.right - tolerance
+    && left.bottom > right.top + tolerance
+    && left.top < right.bottom - tolerance);
 }
 
 function parseRowCountText(text) {

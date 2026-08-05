@@ -821,12 +821,12 @@ function setDataAttribute(element: HTMLElement, key: string, value: string): voi
 function chatStyleTag(): HTMLStyleElement {
   const style = document.createElement("style");
   style.textContent = `
-    .openai-llm-assistant-shell { position: fixed; inset: 31px 0 0 auto; width: min(440px, calc(100vw - 280px)); z-index: 70; display: flex; justify-content: flex-end; pointer-events: none; }
+    .openai-llm-assistant-shell { position: fixed; inset: 31px 0 0 auto; width: min(560px, calc(100vw - 280px)); z-index: 70; display: flex; justify-content: flex-end; pointer-events: none; }
     .openai-llm-assistant-panel { width: 100%; height: 100%; border-left: 1px solid var(--rule); background: var(--paper); box-shadow: -18px 0 40px color-mix(in srgb, var(--ink-1) 8%, transparent); display: grid; grid-template-rows: auto minmax(0, 1fr); pointer-events: auto; }
-    .openai-llm-assistant-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--rule); background: var(--paper); }
+    .openai-llm-assistant-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); background: var(--paper); }
     .openai-llm-assistant-header div { display: grid; gap: 2px; }
-    .openai-llm-assistant-header strong { font-size: 15px; color: var(--ink-1); }
-    .openai-llm-assistant-header span { font-size: 12px; color: var(--ink-3); }
+    .openai-llm-assistant-header strong { font-size: 15px; line-height: 18px; color: var(--ink-1); }
+    .openai-llm-assistant-header span { font-size: 12px; line-height: 16px; color: var(--ink-3); }
     .openai-llm-assistant-close { width: 28px; height: 28px; border: 1px solid transparent; border-radius: var(--r-2); background: transparent; color: var(--ink-3); font-size: 20px; line-height: 1; cursor: pointer; }
     .openai-llm-assistant-close:hover, .openai-llm-assistant-close:focus-visible { border-color: var(--rule); background: var(--sand); color: var(--ink-1); outline: none; }
     .openai-llm-assistant-body { min-height: 0; overflow: hidden; }
@@ -909,6 +909,37 @@ function chatStyleTag(): HTMLStyleElement {
       .openai-llm-chat-controls { justify-content: flex-start; }
       .openai-llm-chat-provider, .openai-llm-chat-model, .openai-llm-chat-mode, .openai-llm-chat-context-select { width: min(100%, 220px); }
     }
+    @media (max-height: 880px) {
+      .openai-llm-chat-assistant .openai-llm-chat-history { max-height: 76px; padding: 6px 10px; }
+      .openai-llm-chat-history-heading { margin-bottom: 4px; }
+      .openai-llm-chat-assistant .openai-llm-chat-toolbar { gap: 8px; padding: 8px 12px; }
+      .openai-llm-chat-quick-actions, .openai-llm-chat-tool-events { flex-wrap: nowrap; overflow-x: auto; }
+      .openai-llm-chat-quick-actions { padding: 5px 12px; }
+      .openai-llm-chat-tool-events { padding: 4px 12px; }
+      .openai-llm-chat-write-preview { gap: 6px; padding: 8px 12px; }
+      .openai-llm-chat-write-preview pre { max-height: 52px; padding: 6px; line-height: 16px; }
+      .openai-llm-chat-composer { gap: 6px; padding: 8px 12px 10px; }
+      .openai-llm-chat-input { height: 60px; min-height: 60px; resize: none; }
+    }
   `;
   return style;
 }
+
+export const openAILLMChatTestInternals = {
+  promptWithTranscript,
+  toolModeFromSelect,
+  contextModeFromSelect,
+  toolLabel,
+  contextLabel,
+  systemContextForMode,
+  writePolicyForMode,
+  extractWritePreview,
+  groupHistory,
+  providerFromSelect,
+  modelChoices,
+  currentContextText,
+  truncate,
+  escapeHtml,
+  escapeAttr,
+  setDataAttribute
+};

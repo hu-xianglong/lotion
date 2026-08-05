@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type {
   DatabaseBundle,
   DatabaseRecord,
@@ -12,27 +12,46 @@ import type {
   RecentItemInput,
   RecordValue,
   RowPageDocument,
-  SelectOption
+  SelectOption,
+  StartupCacheDiagnostics
 } from "../shared/types";
 import { AppShell } from "./components/AppShell";
 import { EntityIcon } from "./components/EntityIcon";
 import { DatabaseCacheProvider, useDatabaseCache } from "./context/database-cache";
 import { LotionActionsProvider, type LotionActions, type NavigationJumpOptions } from "./context/lotion-actions";
-import { DatabaseTable } from "./features/databases/DatabaseTable";
-import { RowTemplateDialog } from "./features/databases/RowTemplateDialog";
-import { PageEditor, type PageEditorHandle, type PageEditorViewState } from "./features/pages/PageEditor";
-import { PageProperties } from "./features/pages/PageProperties";
-import { RowPageProperties } from "./features/pages/RowPageProperties";
-import { DatabaseTemplatePicker } from "./features/databases/DatabaseTemplatePicker";
-import { GlobalSearchPanel } from "./features/search/GlobalSearchPanel";
-import { SearchAiSurface } from "./features/search/SearchAiSurface";
-import { ManagementView, type PluginOpenRequest, type SettingsOpenRequest } from "./features/manage/ManagementView";
+import type { PageEditorHandle, PageEditorViewState } from "./features/pages/PageEditor";
+import type { PluginOpenRequest, SettingsOpenRequest } from "./features/manage/ManagementView";
+import { StartupPerformancePanel } from "./features/startup/StartupPerformancePanel";
+import {
+  createStartupPerformanceReport,
+  STARTUP_PHASES,
+  type StartupCountKind,
+  type StartupIndexOperationEntry,
+  type StartupIndexOperationKey,
+  type StartupPerformanceReport,
+  type StartupPhaseEntry,
+  type StartupPhaseKey,
+  type StartupPhaseStatus
+} from "./features/startup/startup-performance";
 import { useI18n } from "./lib/i18n";
 import { useSettings } from "./lib/settings";
 import { perfLog } from "./lib/perf-log";
 import { shortcutActionForEvent } from "../shared/shortcuts";
+import { parseDatabaseViewLink } from "../shared/database-view-link";
+import { parseDatabaseRowLink } from "../shared/database-row-link";
 import { setRendererActivePageReader } from "./plugin-host";
+import { ensureBuiltinPlugins, scheduleBuiltinPlugins } from "./plugin-host/builtin-loader";
 import { initialAppState, tagFromManageKind, type ActiveItem, type ActiveRowPageRef, type AppState, type ManageKind } from "./state/app-store";
+
+const DatabaseTable = lazy(() => import("./features/databases/DatabaseTable").then((module) => ({ default: module.DatabaseTable })));
+const RowTemplateDialog = lazy(() => import("./features/databases/RowTemplateDialog").then((module) => ({ default: module.RowTemplateDialog })));
+const PageEditor = lazy(() => import("./features/pages/PageEditor").then((module) => ({ default: module.PageEditor })));
+const PageProperties = lazy(() => import("./features/pages/PageProperties").then((module) => ({ default: module.PageProperties })));
+const RowPageProperties = lazy(() => import("./features/pages/RowPageProperties").then((module) => ({ default: module.RowPageProperties })));
+const DatabaseTemplatePicker = lazy(() => import("./features/databases/DatabaseTemplatePicker").then((module) => ({ default: module.DatabaseTemplatePicker })));
+const GlobalSearchPanel = lazy(() => import("./features/search/GlobalSearchPanel").then((module) => ({ default: module.GlobalSearchPanel })));
+const SearchAiSurface = lazy(() => import("./features/search/SearchAiSurface").then((module) => ({ default: module.SearchAiSurface })));
+const ManagementView = lazy(() => import("./features/manage/ManagementView").then((module) => ({ default: module.ManagementView })));
 
 const MARKDOWN_SAVE_DEBOUNCE_MS = 500;
 
@@ -42,16 +61,6 @@ interface AppNotification {
   id: string;
   text: string;
   level: NotificationLevel;
-}
-
-export type StartupPhaseKey = "workspace" | "index" | "navigation" | "paint";
-export type StartupPhaseStatus = "pending" | "active" | "done" | "error";
-
-export interface StartupPhaseEntry {
-  key: StartupPhaseKey;
-  label: string;
-  status: StartupPhaseStatus;
-  ms?: number;
 }
 
 export interface StartupLoadingState {
@@ -71,15 +80,9 @@ interface StartupPhaseSnapshot {
 declare global {
   interface Window {
     __lotionStartupPhases?: StartupPhaseSnapshot[];
+    __lotionStartupReport?: StartupPerformanceReport;
   }
 }
-
-const STARTUP_PHASES: Array<{ key: StartupPhaseKey; label: string }> = [
-  { key: "workspace", label: "Opening workspace" },
-  { key: "index", label: "Reading workspace index" },
-  { key: "navigation", label: "Restoring page" },
-  { key: "paint", label: "Painting editor" }
-];
 
 function activeItemsEqual(a: ActiveItem, b: ActiveItem): boolean {
   if (a.type !== b.type) return false;
@@ -89,6 +92,7 @@ function activeItemsEqual(a: ActiveItem, b: ActiveItem): boolean {
     return a.databaseId === b.databaseId && a.rowId === b.rowId;
   }
   if (a.type === "manage" && b.type === "manage") return a.kind === b.kind;
+  if (a.type === "startup" && b.type === "startup") return true;
   return false;
 }
 
@@ -163,12 +167,15 @@ function AppContent() {
   const [searchInitialPattern, setSearchInitialPattern] = useState("");
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [rowTemplateDialogOpen, setRowTemplateDialogOpen] = useState(false);
+  const [peekRowPage, setPeekRowPage] = useState<{ ref: ActiveRowPageRef; mode: "side_peek" | "center_peek" } | null>(null);
+  const peekOriginRef = useRef<HTMLElement | null>(null);
   const [navigationAnchor, setNavigationAnchor] = useState<PendingNavigationAnchor | null>(null);
   const [sidebarSettingsOpenRequest, setSidebarSettingsOpenRequest] = useState(0);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [pluginOpenRequest, setPluginOpenRequest] = useState<PluginOpenRequest | undefined>();
   const [settingsOpenRequest, setSettingsOpenRequest] = useState<SettingsOpenRequest | undefined>();
   const [startup, setStartup] = useState<StartupLoadingState>(() => createStartupState());
+  const [startupReport, setStartupReport] = useState<StartupPerformanceReport | null>(null);
   // Browser-style back/forward stack over active item navigation.
   const [history, setHistory] = useState<{ stack: ActiveItem[]; index: number }>({
     stack: [],
@@ -189,12 +196,41 @@ function AppContent() {
   const activePageForPluginsRef = useRef<PageDocument | null>(null);
   const openEntityRef = useRef<(ref: EntityRef) => void>(() => undefined);
   const bootstrapStartedRef = useRef(false);
+  const navigationVersionRef = useRef(0);
   const startupPhaseStartedRef = useRef<Map<StartupPhaseKey, number>>(new Map());
+  const startupPhaseResultsRef = useRef<Map<StartupPhaseKey, StartupPhaseEntry>>(new Map());
+  const startupIndexOperationsRef = useRef<Map<StartupIndexOperationKey, StartupIndexOperationEntry>>(new Map());
   const notificationTimersRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => () => {
     void flushPendingMarkdownSaves();
   }, []);
+
+  function closeRowPagePeek() {
+    if (!peekRowPage) return false;
+    void flushPendingMarkdownSaves();
+    const rowId = peekRowPage.ref.rowId;
+    setPeekRowPage(null);
+    requestAnimationFrame(() => {
+      if (peekOriginRef.current?.isConnected) peekOriginRef.current.focus({ preventScroll: true });
+      else {
+        const escapedRowId = CSS.escape(rowId);
+        document.querySelector<HTMLElement>(`[data-row-id="${escapedRowId}"] .title-cell-open, .kanban-card[data-row-id="${escapedRowId}"], [data-row-id="${escapedRowId}"]`)?.focus({ preventScroll: true });
+      }
+    });
+    return true;
+  }
+
+  useEffect(() => {
+    if (!peekRowPage) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeRowPagePeek();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [peekRowPage]);
 
   useEffect(() => () => {
     for (const timer of notificationTimersRef.current.values()) {
@@ -214,12 +250,35 @@ function AppContent() {
 
   useEffect(() => {
     const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string } | string>).detail;
+      const target = parseDatabaseRowLink(typeof detail === "string" ? detail : detail?.url ?? "");
+      if (target) openRowPage(target.databaseId, target.rowId);
+    };
+    window.addEventListener("lotion:open-database-row-link", handler);
+    return () => window.removeEventListener("lotion:open-database-row-link", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
       const ref = (event as CustomEvent<EntityRef>).detail;
       if (!ref) return;
       openEntityRef.current(ref);
     };
     window.addEventListener("lotion:open-entity", handler);
     return () => window.removeEventListener("lotion:open-entity", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string } | string>).detail;
+      const target = parseDatabaseViewLink(typeof detail === "string" ? detail : detail?.url ?? "");
+      if (!target) return;
+      window.localStorage.setItem(`lotion.database.lastActiveView.${target.databaseId}`, target.viewId);
+      openEntityRef.current({ kind: "database", entityId: target.databaseId });
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("lotion:select-database-view", { detail: target })), 0);
+    };
+    window.addEventListener("lotion:open-database-view-link", handler);
+    return () => window.removeEventListener("lotion:open-database-view-link", handler);
   }, []);
 
   useEffect(() => {
@@ -313,6 +372,15 @@ function AppContent() {
     else if (item.type === "database") await selectDatabase(item.id, { recordRecent: false });
     else if (item.type === "row_page") await openRowPage(item.databaseId, item.rowId, { recordRecent: false });
     else if (item.type === "manage") openManage(item.kind);
+    else if (item.type === "startup") {
+      setState((current) => ({
+        ...current,
+        activeItem: item,
+        activePage: undefined,
+        activeDatabaseId: undefined,
+        activeRowPage: undefined
+      }));
+    }
   }
 
   function rememberPageViewState(key: string, viewState: PageEditorViewState) {
@@ -355,6 +423,7 @@ function AppContent() {
   }
 
   async function goBack() {
+    if (closeRowPagePeek()) return;
     if (history.index <= 0) return;
     const target = history.stack[history.index - 1];
     setHistory((current) => ({ ...current, index: current.index - 1 }));
@@ -362,6 +431,7 @@ function AppContent() {
   }
 
   async function goForward() {
+    if (peekRowPage) return;
     if (history.index >= history.stack.length - 1) return;
     const target = history.stack[history.index + 1];
     setHistory((current) => ({ ...current, index: current.index + 1 }));
@@ -461,6 +531,13 @@ function AppContent() {
     try {
       const result = await work();
       const ms = elapsedMs(startedAt);
+      const completed: StartupPhaseEntry = {
+        key,
+        label: STARTUP_PHASES.find((phase) => phase.key === key)?.label ?? key,
+        status: "done",
+        ms
+      };
+      startupPhaseResultsRef.current.set(key, completed);
       updateStartup((current) => ({
         ...current,
         currentKey: current.currentKey === key ? undefined : current.currentKey,
@@ -473,6 +550,12 @@ function AppContent() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const ms = elapsedMs(startedAt);
+      startupPhaseResultsRef.current.set(key, {
+        key,
+        label: STARTUP_PHASES.find((phase) => phase.key === key)?.label ?? key,
+        status: "error",
+        ms
+      });
       updateStartup((current) => ({
         ...current,
         currentKey: key,
@@ -486,6 +569,32 @@ function AppContent() {
     }
   }
 
+  async function runStartupIndexOperation<T>(
+    key: StartupIndexOperationKey,
+    work: () => Promise<T>,
+    describe?: (result: T) => { count: number; countKind: StartupCountKind }
+  ): Promise<T> {
+    const startedAt = performance.now();
+    try {
+      const result = await work();
+      const detail = describe?.(result);
+      startupIndexOperationsRef.current.set(key, {
+        key,
+        ms: elapsedMs(startedAt),
+        status: "done",
+        ...detail
+      });
+      return result;
+    } catch (error) {
+      startupIndexOperationsRef.current.set(key, {
+        key,
+        ms: elapsedMs(startedAt),
+        status: "error"
+      });
+      throw error;
+    }
+  }
+
   // Persist tabs on every tab-shape or active-tab change. Skipping
   // while loading avoids overwriting saved state with the empty
   // initial-state placeholder before bootstrap has restored it.
@@ -495,25 +604,42 @@ function AppContent() {
   }, [state.tabs, state.activeTabIndex, state.isLoading]);
 
   async function bootstrap() {
+    const navigationVersionAtStart = navigationVersionRef.current;
     try {
       if (!window.lotion?.workspace) {
         throw new Error("Lotion needs the Electron preload API. Start it with `npm run dev` and use the Electron window instead of opening the Vite URL in a normal browser.");
       }
-      const manifest = await runStartupPhase("workspace", () => window.lotion.workspace.open());
-      const { pages, databases, pagesTree, favorites, recents } = await runStartupPhase("index", async () => {
-        const [nextPages, nextDatabases, nextPagesTree, nextFavorites, nextRecents] = await Promise.all([
-          window.lotion.pages.list(),
-          window.lotion.databases.list(),
-          window.lotion.workspace.getPagesTree(),
-          window.lotion.favorites.list(),
-          window.lotion.workspace.listRecents()
+      const manifest = await runStartupPhase("workspace", async () => {
+        await window.lotion.runtime.ready();
+        return window.lotion.workspace.open();
+      });
+      const { pages, databases, pagesTree, cache: startupCache, favorites, recents, workspacePath } = await runStartupPhase("index", async () => {
+        const [startupIndex, nextFavorites, nextRecents, recentWorkspaces] = await Promise.all([
+          runStartupIndexOperation("workspaceIndex", () => window.lotion.workspace.getStartupIndex(), (index) => ({
+            count: index.pagesTree.topLevelPages.length + index.pagesTree.databases.reduce((total, database) => total + database.fileNames.length, 0),
+            countKind: "entries"
+          })),
+          runStartupIndexOperation("favorites", () => window.lotion.favorites.list(), (items) => ({
+            count: items.length,
+            countKind: "items"
+          })),
+          runStartupIndexOperation("recents", () => window.lotion.workspace.listRecents(), (items) => ({
+            count: items.length,
+            countKind: "items"
+          })),
+          runStartupIndexOperation("workspacePath", () => window.lotion.workspace.listRecent(), (items) => ({
+            count: items.length,
+            countKind: "items"
+          }))
         ]);
         return {
-          pages: nextPages,
-          databases: nextDatabases,
-          pagesTree: nextPagesTree,
+          pages: startupIndex.pages,
+          databases: startupIndex.databases,
+          pagesTree: startupIndex.pagesTree,
+          cache: startupIndex.cache,
           favorites: nextFavorites,
-          recents: nextRecents
+          recents: nextRecents,
+          workspacePath: recentWorkspaces[0]?.path
         };
       });
       // A "move tab to new window" envelope outranks the persisted
@@ -523,34 +649,84 @@ function AppContent() {
         ? { tabs: [{ id: `tab_${Date.now()}`, item: handed.item }], activeTabIndex: 0 }
         : readPersistedTabs();
       const restored = rawRestored ? sanitizePersistedTabs(rawRestored, pages, databases) : null;
-      setState((current) => ({
-        ...current,
-        manifest,
-        pages,
-        databases,
-        pagesTree,
-        favorites,
-        recents,
-        isLoading: true,
-        tabs: restored?.tabs ?? current.tabs,
-        activeTabIndex: restored?.activeTabIndex ?? current.activeTabIndex
-      }));
-
-      const restoredItem = restored?.tabs[restored.activeTabIndex]?.item;
-      await runStartupPhase("navigation", async () => {
-        if (restoredItem) {
-          if (restoredItem.type === "page") await selectPage(restoredItem.id, { recordRecent: false });
-          else if (restoredItem.type === "database") await selectDatabase(restoredItem.id, { recordRecent: false });
-          else if (restoredItem.type === "row_page") await openRowPage(restoredItem.databaseId, restoredItem.rowId, { recordRecent: false });
-          else if (restoredItem.type === "manage") openManage(restoredItem.kind);
-        } else if (pages[0]) {
-          await selectPage(pages[0].id);
+      setState((current) => {
+        let tabs = restored?.tabs ?? current.tabs;
+        const activeTabIndex = restored?.activeTabIndex ?? current.activeTabIndex;
+        if (!tabs[activeTabIndex]?.item && pages[0]) {
+          tabs = tabs.map((tab, index) => (
+            index === activeTabIndex
+              ? { ...tab, item: { type: "page", id: pages[0].id } as ActiveItem }
+              : tab
+          ));
         }
+        return {
+          ...current,
+          manifest,
+          pages,
+          databases,
+          pagesTree,
+          favorites,
+          recents,
+          isLoading: true,
+          tabs,
+          activeTabIndex
+        };
+      });
+
+      await runStartupPhase("navigation", async () => {
+        // The per-launch diagnostics tab becomes active immediately below.
+        // Keep restored tabs as lightweight descriptors and hydrate their
+        // content only when the user switches back to one of them.
+        await Promise.resolve();
       });
       await runStartupPhase("paint", async () => {
         setState((current) => ({ ...current, isLoading: false }));
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       });
+      const report = createStartupPerformanceReport({
+        startedAt: startup.startedAt,
+        completedAt: performance.now(),
+        phases: STARTUP_PHASES.map((phase) => (
+          startupPhaseResultsRef.current.get(phase.key) ?? { ...phase, status: "pending" }
+        )),
+        indexOperations: startupIndexOperationsRef.current.values(),
+        workspace: {
+          name: manifest.name,
+          path: workspacePath,
+          pages: pages.length,
+          databases: databases.length
+        },
+        cache: startupCache
+      });
+      setStartupReport(report);
+      window.__lotionStartupReport = report;
+      setState((current) => {
+        const tabs = current.tabs.filter((tab) => tab.item?.type !== "startup");
+        const activeTabId = current.tabs[current.activeTabIndex]?.id;
+        const returnTabId = tabs.find((tab) => tab.id === activeTabId)?.id
+          ?? activeTabId
+          ?? tabs[0]?.id;
+        const item: ActiveItem = { type: "startup", returnTabId };
+        const startupTab = { id: `startup_${Date.now()}`, item };
+        if (navigationVersionRef.current !== navigationVersionAtStart) {
+          const activeTabIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
+          return {
+            ...current,
+            tabs: [...tabs, startupTab],
+            activeTabIndex
+          };
+        }
+        return {
+          ...current,
+          tabs: [...tabs, startupTab],
+          activeTabIndex: tabs.length,
+          activeItem: item,
+          activePage: undefined,
+          activeDatabaseId: undefined,
+          activeRowPage: undefined
+        };
+      });
+      scheduleBuiltinPlugins();
     } catch (error) {
       setState((current) => ({
         ...current,
@@ -561,15 +737,21 @@ function AppContent() {
   }
 
   async function refreshLists() {
-    const [manifest, pages, databases, pagesTree, favorites, recents] = await Promise.all([
+    const [manifest, startupIndex, favorites, recents] = await Promise.all([
       window.lotion.workspace.getManifest(),
-      window.lotion.pages.list(),
-      window.lotion.databases.list(),
-      window.lotion.workspace.getPagesTree(),
+      window.lotion.workspace.getStartupIndex(),
       window.lotion.favorites.list(),
       window.lotion.workspace.listRecents()
     ]);
-    setState((current) => ({ ...current, manifest, pages, databases, pagesTree, favorites, recents }));
+    setState((current) => ({
+      ...current,
+      manifest,
+      pages: startupIndex.pages,
+      databases: startupIndex.databases,
+      pagesTree: startupIndex.pagesTree,
+      favorites,
+      recents
+    }));
   }
 
   /** Push a navigation onto the manifest's recents list, then sync the
@@ -584,6 +766,7 @@ function AppContent() {
   }
 
   function openManage(kind: ManageKind) {
+    navigationVersionRef.current += 1;
     persistActiveEditorViewState();
     void flushPendingMarkdownSaves();
     recordHistory({ type: "manage", kind });
@@ -593,7 +776,7 @@ function AppContent() {
       activePage: undefined,
       activeDatabaseId: undefined,
       activeRowPage: undefined,
-      tabs: replaceActiveTabItem(current, { type: "manage", kind })
+      ...activateItemInTabs(current, { type: "manage", kind })
     }));
   }
 
@@ -626,6 +809,7 @@ function AppContent() {
     if (index === state.activeTabIndex) persistActiveEditorViewState();
     void flushPendingMarkdownSaves();
     setState((current) => {
+      if (current.tabs[index]?.item?.type === "startup") return current;
       if (current.tabs.length <= 1) return current; // never leave zero tabs
       const tabs = current.tabs.filter((_, i) => i !== index);
       let nextIndex = current.activeTabIndex;
@@ -638,7 +822,7 @@ function AppContent() {
   function moveTabToNewWindow(index: number) {
     if (index === state.activeTabIndex) persistActiveEditorViewState();
     const tab = state.tabs[index];
-    if (!tab?.item) return;
+    if (!tab?.item || tab.item.type === "startup") return;
     // Stash the tab content for the new window's bootstrap, then open
     // it. Removing the tab here vs. after the new window confirms is
     // a deliberate optimistic choice — the new window can't reject the
@@ -668,7 +852,7 @@ function AppContent() {
   }
 
   function openItemInNewWindow(item: ActiveItem | undefined = state.activeItem) {
-    if (!item) {
+    if (!item || item.type === "startup") {
       void window.lotion.windows.openNew();
       return;
     }
@@ -683,7 +867,9 @@ function AppContent() {
       if (
         source < 0 || source >= current.tabs.length ||
         target < 0 || target >= current.tabs.length ||
-        source === target
+        source === target ||
+        current.tabs[source]?.item?.type === "startup" ||
+        current.tabs[target]?.item?.type === "startup"
       ) return current;
       const tabs = current.tabs.slice();
       const [moved] = tabs.splice(source, 1);
@@ -706,7 +892,14 @@ function AppContent() {
     persistActiveEditorViewState();
     await flushPendingMarkdownSaves();
     const target = state.tabs[index];
-    const item = isActiveItemAvailable(target.item, state.pages, state.databases) ? target.item : undefined;
+    let item = isActiveItemAvailable(target.item, state.pages, state.databases) ? target.item : undefined;
+    if (item?.type === "startup") {
+      const previousTab = state.tabs[state.activeTabIndex];
+      const returnTabId = previousTab?.item?.type === "startup"
+        ? item.returnTabId
+        : previousTab?.id;
+      item = { ...item, returnTabId };
+    }
     setState((current) => ({
       ...current,
       activeTabIndex: index,
@@ -716,7 +909,7 @@ function AppContent() {
       activeRowPage: undefined,
       tabs: item === target.item
         ? current.tabs
-        : current.tabs.map((tab, i) => (i === index ? { ...tab, item: undefined } : tab))
+        : current.tabs.map((tab, i) => (i === index ? { ...tab, item } : tab))
     }));
     if (!item) return;
     if (item.type === "page") await selectPage(item.id);
@@ -729,8 +922,6 @@ function AppContent() {
     let item: FavoriteItem | null = null;
     if (state.activePage) {
       item = { type: "page", id: state.activePage.meta.id };
-    } else if (state.activeDatabaseId) {
-      item = { type: "database", id: state.activeDatabaseId };
     } else if (state.activeRowPage) {
       item = {
         type: "row_page",
@@ -794,7 +985,7 @@ function AppContent() {
         activePage: page,
         activeDatabaseId: undefined,
         activeRowPage: undefined,
-        tabs: replaceActiveTabItem(current, { type: "page", id: page.meta.id })
+        ...activateItemInTabs(current, { type: "page", id: page.meta.id })
       })
     }));
     if (options.open !== false) await recordRecent({ type: "page", id: page.meta.id });
@@ -820,7 +1011,7 @@ function AppContent() {
       activePage: page,
       activeDatabaseId: undefined,
       activeRowPage: undefined,
-      tabs: replaceActiveTabItem(current, item)
+      ...activateItemInTabs(current, item)
     }));
     await recordRecent({ type: "page", id: page.meta.id });
     await refreshLists();
@@ -874,6 +1065,7 @@ function AppContent() {
   }
 
   async function selectPage(id: string, options: NavigationOptions = {}) {
+    navigationVersionRef.current += 1;
     const startedAt = performance.now();
     persistActiveEditorViewState();
     const flushStartedAt = performance.now();
@@ -909,7 +1101,7 @@ function AppContent() {
       activePage: page,
       activeDatabaseId: undefined,
       activeRowPage: undefined,
-      tabs: replaceActiveTabItem(current, item)
+      ...activateItemInTabs(current, item)
     }));
     requestAnimationFrame(() => {
       openLog("page.paint", {
@@ -921,6 +1113,8 @@ function AppContent() {
   }
 
   async function selectDatabase(id: string, options: NavigationOptions = {}) {
+    navigationVersionRef.current += 1;
+    await ensureBuiltinPlugins();
     persistActiveEditorViewState();
     await flushPendingMarkdownSaves();
     setNavigationAnchor(null);
@@ -941,7 +1135,7 @@ function AppContent() {
       activeDatabaseLoadMs: ipcMs,
       activePage: undefined,
       activeRowPage: undefined,
-      tabs: replaceActiveTabItem(current, { type: "database", id })
+      ...activateItemInTabs(current, { type: "database", id })
     }));
     requestAnimationFrame(() => {
       console.log(
@@ -1121,6 +1315,9 @@ function AppContent() {
         ? { ...current, activeRowPage: { ...current.activeRowPage, meta: doc.meta, title: doc.title || current.activeRowPage.title, fullWidth: doc.fullWidth } }
         : current
     );
+    setPeekRowPage((current) => current && current.ref.databaseId === databaseId && current.ref.rowId === rowId
+      ? { ...current, ref: { ...current.ref, meta: doc.meta, title: doc.title || current.ref.title, fullWidth: doc.fullWidth } }
+      : current);
   }
 
   async function updateRowPageSmallText(databaseId: string, rowId: string, smallText: boolean) {
@@ -1131,18 +1328,33 @@ function AppContent() {
         ? { ...current, activeRowPage: { ...current.activeRowPage, meta: doc.meta, title: doc.title || current.activeRowPage.title } }
         : current
     );
+    setPeekRowPage((current) => current && current.ref.databaseId === databaseId && current.ref.rowId === rowId
+      ? { ...current, ref: { ...current.ref, meta: doc.meta, title: doc.title || current.ref.title } }
+      : current);
   }
 
-  async function renamePage(title: string) {
-    if (!state.activePage || title === state.activePage.meta.title) return;
-    const page = await window.lotion.pages.rename(state.activePage.meta.id, title);
-    pageDocCacheRef.current.set(page.meta.id, page);
+  async function renamePage(pageId: string, title: string) {
+    const page = await window.lotion.pages.rename(pageId, title);
     await refreshLists();
-    setState((current) => ({ ...current, activePage: page }));
+    setState((currentState) => ({
+      ...currentState,
+      activePage: currentState.activePage?.meta.id === pageId ? page : currentState.activePage
+    }));
   }
 
   async function openRowPage(databaseId: string, rowId: string, options: NavigationOptions = {}) {
+    navigationVersionRef.current += 1;
+    await ensureBuiltinPlugins();
     const startedAt = performance.now();
+    const peekMode = options.pageOpenMode === "side_peek" || options.pageOpenMode === "center_peek" ? options.pageOpenMode : undefined;
+    if (peekMode) {
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      peekOriginRef.current = options.peekOrigin?.isConnected
+        ? options.peekOrigin
+        : activeElement?.closest("[data-row-id]")
+        ? activeElement
+        : document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(rowId)}"] .title-cell-open`);
+    }
     persistActiveEditorViewState();
     const flushStartedAt = performance.now();
     await flushPendingMarkdownSaves();
@@ -1159,13 +1371,18 @@ function AppContent() {
     }
     const fetchMs = elapsedMs(fetchStartedAt);
     const ref: ActiveRowPageRef = { databaseId, rowId, meta: doc.meta, title: doc.title, markdown: doc.markdown, fullWidth: doc.fullWidth };
+    if (peekMode) {
+      setPeekRowPage({ ref, mode: peekMode });
+      if (options.recordRecent !== false) void recordRecent({ type: "row_page", databaseId, rowId, title: doc.title, icon: rowIconFromRecord(doc.record) });
+      return;
+    }
     const item = rowPageActiveItem(databaseId, rowId, doc.title);
     const viewStateKey = editorViewStateKey(item);
     const pendingAnchor = prepareMarkdownLineAnchor(viewStateKey, doc.markdown, options.markdownLine);
     setNavigationAnchor(pendingAnchor);
     recordHistory(item);
     if (options.recordRecent !== false) {
-      void recordRecent({ type: "row_page", databaseId, rowId, title: doc.title, icon: doc.meta.icon });
+      void recordRecent({ type: "row_page", databaseId, rowId, title: doc.title, icon: rowIconFromRecord(doc.record) });
     }
     openLog("rowPage.ready", {
       databaseId,
@@ -1185,7 +1402,7 @@ function AppContent() {
       activeRowPage: ref,
       activePage: undefined,
       activeDatabaseId: undefined,
-      tabs: replaceActiveTabItem(current, item)
+      ...activateItemInTabs(current, item)
     }));
     requestAnimationFrame(() => {
       openLog("rowPage.paint", {
@@ -1233,7 +1450,7 @@ function AppContent() {
         databaseId,
         rowId: doc.rowId,
         title: doc.title,
-        icon: doc.meta.icon
+        icon: rowIconFromRecord(doc.record)
       });
     }
     openLog("rowPageByFile.ready", {
@@ -1255,7 +1472,7 @@ function AppContent() {
       activeRowPage: ref,
       activePage: undefined,
       activeDatabaseId: undefined,
-      tabs: replaceActiveTabItem(current, item)
+      ...activateItemInTabs(current, item)
     }));
     requestAnimationFrame(() => {
       openLog("rowPageByFile.paint", {
@@ -1295,7 +1512,7 @@ function AppContent() {
   };
 
   async function saveRowPageBody(markdown: string) {
-    const rp = state.activeRowPage;
+    const rp = peekRowPage?.ref ?? state.activeRowPage;
     if (!rp) return;
     const { databaseId, rowId } = rp;
     patchCachedRowPageMarkdown(databaseId, rowId, markdown);
@@ -1384,7 +1601,7 @@ function AppContent() {
   }
 
   async function updateRowField(fieldId: string, value: RecordValue) {
-    const rp = state.activeRowPage;
+    const rp = peekRowPage?.ref ?? state.activeRowPage;
     if (!rp) return;
     await cache.updateCell({
       databaseId: rp.databaseId,
@@ -1418,12 +1635,15 @@ function AppContent() {
             : tab
         ))
       }));
+      setPeekRowPage((current) => current && current.ref.databaseId === rp.databaseId && current.ref.rowId === rp.rowId
+        ? { ...current, ref: { ...current.ref, title, meta: current.ref.meta ? { ...current.ref.meta, title } : undefined } }
+        : current);
       void refreshPagesTree();
     }
   }
 
   async function applyRowPageTemplate(templateId: string) {
-    const rp = state.activeRowPage;
+    const rp = peekRowPage?.ref ?? state.activeRowPage;
     if (!rp) return;
     const bundle = cache.getBundle(rp.databaseId);
     const template = bundle?.schema.templates?.find((item) => item.id === templateId);
@@ -1436,6 +1656,9 @@ function AppContent() {
           ? { ...current, activeRowPage: { ...current.activeRowPage, markdown: template.markdown ?? "" } }
           : current
       ));
+      setPeekRowPage((current) => current && current.ref.databaseId === rp.databaseId && current.ref.rowId === rp.rowId
+        ? { ...current, ref: { ...current.ref, markdown: template.markdown ?? "" } }
+        : current);
       await persistRowPageMarkdown(rp.databaseId, rp.rowId, template.markdown);
     }
     for (const [fieldId, value] of Object.entries(template.values ?? {})) {
@@ -1444,16 +1667,14 @@ function AppContent() {
     await updateRowPageFullWidth(rp.databaseId, rp.rowId, !!template.fullWidth);
   }
 
-  async function renameRowPage(title: string) {
-    const rp = state.activeRowPage;
-    if (!rp) return;
-    const currentTitle = String(lookupRow(cache.getBundle(rp.databaseId), rp.rowId)?.title ?? "");
+  async function renameRowPage(databaseId: string, rowId: string, title: string) {
+    const currentTitle = String(lookupRow(cache.getBundle(databaseId), rowId)?.title ?? "");
     if (title === currentTitle) return;
-    await updateRowField("title", title);
+    await cache.updateCell({ databaseId, rowId, fieldId: "title", value: title });
   }
 
   async function updateRowFieldOptions(fieldId: string, options: SelectOption[]) {
-    const rp = state.activeRowPage;
+    const rp = peekRowPage?.ref ?? state.activeRowPage;
     if (!rp) return;
     const bundle = cache.getBundle(rp.databaseId);
     const field = bundle?.schema.fields.find((item) => item.id === fieldId);
@@ -1476,7 +1697,7 @@ function AppContent() {
     field: FieldSchema,
     input: Pick<FieldSchema, "name" | "type" | "options" | "formula" | "relation" | "rollup" | "dateFormat" | "timeFormat">
   ) {
-    const rp = state.activeRowPage;
+    const rp = peekRowPage?.ref ?? state.activeRowPage;
     if (!rp) return;
     await cache.updateField({
       databaseId: rp.databaseId,
@@ -1492,16 +1713,6 @@ function AppContent() {
     });
   }
 
-  async function updateRowFieldOptionColor(fieldId: string, optionId: string, color: string) {
-    const rp = state.activeRowPage;
-    if (!rp) return;
-    const bundle = cache.getBundle(rp.databaseId);
-    const field = bundle?.schema.fields.find((item) => item.id === fieldId);
-    if (!field?.options) return;
-    const options = field.options.map((option) => (option.id === optionId ? { ...option, color } : option));
-    await updateRowFieldOptions(fieldId, options);
-  }
-
   // ── derive view-model from cache + state ─────────────────────────────
 
   const activeBundle: DatabaseBundle | undefined = state.activeDatabaseId
@@ -1514,6 +1725,8 @@ function AppContent() {
 
   const activeRow: DatabaseRecord | undefined =
     state.activeRowPage && activeRowBundle ? lookupRow(activeRowBundle, state.activeRowPage.rowId) : undefined;
+  const peekRowBundle = peekRowPage ? cache.getBundle(peekRowPage.ref.databaseId) : undefined;
+  const peekRow = peekRowPage && peekRowBundle ? lookupRow(peekRowBundle, peekRowPage.ref.rowId) : undefined;
 
   let content = <div className="empty-state">{t("app.empty")}</div>;
 
@@ -1521,6 +1734,8 @@ function AppContent() {
     content = <StartupLoadingScreen startup={startup} title={t("app.loading")} />;
   } else if (state.error) {
     content = <div className="empty-state error">{state.error}</div>;
+  } else if (state.activeItem?.type === "startup" && startupReport) {
+    content = <StartupPerformancePanel report={startupReport} />;
   } else if (state.activeItem?.type === "manage") {
     content = (
       <ManagementView
@@ -1547,7 +1762,7 @@ function AppContent() {
         databases={state.databases}
         pages={state.pages}
         onChange={savePage}
-        onRename={renamePage}
+        onRename={(title) => renamePage(activePageMeta.id, title)}
         onPickIcon={() => pickIconForPage(activePageMeta.id)}
         onPickCover={() => pickCoverForPage(activePageMeta.id)}
         onClearCover={() => clearCoverForPage(activePageMeta.id)}
@@ -1555,7 +1770,6 @@ function AppContent() {
         onSetFullWidth={(fullWidth) => updatePageProperties(activePageMeta.id, { fullWidth })}
         onSetSmallText={(smallText) => updatePageProperties(activePageMeta.id, { smallText })}
         onOpenInNewWindow={() => openItemInNewWindow({ type: "page", id: activePageMeta.id })}
-        onDuplicate={async () => { await duplicatePage(activePageMeta.id); }}
         onOpenEntity={openEntity}
         initialViewState={pageViewStatesRef.current.get(viewStateKey)}
         navigationAnchorPos={activeNavigationAnchor?.pos}
@@ -1574,7 +1788,6 @@ function AppContent() {
     );
   } else if (activeBundle) {
     const view = activeBundle.views[0];
-    const favorited = isFavorited(state.favorites, { type: "database", id: activeBundle.schema.id });
     content = (
       <DatabaseTable
         bundle={activeBundle}
@@ -1587,8 +1800,6 @@ function AppContent() {
         onCommitCoverOffset={(offset) => updateDatabaseCoverOffset(activeBundle.schema.id, offset)}
         onUpdateTags={(tags) => updateDatabaseTags(activeBundle.schema.id, tags)}
         onOpenInNewWindow={() => openItemInNewWindow({ type: "database", id: activeBundle.schema.id })}
-        favorited={favorited}
-        onToggleFavorite={toggleFavoriteCurrent}
       />
     );
   } else if (state.activeRowPage && activeRowBundle && activeRow) {
@@ -1629,7 +1840,7 @@ function AppContent() {
           </button>
           <span className="row-page-breadcrumb-sep">/</span>
           <span className="row-page-breadcrumb-current" title={String(activeRow.title ?? "")}>
-            <EntityIcon kind="row_page" icon={rowIcon || rowMeta?.icon} size={14} />
+            <EntityIcon kind="row_page" icon={rowIcon || undefined} size={14} />
             <span>{String(activeRow.title ?? "") || t("rowPage.untitled")}</span>
           </span>
         </div>
@@ -1640,9 +1851,8 @@ function AppContent() {
           page={page}
           databases={state.databases}
           pages={state.pages}
-          entityKind="row"
           onChange={saveRowPageBody}
-          onRename={renameRowPage}
+          onRename={(title) => renameRowPage(rp.databaseId, rp.rowId, title)}
           onPickCover={() => pickCoverForRow(rp.databaseId, rp.rowId)}
           onClearCover={() => clearCoverForRow(rp.databaseId, rp.rowId)}
         onCommitCoverOffset={(offset) => updateRowCoverOffset(rp.databaseId, rp.rowId, offset)}
@@ -1673,7 +1883,6 @@ function AppContent() {
               onUpdateField={updateRowField}
               onUpdateFieldSettings={updateRowFieldSettings}
               onUpdateFieldOptions={updateRowFieldOptions}
-              onUpdateFieldOptionColor={updateRowFieldOptionColor}
               onOpenEntityRef={openEntity}
               onSearchPropertyValue={openSearch}
             />
@@ -1688,6 +1897,7 @@ function AppContent() {
     selectDatabase,
     openManage,
     openRowPage,
+    openRowPageInNewWindow: (databaseId, rowId) => openItemInNewWindow({ type: "row_page", databaseId, rowId }),
     openRowPageByFile,
     createPage,
     duplicatePage,
@@ -1703,9 +1913,11 @@ function AppContent() {
     toggleEmbedSourceVisibility: () => setShowEmbedSource(!showEmbedSource),
     goBack,
     goForward,
-    canBack: history.index > 0,
-    canForward: history.index < history.stack.length - 1,
-    backLabel: history.index > 0
+    canBack: Boolean(peekRowPage) || history.index > 0,
+    canForward: !peekRowPage && history.index < history.stack.length - 1,
+    backLabel: peekRowPage
+      ? "Close row peek"
+      : history.index > 0
       ? historyItemLabel(history.stack[history.index - 1], state, cache.getBundle)
       : undefined,
     forwardLabel: history.index < history.stack.length - 1
@@ -1727,9 +1939,66 @@ function AppContent() {
         onMoveTabToNewWindow={moveTabToNewWindow}
         sidebarSettingsOpenRequest={sidebarSettingsOpenRequest}
       >
-        {content}
+        <Suspense fallback={<div className="content-loading" aria-busy="true" />}>
+          {content}
+        </Suspense>
       </AppShell>
-      {searchOpen && (
+      <Suspense fallback={null}>
+        {peekRowPage && peekRowBundle && peekRow && (() => {
+        const rp = peekRowPage.ref;
+        const viewStateKey = editorViewStateKey({ type: "row_page", databaseId: rp.databaseId, rowId: rp.rowId });
+        const rowCoverOffset = Number(peekRow.cover_offset ?? 50);
+        const page: PageDocument = {
+          meta: {
+            ...(rp.meta ?? {}),
+            id: rp.rowId,
+            title: String(peekRow.title ?? ""),
+            created_time: String(peekRow.created_time ?? ""),
+            updated_time: String(peekRow.updated_time ?? ""),
+            icon: String(peekRow.row_icon ?? "") || rp.meta?.icon || undefined,
+            cover: String(peekRow.cover ?? "") || rp.meta?.cover || undefined,
+            coverOffset: Number.isFinite(rowCoverOffset) ? rowCoverOffset : undefined,
+            fullWidth: !!rp.fullWidth
+          },
+          markdown: rp.markdown
+        };
+        return <div className={`row-page-peek-backdrop ${peekRowPage.mode}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeRowPagePeek(); }}>
+          <section className="row-page-peek" role="dialog" aria-modal="true" aria-label={`Row page ${String(peekRow.title ?? "Untitled")}`}>
+            <header className="row-page-peek-toolbar">
+              <strong>{String(peekRow.title ?? "") || t("rowPage.untitled")}</strong>
+              <span />
+              <button type="button" onClick={() => { closeRowPagePeek(); void openRowPage(rp.databaseId, rp.rowId, { pageOpenMode: "full_page" }); }}>Open as full page</button>
+              <button type="button" onClick={() => openItemInNewWindow({ type: "row_page", databaseId: rp.databaseId, rowId: rp.rowId })}>Open in new window</button>
+              <button type="button" aria-label="Close peek" onClick={closeRowPagePeek}>×</button>
+            </header>
+            <div className="row-page-peek-scroll">
+              <PageEditor
+                key={viewStateKey}
+                ref={activePageEditorRef}
+                viewStateKey={viewStateKey}
+                page={page}
+                databases={state.databases}
+                pages={state.pages}
+                onChange={saveRowPageBody}
+                onRename={(title) => renameRowPage(rp.databaseId, rp.rowId, title)}
+                onPickCover={() => pickCoverForRow(rp.databaseId, rp.rowId)}
+                onClearCover={() => clearCoverForRow(rp.databaseId, rp.rowId)}
+                onCommitCoverOffset={(offset) => updateRowCoverOffset(rp.databaseId, rp.rowId, offset)}
+                onSetFullWidth={(fullWidth) => updateRowPageFullWidth(rp.databaseId, rp.rowId, fullWidth)}
+                onSetSmallText={(smallText) => updateRowPageSmallText(rp.databaseId, rp.rowId, smallText)}
+                onOpenInNewWindow={() => openItemInNewWindow({ type: "row_page", databaseId: rp.databaseId, rowId: rp.rowId })}
+                onOpenEntity={openEntity}
+                initialViewState={pageViewStatesRef.current.get(viewStateKey)}
+                onViewStateChange={(viewState) => rememberPageViewState(viewStateKey, viewState)}
+                favorited={isFavorited(state.favorites, { type: "row_page", databaseId: rp.databaseId, rowId: rp.rowId })}
+                onToggleFavorite={toggleFavoriteCurrent}
+                propertiesSlot={<RowPageProperties schema={peekRowBundle.schema} record={peekRow} databases={state.databases} loadDatabase={cache.loadBundle} onUpdateField={updateRowField} onUpdateFieldSettings={updateRowFieldSettings} onUpdateFieldOptions={updateRowFieldOptions} onOpenEntityRef={openEntity} onSearchPropertyValue={openSearch} />}
+              />
+            </div>
+          </section>
+        </div>;
+        })()}
+        {searchOpen && (
         <GlobalSearchPanel
           pages={state.pages}
           databases={state.databases}
@@ -1737,11 +2006,11 @@ function AppContent() {
           initialPattern={searchInitialPattern}
           onClose={() => setSearchOpen(false)}
         />
-      )}
-      {searchAiOpen && (
+        )}
+        {searchAiOpen && (
         <SearchAiSurface onClose={() => setSearchAiOpen(false)} />
-      )}
-      {templatePickerOpen && (
+        )}
+        {templatePickerOpen && (
         <DatabaseTemplatePicker
           onClose={() => setTemplatePickerOpen(false)}
           onPick={(tpl) => {
@@ -1749,15 +2018,16 @@ function AppContent() {
             void createDatabaseFromInput(tpl.buildInput());
           }}
         />
-      )}
-      {rowTemplateDialogOpen && activeRowBundle && (
+        )}
+        {rowTemplateDialogOpen && activeRowBundle && (
         <RowTemplateDialog
           schema={activeRowBundle.schema}
           onClose={() => setRowTemplateDialogOpen(false)}
           onSave={(template) => cache.saveTemplate({ databaseId: activeRowBundle.schema.id, template }).then(() => undefined)}
           onDelete={(templateId) => cache.deleteTemplate({ databaseId: activeRowBundle.schema.id, templateId }).then(() => undefined)}
         />
-      )}
+        )}
+      </Suspense>
       <NotificationStack notifications={notifications} onDismiss={dismissNotification} />
     </LotionActionsProvider>
   );
@@ -1847,6 +2117,10 @@ function rowPageActiveItem(databaseId: string, rowId: string, title: string): Ex
     : { type: "row_page", databaseId, rowId };
 }
 
+function rowIconFromRecord(record: DatabaseRecord): string | undefined {
+  return String(record.row_icon ?? "").trim() || undefined;
+}
+
 function historyItemLabel(
   item: ActiveItem,
   state: AppState,
@@ -1866,6 +2140,7 @@ function historyItemLabel(
       item.rowId;
     return databaseName ? `${databaseName}/${rowTitle}` : rowTitle;
   }
+  if (item.type === "startup") return "Startup performance";
   if (item.kind === "databases") return "管理数据库";
   if (item.kind === "pages") return "所有页面";
   if (item.kind === "plugins") return "插件";
@@ -1956,8 +2231,9 @@ function sanitizePersistedTabs(
   pages: PageMeta[],
   databases: DatabaseSummary[]
 ): PersistedTabs | null {
+  const activeTabId = persisted.tabs[persisted.activeTabIndex]?.id;
   const tabs = persisted.tabs
-    .filter((tab) => tab && typeof tab.id === "string")
+    .filter((tab) => tab && typeof tab.id === "string" && tab.item?.type !== "startup")
     .map((tab) => (
       isActiveItemAvailable(tab.item, pages, databases)
         ? tab
@@ -1965,7 +2241,8 @@ function sanitizePersistedTabs(
     ));
   if (tabs.length === 0) return null;
 
-  const activeTabIndex = Math.max(0, Math.min(persisted.activeTabIndex, tabs.length - 1));
+  const restoredActiveIndex = tabs.findIndex((tab) => tab.id === activeTabId);
+  const activeTabIndex = restoredActiveIndex >= 0 ? restoredActiveIndex : 0;
   return { tabs, activeTabIndex };
 }
 
@@ -1979,26 +2256,56 @@ function isActiveItemAvailable(
   if (item.type === "database") return databases.some((database) => database.id === item.id);
   if (item.type === "row_page") return databases.some((database) => database.id === item.databaseId);
   if (item.type === "manage") return true;
+  if (item.type === "startup") return true;
   return false;
 }
 
 function writePersistedTabs(state: AppState): void {
   try {
+    const activeTab = state.tabs[state.activeTabIndex];
+    const activeTabId = activeTab?.item?.type === "startup"
+      ? activeTab.item.returnTabId
+      : activeTab?.id;
+    const tabs = state.tabs.filter((tab) => tab.item?.type !== "startup");
+    if (tabs.length === 0) tabs.push({ id: `tab_${Date.now()}` });
+    const restoredActiveIndex = tabs.findIndex((tab) => tab.id === activeTabId);
+    const activeTabIndex = restoredActiveIndex >= 0 ? restoredActiveIndex : 0;
     window.localStorage.setItem(
       TABS_STORAGE_KEY,
-      JSON.stringify({ tabs: state.tabs, activeTabIndex: state.activeTabIndex })
+      JSON.stringify({ tabs, activeTabIndex })
     );
   } catch {
     /* localStorage may be unavailable or full — drop silently. */
   }
 }
 
-function replaceActiveTabItem(state: AppState, item: ActiveItem | undefined): AppState["tabs"] {
+function activateItemInTabs(
+  state: AppState,
+  item: ActiveItem | undefined
+): Pick<AppState, "tabs" | "activeTabIndex"> {
   const tabs = state.tabs.slice();
   const idx = state.activeTabIndex;
-  if (idx < 0 || idx >= tabs.length) return tabs;
-  tabs[idx] = { ...tabs[idx], item };
-  return tabs;
+  if (idx < 0 || idx >= tabs.length) return { tabs, activeTabIndex: idx };
+  const activeTab = tabs[idx];
+  if (activeTab.item?.type !== "startup") {
+    tabs[idx] = { ...activeTab, item };
+    return { tabs, activeTabIndex: idx };
+  }
+
+  const returnTabId = activeTab.item.returnTabId;
+  const requestedReturnIndex = returnTabId
+    ? tabs.findIndex((tab) => tab.id === returnTabId)
+    : -1;
+  const returnIndex = requestedReturnIndex >= 0
+    ? requestedReturnIndex
+    : tabs.findIndex((tab) => tab.item?.type !== "startup");
+  if (returnIndex >= 0) {
+    tabs[returnIndex] = { ...tabs[returnIndex], item };
+    return { tabs, activeTabIndex: returnIndex };
+  }
+
+  tabs.splice(idx, 0, { id: `tab_${Date.now()}_startup_return`, item });
+  return { tabs, activeTabIndex: idx };
 }
 
 function editorViewStateKey(item: Extract<ActiveItem, { type: "page" | "row_page" }>): string {
@@ -2026,7 +2333,6 @@ function isFavorited(list: FavoriteItem[], item: FavoriteItem): boolean {
   return list.some((f) => {
     if (f.type !== item.type) return false;
     if (f.type === "page" && item.type === "page") return f.id === item.id;
-    if (f.type === "database" && item.type === "database") return f.id === item.id;
     if (f.type === "row_page" && item.type === "row_page") {
       return f.databaseId === item.databaseId && f.rowId === item.rowId;
     }

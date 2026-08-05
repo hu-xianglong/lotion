@@ -214,6 +214,11 @@ async function runDatabaseTemplateSmoke(page, fixture, viewport, artifactRoot) {
 }
 
 async function navigateToDatabase(page, databaseId) {
+  const closePeek = page.locator('.row-page-peek-toolbar button[aria-label="Close peek"]');
+  if (await closePeek.count()) {
+    await closePeek.click();
+    await page.locator(".row-page-peek").waitFor({ state: "detached", timeout: 8_000 });
+  }
   await page.evaluate((targetDatabaseId) => {
     window.dispatchEvent(new CustomEvent("lotion:open-entity", {
       detail: { kind: "database", entityId: targetDatabaseId }
@@ -284,8 +289,15 @@ async function assertAppliedTemplate(page, {
   await page.getByText(expectedStatus).first().waitFor({ timeout: 8_000 });
 
   const activeTabText = (await page.locator(".tab.active").first().textContent({ timeout: 5_000 }))?.trim() ?? "";
-  if (!activeTabText.includes(expectedTitle)) {
-    throw new Error(`Active tab does not include templated row title: ${activeTabText}`);
+  const rowPeek = page.getByRole("dialog", { name: `Row page ${expectedTitle}` });
+  const openedInPeek = await rowPeek.count() > 0;
+  if (openedInPeek) {
+    const peekTitle = (await rowPeek.locator(".row-page-peek-toolbar > strong").textContent())?.trim() ?? "";
+    if (peekTitle !== expectedTitle) {
+      throw new Error(`Row-page peek does not show templated row title: ${peekTitle}`);
+    }
+  } else if (!activeTabText.includes(expectedTitle)) {
+    throw new Error(`Full-page active tab does not include templated row title: ${activeTabText}`);
   }
   if (activeTabText.includes(persisted.rowId)) {
     throw new Error(`Active tab leaked row id after template creation: ${activeTabText}`);
@@ -297,7 +309,8 @@ async function assertAppliedTemplate(page, {
     status: persisted.status,
     score: persisted.score,
     fullWidth: persisted.fullWidth,
-    activeTabText
+    activeTabText,
+    openSurface: openedInPeek ? "peek" : "full_page"
   };
 }
 
@@ -350,9 +363,40 @@ async function createTemplateThroughDialog(page, fixture) {
   await page.locator(".row-template-dialog").waitFor({ state: "detached", timeout: 8_000 });
 }
 
-async function setDefaultTemplateThroughViewSettings(page, fixture) {
+async function closeMenuSheetIfPresent(page) {
+  const existingSheet = page.locator(".menu-sheet-backdrop");
+  if (await existingSheet.count()) {
+    await page.keyboard.press("Escape");
+    await existingSheet.waitFor({ state: "detached", timeout: 8_000 });
+  }
+}
+
+async function activateViewTab(page, viewName) {
+  await closeMenuSheetIfPresent(page);
+  const tab = page.locator(".view-tab").filter({ hasText: viewName });
+  if (await tab.count()) {
+    await tab.click();
+  } else {
+    await page.locator(".view-tabs-more").click();
+    await page.getByRole("menu", { name: "More views" }).getByRole("menuitem", { name: viewName }).click();
+  }
+  await page.locator(".view-tab.active").filter({ hasText: viewName }).waitFor({ timeout: 8_000 });
+}
+
+async function openViewSettingsDialog(page, fixture) {
+  await closeMenuSheetIfPresent(page);
   await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
+  const settingsMenu = page.getByRole("menu", { name: "Database settings" });
+  await settingsMenu.waitFor({ timeout: 8_000 });
+  await settingsMenu.getByRole("menuitem", { name: fixture.viewSettingsLabelPattern }).click();
+  const viewSettingsMenu = page.getByRole("menu", { name: "View settings menu" });
+  await viewSettingsMenu.waitFor({ timeout: 8_000 });
+  await viewSettingsMenu.getByRole("menuitem", { name: "Layout" }).click();
   await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+}
+
+async function setDefaultTemplateThroughViewSettings(page, fixture) {
+  await openViewSettingsDialog(page, fixture);
   await page
     .locator(".view-dialog label.form-row")
     .filter({ hasText: fixture.defaultTemplateLabelPattern })
@@ -399,7 +443,13 @@ async function assertEmptyPromptTemplate(page, fixture) {
     { timeout: 8_000 }
   );
   await page.getByText(fixture.uiTemplateBodyMarker).first().waitFor({ timeout: 8_000 });
-  await page.getByText(fixture.uiTemplateStatus).first().waitFor({ timeout: 8_000 });
+  const detailsToggle = page.getByRole("button", { name: "Expand page details" });
+  if (await detailsToggle.count()) await detailsToggle.click();
+  await page
+    .getByRole("region", { name: "Page details" })
+    .locator(".option-pill")
+    .filter({ hasText: fixture.uiTemplateStatus })
+    .waitFor({ timeout: 8_000 });
   await pollPageValue(
     page,
     async ({ databaseId, targetRowId, title, status, score, bodyMarker }) => {
@@ -521,7 +571,12 @@ async function assertCreateAndRenameView(page, fixture) {
   if (!sourceView) throw new Error("Database fixture has no source view to clone.");
 
   await page.locator(".view-tab-add").click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  const createDialog = page.getByRole("dialog", { name: "Create view" });
+  await createDialog.waitFor({ timeout: 8_000 });
+  await createDialog.locator("label.form-row").filter({ hasText: fixture.viewNameLabelPattern }).locator("input").fill(fixture.createdViewName);
+  await createDialog.locator("label").filter({ hasText: /duplicate/i }).locator("input").check();
+  await createDialog.getByRole("button", { name: /create view/i }).click();
+  await createDialog.waitFor({ state: "detached", timeout: 8_000 });
   const createdBeforeRename = await pollPageValue(
     page,
     async ({ databaseId, existingViewIds }) => {
@@ -543,15 +598,6 @@ async function assertCreateAndRenameView(page, fixture) {
   if (!createdBeforeRename?.id) {
     throw new Error("View tab + did not create a new view.");
   }
-
-  const nameInput = page
-    .locator(".view-dialog label.form-row")
-    .filter({ hasText: fixture.viewNameLabelPattern })
-    .locator("input")
-    .first();
-  await nameInput.fill(fixture.createdViewName);
-  await page.getByRole("button", { name: fixture.saveViewLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ state: "detached", timeout: 8_000 });
 
   const savedView = await pollPageValue(
     page,
@@ -602,10 +648,8 @@ async function assertCreateAndRenameView(page, fixture) {
 }
 
 async function assertSetCreatedViewAsDefault(page, fixture, createdView) {
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
-  await page.locator(".view-tab.active").filter({ hasText: createdView.viewName }).waitFor({ timeout: 8_000 });
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  await activateViewTab(page, createdView.viewName);
+  await openViewSettingsDialog(page, fixture);
   await page.getByRole("button", { name: fixture.setDefaultViewLabelPattern }).click();
   await page.locator(".view-dialog").waitFor({ state: "detached", timeout: 8_000 });
 
@@ -643,13 +687,15 @@ async function assertSetCreatedViewAsDefault(page, fixture, createdView) {
 async function assertColumnSummarySelection(page, fixture) {
   const summarySelect = page.locator('select[aria-label="Score summary"]').first();
   await summarySelect.waitFor({ timeout: 8_000 });
+  const activeViewId = await page.locator(".view-tab.active").first().getAttribute("data-view-id");
+  if (!activeViewId) throw new Error("Column summary smoke could not resolve the active view id.");
   await summarySelect.selectOption("sum");
 
   const savedState = await pollPageValue(
     page,
-    async (databaseId) => {
+    async ({ databaseId, viewId }) => {
       const bundle = await window.lotion.databases.get(databaseId);
-      const view = bundle.views.find((item) => item.id === bundle.schema.defaultViewId) ?? bundle.views[0];
+      const view = bundle.views.find((item) => item.id === viewId);
       const numbers = bundle.records
         .map((record) => Number(record.score))
         .filter((value) => Number.isFinite(value));
@@ -658,7 +704,7 @@ async function assertColumnSummarySelection(page, fixture) {
         expectedValue: String(numbers.reduce((sum, value) => sum + value, 0))
       };
     },
-    fixture.databaseId,
+    { databaseId: fixture.databaseId, viewId: activeViewId },
     (value) => value?.summaryType === "sum" && value.expectedValue !== "0",
     "column summary persistence"
   );
@@ -690,8 +736,7 @@ async function assertColumnSummarySelection(page, fixture) {
 }
 
 async function assertViewSortFilterSettings(page, fixture) {
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  await openViewSettingsDialog(page, fixture);
   const dialog = page.locator(".view-dialog");
   await dialog
     .locator("label.form-row")
@@ -789,10 +834,10 @@ async function assertToolbarSortFilterPopovers(page, fixture) {
 
   await page.locator('.view-tab-actions .toolbar-icon[aria-label="Filter"]').first().click();
   await page.locator(".filter-popover").waitFor({ timeout: 8_000 });
-  await page.locator(".filter-popover .popover-add").click();
+  await page.locator(".filter-popover").getByRole("button", { name: /add condition/i }).click();
   const filterRow = page.locator(".filter-popover .filter-row").first();
   await filterRow.locator("select").first().selectOption({ label: "Status" });
-  await filterRow.locator("input").fill(fixture.toolbarFilterStatusValue);
+  await filterRow.locator("select").nth(2).selectOption({ label: fixture.toolbarFilterStatusValue });
   await pollPageValue(
     page,
     async ({ databaseId, filterValue }) => {
@@ -818,8 +863,8 @@ async function assertToolbarSortFilterPopovers(page, fixture) {
 
   await page.locator('.view-tab-actions .toolbar-icon[aria-label="Sort"]').first().click();
   await page.locator(".sort-popover").waitFor({ timeout: 8_000 });
-  await page.locator(".sort-popover .popover-add").click();
-  const sortRow = page.locator(".sort-popover .sort-row").first();
+  await page.locator(".sort-popover").getByRole("button", { name: /add sort/i }).click();
+  const sortRow = page.locator(".sort-popover .sort-rule").first();
   await sortRow.locator("select").nth(0).selectOption({ label: "Score" });
   await sortRow.locator("select").nth(1).selectOption("desc");
   const savedState = await pollPageValue(
@@ -928,8 +973,7 @@ async function assertToolbarFilteredSortedTable(page, fixture) {
 }
 
 async function assertFieldVisibilityAndOrderSettings(page, fixture) {
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  await openViewSettingsDialog(page, fixture);
   const dialog = page.locator(".view-dialog");
   const notesRow = dialog.locator(".view-field-row").filter({ hasText: "Notes" }).first();
   await notesRow.locator('input[type="checkbox"]').uncheck();
@@ -1204,8 +1248,7 @@ async function assertOptionMenuWithinViewport(page) {
 }
 
 async function assertViewTypeSwitch(page, fixture, createdView, viewport, artifactRoot) {
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
-  await page.locator(".view-tab.active").filter({ hasText: createdView.viewName }).waitFor({ timeout: 8_000 });
+  await activateViewTab(page, createdView.viewName);
   const visitedTypes = [];
   visitedTypes.push((await switchActiveViewType(page, fixture, createdView, "list", ".list-view-body")).viewType);
   const listRowIcon = await assertListRowIcon(page, fixture);
@@ -1281,8 +1324,7 @@ async function assertViewTypeSwitch(page, fixture, createdView, viewport, artifa
   await waitForDatabaseService(page, fixture.databaseId);
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
-  await page.locator(".view-tab.active").filter({ hasText: createdView.viewName }).waitFor({ timeout: 8_000 });
+  await activateViewTab(page, createdView.viewName);
   await page.locator(".list-view-body").waitFor({ timeout: 8_000 });
 
   return {
@@ -1406,7 +1448,7 @@ async function assertListRowOpens(page, fixture, createdView) {
   const title = await page.locator(".title-input").inputValue({ timeout: 5_000 });
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
+  await activateViewTab(page, createdView.viewName);
   await page.locator(".list-view-body").waitFor({ timeout: 8_000 });
   return title;
 }
@@ -1491,7 +1533,7 @@ async function assertGalleryCardOpens(page, fixture, createdView) {
   const title = await page.locator(".title-input").inputValue({ timeout: 5_000 });
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
+  await activateViewTab(page, createdView.viewName);
   await page.locator(".gallery-body").waitFor({ timeout: 8_000 });
   return title;
 }
@@ -1503,11 +1545,11 @@ async function assertCalendarDateFieldRows(page, fixture) {
       const rows = Array.from(document.querySelectorAll(".calendar-cell-row"));
       const title = rows
         .map((row) => row.textContent?.trim() ?? "")
-        .find((text) => text === expectedTitle) || "";
+        .find((text) => text.includes(expectedTitle)) || "";
       return {
         titles: rows.map((row) => row.textContent?.trim() ?? "").filter(Boolean).slice(0, 8),
-        title,
-        ready: title === expectedTitle
+        title: title ? expectedTitle : "",
+        ready: title.includes(expectedTitle)
       };
     },
     fixture.templateRowTitle,
@@ -1569,7 +1611,7 @@ async function assertCalendarRowOpens(page, fixture, createdView) {
   const title = await page.locator(".title-input").inputValue({ timeout: 5_000 });
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
+  await activateViewTab(page, createdView.viewName);
   await page.locator(".calendar-body").waitFor({ timeout: 8_000 });
   return title;
 }
@@ -1693,7 +1735,7 @@ async function assertCalendarOverflowRowOpens(page, fixture, createdView) {
   const title = await page.locator(".title-input").inputValue({ timeout: 5_000 });
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: createdView.viewName }).click();
+  await activateViewTab(page, createdView.viewName);
   await page.locator(".calendar-body").waitFor({ timeout: 8_000 });
   return title;
 }
@@ -1734,6 +1776,7 @@ async function waitForCalendarOverflowCollapsed(page, expectedDay, label) {
 }
 
 async function assertCalendarMonthNavigation(page, fixture) {
+  await closeMenuSheetIfPresent(page);
   const label = page.locator(".calendar-month-label").first();
   const initialLabel = (await label.textContent({ timeout: 8_000 }))?.trim() ?? "";
   await page.locator(".calendar-nav").nth(1).click();
@@ -1742,7 +1785,7 @@ async function assertCalendarMonthNavigation(page, fixture) {
       const currentLabel = document.querySelector(".calendar-month-label")?.textContent?.trim() ?? "";
       const titles = Array.from(document.querySelectorAll(".calendar-cell-row"))
         .map((row) => row.textContent?.trim() ?? "");
-      return currentLabel !== previousLabel && !titles.includes(title);
+      return currentLabel !== previousLabel && !titles.some((text) => text.includes(title));
     },
     {
       previousLabel: initialLabel,
@@ -1757,11 +1800,11 @@ async function assertCalendarMonthNavigation(page, fixture) {
       const currentLabel = document.querySelector(".calendar-month-label")?.textContent?.trim() ?? "";
       const title = Array.from(document.querySelectorAll(".calendar-cell-row"))
         .map((row) => row.textContent?.trim() ?? "")
-        .find((text) => text === expectedTitle) || "";
+        .find((text) => text.includes(expectedTitle)) || "";
       return {
         label: currentLabel,
-        title,
-        ready: currentLabel === expectedLabel && title === expectedTitle
+        title: title ? expectedTitle : "",
+        ready: currentLabel === expectedLabel && title.includes(expectedTitle)
       };
     },
     {
@@ -1774,6 +1817,7 @@ async function assertCalendarMonthNavigation(page, fixture) {
 }
 
 async function assertCalendarTodayButton(page, fixture) {
+  await closeMenuSheetIfPresent(page);
   const label = page.locator(".calendar-month-label").first();
   const currentLabel = (await label.textContent({ timeout: 8_000 }))?.trim() ?? "";
   await page.locator(".calendar-nav").nth(1).click();
@@ -1792,11 +1836,11 @@ async function assertCalendarTodayButton(page, fixture) {
       const labelText = document.querySelector(".calendar-month-label")?.textContent?.trim() ?? "";
       const title = Array.from(document.querySelectorAll(".calendar-cell-row"))
         .map((row) => row.textContent?.trim() ?? "")
-        .find((text) => text === expectedTitle) || "";
+        .find((text) => text.includes(expectedTitle)) || "";
       return {
         label: labelText,
-        title,
-        ready: labelText === expectedLabel && title === expectedTitle
+        title: title ? expectedTitle : "",
+        ready: labelText === expectedLabel && title.includes(expectedTitle)
       };
     },
     {
@@ -1827,8 +1871,7 @@ async function assertCalendarTodayCell(page) {
 }
 
 async function switchActiveViewType(page, fixture, createdView, viewType, bodySelector) {
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  await openViewSettingsDialog(page, fixture);
   const dialog = page.locator(".view-dialog");
   await page
     .locator(".view-dialog label.form-row")
@@ -1885,8 +1928,7 @@ async function assertDuplicateView(page, fixture, sourceView) {
   const persistedSource = before.views.find((view) => String(view.id) === sourceView.viewId);
   if (!persistedSource) throw new Error(`Source view disappeared before duplicate: ${sourceView.viewId}`);
 
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  await openViewSettingsDialog(page, fixture);
   await page.getByRole("button", { name: fixture.duplicateViewLabelPattern }).click();
   await page.locator(".view-dialog").waitFor({ state: "detached", timeout: 8_000 });
 
@@ -1967,8 +2009,7 @@ async function assertDuplicateView(page, fixture, sourceView) {
 }
 
 async function assertDuplicateViewSpecificSettings(page, fixture, sourceView) {
-  await page.locator(".view-tab").filter({ hasText: sourceView.viewName }).click();
-  await page.locator(".view-tab.active").filter({ hasText: sourceView.viewName }).waitFor({ timeout: 8_000 });
+  await activateViewTab(page, sourceView.viewName);
   await switchActiveViewType(page, fixture, sourceView, "gallery", ".gallery-body");
   const galleryDuplicate = await assertDuplicateView(page, fixture, sourceView);
   if (galleryDuplicate.coverFieldId !== fixture.galleryCoverFieldId) {
@@ -1976,8 +2017,7 @@ async function assertDuplicateViewSpecificSettings(page, fixture, sourceView) {
   }
   await assertDeleteCreatedView(page, fixture, galleryDuplicate);
 
-  await page.locator(".view-tab").filter({ hasText: sourceView.viewName }).click();
-  await page.locator(".view-tab.active").filter({ hasText: sourceView.viewName }).waitFor({ timeout: 8_000 });
+  await activateViewTab(page, sourceView.viewName);
   await switchActiveViewType(page, fixture, sourceView, "calendar", ".calendar-body");
   const calendarDuplicate = await assertDuplicateView(page, fixture, sourceView);
   if (calendarDuplicate.dateFieldId !== fixture.calendarDateFieldId) {
@@ -1985,8 +2025,7 @@ async function assertDuplicateViewSpecificSettings(page, fixture, sourceView) {
   }
   await assertDeleteCreatedView(page, fixture, calendarDuplicate);
 
-  await page.locator(".view-tab").filter({ hasText: sourceView.viewName }).click();
-  await page.locator(".view-tab.active").filter({ hasText: sourceView.viewName }).waitFor({ timeout: 8_000 });
+  await activateViewTab(page, sourceView.viewName);
   await switchActiveViewType(page, fixture, sourceView, "list", ".list-view-body");
 
   return {
@@ -1996,8 +2035,7 @@ async function assertDuplicateViewSpecificSettings(page, fixture, sourceView) {
 }
 
 async function assertDeleteCreatedView(page, fixture, createdView) {
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  await openViewSettingsDialog(page, fixture);
   page.once("dialog", (dialog) => {
     void dialog.accept();
   });
@@ -2043,13 +2081,16 @@ async function assertDeleteCreatedView(page, fixture, createdView) {
 }
 
 async function assertLastViewDeleteDisabled(page, fixture) {
-  await page.getByRole("button", { name: fixture.viewSettingsLabelPattern }).click();
-  await page.locator(".view-dialog").waitFor({ timeout: 8_000 });
+  const viewCount = await page.evaluate(async (databaseId) => {
+    const bundle = await window.lotion.databases.get(databaseId);
+    return bundle.views.length;
+  }, fixture.databaseId);
+  await openViewSettingsDialog(page, fixture);
   const deleteDisabled = await page.locator(".view-dialog .danger-button").evaluate((button) => {
     return button instanceof HTMLButtonElement && button.disabled;
   });
-  if (!deleteDisabled) {
-    throw new Error("Final remaining view delete button is not disabled.");
+  if (deleteDisabled !== (viewCount === 1)) {
+    throw new Error(`View delete guard did not match remaining view count (${viewCount}): disabled=${deleteDisabled}.`);
   }
   const defaultDisabled = await page
     .getByRole("button", { name: fixture.defaultViewButtonLabelPattern })
@@ -2059,7 +2100,7 @@ async function assertLastViewDeleteDisabled(page, fixture) {
   }
   await page.getByRole("button", { name: fixture.closeLabelPattern }).click();
   await page.locator(".view-dialog").waitFor({ state: "detached", timeout: 8_000 });
-  return { deleteDisabled, defaultDisabled };
+  return { viewCount, deleteDisabled, defaultDisabled };
 }
 
 async function assertListEmptyState(page, fixture) {
@@ -2087,7 +2128,7 @@ async function assertListEmptyState(page, fixture) {
   await waitForDatabaseService(page, fixture.databaseId);
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: view.name }).click();
+  await activateViewTab(page, view.name);
   await page.locator(".list-view-body").waitFor({ timeout: 8_000 });
   await page.locator(".list-view-empty").filter({ hasText: "No rows" }).waitFor({ timeout: 8_000 });
   const emptyText = (await page.locator(".list-view-empty").first().textContent({ timeout: 5_000 }))?.trim() ?? "";
@@ -2129,7 +2170,7 @@ async function assertListDateProperty(page, fixture) {
   await waitForDatabaseService(page, fixture.databaseId);
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: view.name }).click();
+  await activateViewTab(page, view.name);
   await page.locator(".list-view-body").waitFor({ timeout: 8_000 });
   const expectedDate = formatExpectedMonthDayYear(fixture.calendarDateValue);
   const property = await pollPageValue(
@@ -2193,7 +2234,7 @@ async function assertGalleryEmptyState(page, fixture) {
   await waitForDatabaseService(page, fixture.databaseId);
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: view.name }).click();
+  await activateViewTab(page, view.name);
   await page.locator(".gallery-body").waitFor({ timeout: 8_000 });
   await page.locator(".gallery-view-empty").filter({ hasText: "No rows" }).waitFor({ timeout: 8_000 });
   const emptyText = (await page.locator(".gallery-view-empty").first().textContent({ timeout: 5_000 }))?.trim() ?? "";
@@ -2236,7 +2277,7 @@ async function assertGalleryDateCaption(page, fixture) {
   await waitForDatabaseService(page, fixture.databaseId);
   await navigateToDatabase(page, fixture.databaseId);
   await page.waitForSelector(".database-table", { timeout: 8_000 });
-  await page.locator(".view-tab").filter({ hasText: view.name }).click();
+  await activateViewTab(page, view.name);
   await page.locator(".gallery-body").waitFor({ timeout: 8_000 });
   const expectedDate = formatExpectedMonthDayYear(fixture.calendarDateValue);
   const caption = await pollPageValue(

@@ -3,7 +3,9 @@ import type { DatabaseBundle } from "../../shared/types";
 import { useDatabaseCache } from "../context/database-cache";
 import { tagFromManageKind, type ActiveItem, type TabState } from "../state/app-store";
 import type { AppState } from "../state/app-store";
+import { useI18n } from "../lib/i18n";
 import { EntityIcon } from "./EntityIcon";
+import { PerformanceIcon } from "./Icons";
 
 interface TabStripProps {
   tabs: TabState[];
@@ -30,13 +32,15 @@ interface TabStripProps {
  */
 export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, onReorder, onMoveToNewWindow }: TabStripProps) {
   const cache = useDatabaseCache();
+  const { t } = useI18n();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   return (
-    <div className="tab-strip">
+    <div className="tab-strip" role="tablist" aria-label="Open pages">
       {tabs.map((tab, i) => {
         const active = i === activeIndex;
-        const label = labelFor(tab.item, state, cache.getBundle, active);
+        const startupTab = tab.item?.type === "startup";
+        const label = startupTab ? t("startup.tab") : labelFor(tab.item, state, cache.getBundle, active);
         const typeLabel = typeLabelFor(tab.item);
         const icon = iconFor(tab.item, state);
         const dragging = dragIndex === i;
@@ -45,14 +49,22 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
           <div
             key={tab.id}
             className={`tab${active ? " active" : ""}${dragging ? " dragging" : ""}${dropTarget ? " drop-target" : ""}`}
-            draggable
+            data-tab-kind={tab.item?.type ?? "blank"}
+            role="tab"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            draggable={!startupTab}
             onDragStart={(event) => {
+              if (startupTab) {
+                event.preventDefault();
+                return;
+              }
               event.dataTransfer.effectAllowed = "move";
               event.dataTransfer.setData("text/plain", String(i));
               setDragIndex(i);
             }}
             onDragOver={(event) => {
-              if (dragIndex === null || dragIndex === i) return;
+              if (startupTab || dragIndex === null || dragIndex === i) return;
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
               if (dropIndex !== i) setDropIndex(i);
@@ -72,8 +84,20 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
               setDropIndex(null);
             }}
             onClick={() => onSwitch(i)}
+            onKeyDown={(event) => {
+              let nextIndex: number | undefined;
+              if (event.key === "ArrowLeft") nextIndex = (i - 1 + tabs.length) % tabs.length;
+              if (event.key === "ArrowRight") nextIndex = (i + 1) % tabs.length;
+              if (event.key === "Home") nextIndex = 0;
+              if (event.key === "End") nextIndex = tabs.length - 1;
+              if (nextIndex === undefined) return;
+              event.preventDefault();
+              onSwitch(nextIndex);
+              const tabElements = event.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[role=tab]");
+              window.requestAnimationFrame(() => tabElements?.[nextIndex]?.focus());
+            }}
             onAuxClick={(event) => {
-              if (event.button === 1) {
+              if (event.button === 1 && !startupTab) {
                 event.preventDefault();
                 onClose(i);
               }
@@ -82,7 +106,7 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
           >
             {icon && <span className="tab-icon" aria-hidden="true">{icon}</span>}
             <span className="tab-label">{label}</span>
-            {tab.item && (
+            {tab.item && !startupTab && (
               <button
                 type="button"
                 className="tab-pop-out"
@@ -96,7 +120,7 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
                 ↗
               </button>
             )}
-            {tabs.length > 1 && (
+            {tabs.length > 1 && !startupTab && (
               <button
                 type="button"
                 className="tab-close"
@@ -104,6 +128,7 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
                   event.stopPropagation();
                   onClose(i);
                 }}
+                title="关闭标签页"
                 aria-label="Close tab"
               >
                 ×
@@ -112,7 +137,7 @@ export function TabStrip({ tabs, activeIndex, state, onSwitch, onClose, onNew, o
           </div>
         );
       })}
-      <button type="button" className="tab-add" onClick={onNew} aria-label="New tab">+</button>
+      <button type="button" className="tab-add" onClick={onNew} title="新建标签页" aria-label="New tab">+</button>
     </div>
   );
 }
@@ -192,6 +217,9 @@ function iconFor(item: ActiveItem | undefined, state: AppState) {
   }
   if (item.type === "row_page") {
     return <EntityIcon kind="row_page" size={15} />;
+  }
+  if (item.type === "startup") {
+    return <PerformanceIcon />;
   }
   return undefined;
 }

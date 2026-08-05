@@ -1,0 +1,34 @@
+{
+  "id": "view_created_time_desc",
+  "databaseId": "db_view_lab",
+  "name": "Created date desc",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "created_time",
+    "status",
+    "owner",
+    "rank"
+  ],
+  "fieldOrder": [
+    "title",
+    "created_time",
+    "status",
+    "owner",
+    "rank"
+  ],
+  "wrapFieldIds": [
+    "title",
+    "created_time",
+    "status",
+    "owner",
+    "rank"
+  ],
+  "sorts": [
+    {
+      "fieldId": "created_time",
+      "direction": "desc"
+    }
+  ],
+  "filters": []
+}

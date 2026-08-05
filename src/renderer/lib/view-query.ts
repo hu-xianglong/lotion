@@ -1,9 +1,6 @@
-import type { DatabaseBundle, DatabaseRecord, FieldSchema, RecordValue, TableView } from "../../shared/types";
-import { isDateLikeFieldType, parseDateTimeValue, parseDateValue } from "../../shared/date-values";
-
-// Construct the collator once — see notes on why this matters in
-// scripts/bench-view-query.mjs. Reused across every sort comparison.
-const collator = new Intl.Collator(undefined, { numeric: true });
+import type { DatabaseBundle, DatabaseRecord, FieldSchema, TableView } from "../../shared/types";
+import { evaluateFilterExpression, normalizeFilterExpression } from "../../shared/filter-expression";
+import { sortDatabaseRecords } from "../../shared/database-sort";
 
 export function getVisibleFields(bundle: DatabaseBundle, view: TableView): FieldSchema[] {
   const byId = new Map(bundle.schema.fields.map((field) => [field.id, field]));
@@ -22,29 +19,14 @@ export function getViewRecords(bundle: DatabaseBundle, view: TableView): Databas
   // own; sort would mutate in place, so we copy first when needed.
   let records: DatabaseRecord[] = bundle.records;
 
-  if (view.filters.length > 0) {
-    for (const filter of view.filters) {
-      records = records.filter((record) => matchesFilter(record[filter.fieldId], filter.operator, filter.value));
-    }
+  const filterExpression = normalizeFilterExpression(view.filterExpression, view.filters, bundle.schema.fields);
+  if (filterExpression.children.length > 0) {
+    records = records.filter((record) => evaluateFilterExpression(filterExpression, record, bundle.schema.fields));
   }
   const t1 = performance.now();
 
   if (view.sorts.length > 0) {
-    if (records === bundle.records) records = [...records];
-    const fieldsById = new Map(bundle.schema.fields.map((field) => [field.id, field]));
-    for (const sort of [...view.sorts].reverse()) {
-      const field = fieldsById.get(sort.fieldId);
-      const dateCache = field && isDateLikeFieldType(field.type)
-        ? new Map<string, number | null>()
-        : undefined;
-      records.sort((a, b) => compareValues(
-        a[sort.fieldId],
-        b[sort.fieldId],
-        sort.direction,
-        field,
-        dateCache
-      ));
-    }
+    records = sortDatabaseRecords(records, view.sorts, bundle.schema.fields);
   }
   const t2 = performance.now();
 
@@ -55,62 +37,4 @@ export function getViewRecords(bundle: DatabaseBundle, view: TableView): Databas
   );
 
   return records;
-}
-
-function matchesFilter(value: RecordValue, operator: string, expected: RecordValue): boolean {
-  if (!expected && operator !== "checked") return true;
-  if (operator === "is") return String(value) === String(expected);
-  if (operator === "is_not") return String(value) !== String(expected);
-  if (operator === "contains") return String(value ?? "").toLowerCase().includes(String(expected ?? "").toLowerCase());
-  if (operator === "gt") return Number(value) > Number(expected);
-  if (operator === "lt") return Number(value) < Number(expected);
-  if (operator === "checked") return value === true;
-  return true;
-}
-
-function compareValues(
-  a: RecordValue,
-  b: RecordValue,
-  direction: "asc" | "desc",
-  field?: FieldSchema,
-  dateCache?: Map<string, number | null>
-): number {
-  const modifier = direction === "asc" ? 1 : -1;
-  if (field && isDateLikeFieldType(field.type)) {
-    return compareDateValues(a, b, direction, field, dateCache ?? new Map());
-  }
-  return collator.compare(String(a ?? ""), String(b ?? "")) * modifier;
-}
-
-function compareDateValues(
-  a: RecordValue,
-  b: RecordValue,
-  direction: "asc" | "desc",
-  field: FieldSchema,
-  cache: Map<string, number | null>
-): number {
-  const modifier = direction === "asc" ? 1 : -1;
-  const aTime = dateSortTimestamp(a, field, cache);
-  const bTime = dateSortTimestamp(b, field, cache);
-  if (aTime === null && bTime === null) {
-    return collator.compare(String(a ?? ""), String(b ?? "")) * modifier;
-  }
-  // Invalid and blank values stay at the bottom in both directions.
-  if (aTime === null) return 1;
-  if (bTime === null) return -1;
-  return (aTime - bTime) * modifier;
-}
-
-function dateSortTimestamp(
-  value: RecordValue,
-  field: FieldSchema,
-  cache: Map<string, number | null>
-): number | null {
-  const raw = String(value ?? "").trim();
-  if (cache.has(raw)) return cache.get(raw) ?? null;
-  const date = field.type === "date" ? parseDateValue(raw) : parseDateTimeValue(raw);
-  const timestamp = date?.getTime();
-  const result = timestamp !== undefined && Number.isFinite(timestamp) ? timestamp : null;
-  cache.set(raw, result);
-  return result;
 }

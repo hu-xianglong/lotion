@@ -11,6 +11,7 @@ import {
   DEFAULT_PRODUCTION_VISUAL_SCRIPTS,
   productionVisualViewportNamesFromSelection
 } from "./lib/ui-suite-artifacts.mjs";
+import { assertRendererCoverageSourceIntegrity } from "./lib/renderer-coverage.mjs";
 
 const startedAt = Date.now();
 const filter = (process.env.LOTION_PRODUCTION_VISUAL_FILTER || DEFAULT_PRODUCTION_VISUAL_FILTER).trim();
@@ -54,6 +55,30 @@ const contract = assertProductionVisualGateContract(index, {
   requiredSuiteScripts: requiredScripts.length > 0 ? requiredScripts : DEFAULT_PRODUCTION_VISUAL_SCRIPTS,
   requiredViewportNames: productionVisualViewportNamesFromSelection(viewports)
 });
+const rendererCoveragePath = join(process.cwd(), "artifacts", "coverage", "renderer", "renderer-coverage-gate.json");
+const rendererCoverage = JSON.parse(await readFile(rendererCoveragePath, "utf8"));
+if (
+  rendererCoverage.kind !== "lotion-renderer-coverage-gate"
+  || rendererCoverage.status !== "passed"
+  || rendererCoverage.trend?.kind !== "lotion-renderer-coverage-trend"
+  || rendererCoverage.trend.status !== "passed"
+) {
+  throw new Error(`Production visual quality gate requires a passing renderer coverage artifact: ${rendererCoveragePath}`);
+}
+assertRendererCoverageSourceIntegrity(rendererCoverage);
+const rendererCoverageSummary = {
+  kind: rendererCoverage.kind,
+  path: rendererCoveragePath,
+  status: rendererCoverage.status,
+  sourceEntryCount: rendererCoverage.sourceEntryCount,
+  sourceFileCount: rendererCoverage.sourceFileCount,
+  coveredSourceFileCount: rendererCoverage.coveredSourceFileCount,
+  canonicalizedAliasCount: rendererCoverage.canonicalizedAliasCount,
+  sourceInventory: rendererCoverage.sourceInventory,
+  thresholds: rendererCoverage.thresholds,
+  total: rendererCoverage.total,
+  trend: rendererCoverage.trend
+};
 
 const gateRoot = join(suiteManifest.manifest.artifactRoot, "production-visual-gate");
 await mkdir(gateRoot, { recursive: true });
@@ -66,9 +91,10 @@ await writeFile(jsonPath, `${JSON.stringify({
   viewports,
   uiSuiteManifest: suiteManifest.manifestPath,
   uiSuiteArtifactIndex: indexPath,
+  rendererCoverage: rendererCoverageSummary,
   contract
 }, null, 2)}\n`, "utf8");
-await writeFile(markdownPath, formatGateMarkdown({ contract, filter, indexPath, jsonPath, suiteManifest, viewports }), "utf8");
+await writeFile(markdownPath, formatGateMarkdown({ contract, filter, indexPath, jsonPath, rendererCoverage: rendererCoverageSummary, suiteManifest, viewports }), "utf8");
 
 console.log(JSON.stringify({
   status: "passed",
@@ -76,10 +102,11 @@ console.log(JSON.stringify({
   viewports,
   artifactIndex: indexPath,
   productionVisualGate: jsonPath,
+  rendererCoverage: rendererCoverageSummary,
   contract
 }, null, 2));
 
-function formatGateMarkdown({ contract, filter, indexPath, jsonPath, suiteManifest, viewports }) {
+function formatGateMarkdown({ contract, filter, indexPath, jsonPath, rendererCoverage, suiteManifest, viewports }) {
   const lines = [
     "# Lotion Production Visual Quality Gate",
     "",
@@ -89,15 +116,23 @@ function formatGateMarkdown({ contract, filter, indexPath, jsonPath, suiteManife
     `- UI suite manifest: \`${suiteManifest.manifestPath}\``,
     `- UI suite artifact index: \`${indexPath}\``,
     `- Machine-readable gate result: \`${jsonPath}\``,
+    `- Renderer coverage: \`${rendererCoverage.path}\``,
+    `- Renderer raw entries / canonical aliases: ${rendererCoverage.sourceEntryCount} / ${rendererCoverage.canonicalizedAliasCount}`,
+    `- Renderer source files with executed lines: ${rendererCoverage.coveredSourceFileCount}/${rendererCoverage.sourceFileCount}`,
+    `- Renderer source inventory: ${rendererCoverage.sourceInventory.status}`,
+    `- Renderer lines/functions/branches: ${rendererCoverage.total.lines.pct}% / ${rendererCoverage.total.functions.pct}% / ${rendererCoverage.total.branches.pct}%`,
+    `- Renderer historical trend: ${rendererCoverage.trend.status} against \`${rendererCoverage.trend.baselinePath}\``,
     `- Required suites: ${contract.requiredSuiteCount}`,
     `- Screenshots: ${contract.snapshotCount}`,
     `- Screenshot bytes: ${contract.imageBytesTotal}`,
+    `- Committed perceptual baselines: ${contract.perceptualBaselineCount}`,
     "",
-    "| Suite | Viewports | Screenshots | Reproduce | Representative snapshots |",
-    "| --- | --- | ---: | --- | --- |"
+    "| Suite | Viewports | Screenshots | Perceptual baseline evidence | Reproduce | Representative snapshots |",
+    "| --- | --- | ---: | --- | --- | --- |"
   ];
   for (const suite of contract.suites) {
-    lines.push(`| ${escapeTable(suite.name)} | ${escapeTable(suite.viewports.join(", "))} | ${suite.snapshotCount} | \`${escapeTable(suite.reproduceCommand)}\` | ${escapeTable(suite.representativeSnapshotPaths.map((path) => `\`${path}\``).join(", "))} |`);
+    const baselines = suite.perceptualBaselines.map((baseline) => `${baseline.viewport}: expected=\`${baseline.expectedPath}\`, diff=\`${baseline.diffPath}\`, metadata=\`${baseline.metadataPath}\``).join("; ") || "none";
+    lines.push(`| ${escapeTable(suite.name)} | ${escapeTable(suite.viewports.join(", "))} | ${suite.snapshotCount} | ${escapeTable(baselines)} | \`${escapeTable(suite.reproduceCommand)}\` | ${escapeTable(suite.representativeSnapshotPaths.map((path) => `\`${path}\``).join(", "))} |`);
   }
   lines.push("");
   return `${lines.join("\n")}\n`;

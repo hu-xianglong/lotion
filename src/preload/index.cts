@@ -6,11 +6,16 @@ function invoke<T>(channel: string, payload?: unknown): Promise<T> {
 }
 
 const api: LotionApi = {
+  runtime: {
+    ready: () => invoke("runtime:ready")
+  },
   workspace: {
     create: (input) => invoke("workspace:create", input),
     open: (path) => invoke("workspace:open", path),
     getManifest: () => invoke("workspace:getManifest"),
     getPagesTree: () => invoke("workspace:getPagesTree"),
+    getStartupIndex: () => invoke("workspace:getStartupIndex"),
+    listRowPageFiles: (databaseId) => invoke("workspace:listRowPageFiles", databaseId),
     listRecent: () => invoke("workspace:listRecent"),
     forget: (path) => invoke("workspace:forget", path),
     openPicker: () => invoke("workspace:openPicker"),
@@ -39,10 +44,17 @@ const api: LotionApi = {
     addField: (id, input) => invoke("databases:addField", { id, input }),
     updateField: (input) => invoke("databases:updateField", input),
     copyFieldToSystemTime: (input) => invoke("databases:copyFieldToSystemTime", input),
+    reorderFields: (input) => invoke("databases:reorderFields", input),
     deleteField: (databaseId, fieldId) => invoke("databases:deleteField", { databaseId, fieldId }),
+    restoreField: (input) => invoke("databases:restoreField", input),
+    permanentlyDeleteField: (input) => invoke("databases:permanentlyDeleteField", input),
     updateCell: (input) => invoke("databases:updateCell", input),
-    addRow: (databaseId, templateId) => invoke("databases:addRow", { databaseId, templateId }),
+    addRow: (databaseId, templateId, initialValues) => invoke("databases:addRow", { databaseId, templateId, initialValues }),
     deleteRow: (input) => invoke("databases:deleteRow", input),
+    duplicateRow: (input) => invoke("databases:duplicateRow", input),
+    restoreRow: (input) => invoke("databases:restoreRow", input),
+    permanentlyDeleteRow: (input) => invoke("databases:permanentlyDeleteRow", input),
+    batchRows: (input) => invoke("databases:batchRows", input),
     saveTemplate: (input) => invoke("databases:saveTemplate", input),
     deleteTemplate: (input) => invoke("databases:deleteTemplate", input)
   },
@@ -50,6 +62,8 @@ const api: LotionApi = {
     create: (input) => invoke("views:create", input),
     duplicate: (input) => invoke("views:duplicate", input),
     update: (input) => invoke("views:update", input),
+    patch: (input) => invoke("views:patch", input),
+    reorder: (input) => invoke("views:reorder", input),
     delete: (input) => invoke("views:delete", input),
     setDefault: (input) => invoke("views:setDefault", input)
   },
@@ -94,7 +108,12 @@ const api: LotionApi = {
   },
   entities: {
     resolve: (id) => invoke("entities:resolve", id),
-    backlinks: (id) => invoke("entities:backlinks", id)
+    backlinks: (id) => invoke("entities:backlinks", id),
+    onBacklinksUpdated: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on("entities:backlinksUpdated", listener);
+      return () => ipcRenderer.removeListener("entities:backlinksUpdated", listener);
+    }
   },
   icons: {
     setForPage: (pageId) => invoke("icons:setForPage", pageId),
@@ -143,12 +162,16 @@ const api: LotionApi = {
     openLog: (label, detail) => ipcRenderer.send("debug:openLog", { label, detail }),
     setShellOpenDryRun: (enabled) => invoke("debug:setShellOpenDryRun", enabled),
     getShellOpenRequests: () => invoke("debug:getShellOpenRequests"),
-    clearShellOpenRequests: () => invoke("debug:clearShellOpenRequests")
+    clearShellOpenRequests: () => invoke("debug:clearShellOpenRequests"),
+    failNextDatabaseViewWrite: (message) => invoke("debug:failNextDatabaseViewWrite", message),
+    failNextDatabaseBundleWrite: (message) => invoke("debug:failNextDatabaseBundleWrite", message),
+    failNextDatabaseMetaWrite: (message) => invoke("debug:failNextDatabaseMetaWrite", message),
+    failNextPageMetadataWrite: (message) => invoke("debug:failNextPageMetadataWrite", message)
   },
   notion: {
-    pickFolder: (kind) => invoke("notion:pickFolder", kind),
+    pickFolder: () => invoke("notion:pickFolder"),
     pickTarget: () => invoke("notion:pickTarget"),
-    scan: (sourcePaths) => invoke("notion:scan", sourcePaths),
+    scan: (folderPath) => invoke("notion:scan", folderPath),
     runImport: (payload) => invoke("notion:import", payload),
     audit: (input) => invoke("notion:audit", input),
     // Subscribe to per-phase progress events emitted by the importer.

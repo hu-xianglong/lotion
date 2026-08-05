@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { CreatePageInput, PageDocument } from "../../shared/types";
+import type { CreatePageInput, PageDocument, PageOpenMode } from "../../shared/types";
 import type { ManageKind } from "../state/app-store";
 
 /**
@@ -17,6 +17,7 @@ export interface LotionActions {
   /** Open a management landing page (all databases / all pages / recent). */
   openManage(kind: ManageKind): void;
   openRowPage(databaseId: string, rowId: string, options?: NavigationJumpOptions): void;
+  openRowPageInNewWindow(databaseId: string, rowId: string): void;
   openRowPageByFile(databaseId: string, fileName: string, options?: NavigationJumpOptions): void;
   createPage(input?: Partial<CreatePageInput>, options?: { open?: boolean }): Promise<PageDocument>;
   duplicatePage(id: string): Promise<PageDocument>;
@@ -41,6 +42,10 @@ export interface LotionActions {
 export interface NavigationJumpOptions {
   /** 1-based markdown line to scroll/select after opening a page body. */
   markdownLine?: number;
+  /** Database-view presentation preference. Omit for canonical full-page navigation. */
+  pageOpenMode?: PageOpenMode;
+  /** Focus target restored when a transient database-row peek closes. */
+  peekOrigin?: HTMLElement | null;
 }
 
 const LotionActionsContext = createContext<LotionActions | null>(null);

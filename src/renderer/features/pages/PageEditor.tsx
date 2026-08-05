@@ -17,11 +17,20 @@ import { CodeMirrorMarkdownEditor, type CodeMirrorMarkdownEditorHandle, type Mar
 import { EntityIcon } from "../../components/EntityIcon";
 import { CoverArea } from "./CoverArea";
 import { PageLayout } from "./PageLayout";
-import { ArrowUpRight, CaseSensitive, Copy, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus } from "lucide-react";
+import { ArrowUpRight, CaseSensitive, History, ImagePlus, Maximize2, MoreHorizontal, SmilePlus, Star } from "lucide-react";
 import { useDatabaseCache } from "../../context/database-cache";
 import { ViewTypeIcon } from "../../components/FieldTypeIcon";
 import { pluginHost } from "../../plugin-host";
-import { FavoriteToggle } from "../../components/FavoriteToggle";
+import { formatDateForField, type DateTimeDisplayDefaults } from "../../../shared/date-values";
+import { useDateTimeDisplayDefaults } from "../../lib/settings";
+
+// The favorite toggle uses Lucide's Star — filled when active so the
+// gold "favorited" state is unambiguous without changing icon shape.
+function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <Star size={16} strokeWidth={1.8} fill={filled ? "currentColor" : "none"} />
+  );
+}
 
 interface PageEditorProps {
   page: PageDocument;
@@ -29,9 +38,8 @@ interface PageEditorProps {
   /** All workspace pages — passed through to the editor so inline link
    *  widgets can resolve target page icons. */
   pages?: PageMeta[];
-  entityKind?: "page" | "row";
   onChange: (markdown: string) => void;
-  onRename: (title: string) => void;
+  onRename: (title: string) => Promise<void> | void;
   /** Called when the user clicks the icon slot. The host wires this to
    *  the `icons:setForPage` IPC and triggers a refresh on success. */
   onPickIcon?: () => void;
@@ -40,7 +48,7 @@ interface PageEditorProps {
   /** Called when the user clicks "Remove cover". */
   onClearCover?: () => void;
   /** Called when the user finishes a reposition drag. */
-  onCommitCoverOffset?: (offset: number) => void;
+  onCommitCoverOffset?: (offset: number) => void | Promise<void>;
   /** Optional content rendered between the topbar and the body — used by
    *  row pages to surface their row's editable properties. */
   propertiesSlot?: ReactNode;
@@ -52,7 +60,6 @@ interface PageEditorProps {
   onSetFullWidth?: (fullWidth: boolean) => void | Promise<void>;
   onSetSmallText?: (smallText: boolean) => void | Promise<void>;
   onOpenInNewWindow?: () => void;
-  onDuplicate?: () => void | Promise<void>;
   onOpenEntity?: (ref: EntityRef) => void;
   viewStateKey?: string;
   initialViewState?: PageEditorViewState;
@@ -62,6 +69,171 @@ interface PageEditorProps {
   emptyTemplates?: PageEditorEmptyTemplate[];
   onApplyEmptyTemplate?: (templateId: string) => void | Promise<void>;
   onCreateEmptyTemplate?: () => void;
+}
+
+export type PageTitleMutationResult = "submitted" | "failed" | "ignored";
+export type PageTitleMutationState =
+  | { status: "idle" }
+  | { status: "saving"; title: string }
+  | { status: "error"; title: string; error: string };
+
+type PageTitleMutationOperation = (title: string) => Promise<void> | void;
+
+export function createPageTitleMutationController({
+  onStateChange
+}: {
+  onStateChange: (state: PageTitleMutationState) => void;
+}) {
+  let generation = 0;
+  let running = false;
+  let failedAttempt: { title: string; operation: PageTitleMutationOperation } | null = null;
+
+  async function submit(
+    title: string,
+    operation: PageTitleMutationOperation,
+    retry = false
+  ): Promise<PageTitleMutationResult> {
+    if (running || (!retry && failedAttempt)) return "ignored";
+    const attempt = retry ? failedAttempt : { title, operation };
+    if (!attempt) return "ignored";
+    const ownedGeneration = generation;
+    running = true;
+    onStateChange({ status: "saving", title: attempt.title });
+    try {
+      await attempt.operation(attempt.title);
+      if (ownedGeneration !== generation) return "submitted";
+      running = false;
+      failedAttempt = null;
+      onStateChange({ status: "idle" });
+      return "submitted";
+    } catch (error) {
+      if (ownedGeneration !== generation) return "failed";
+      running = false;
+      failedAttempt = attempt;
+      onStateChange({
+        status: "error",
+        title: attempt.title,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return "failed";
+    }
+  }
+
+  function retry() {
+    return failedAttempt
+      ? submit(failedAttempt.title, failedAttempt.operation, true)
+      : Promise.resolve<PageTitleMutationResult>("ignored");
+  }
+
+  function discard() {
+    if (running || !failedAttempt) return false;
+    failedAttempt = null;
+    onStateChange({ status: "idle" });
+    return true;
+  }
+
+  function reset() {
+    generation += 1;
+    running = false;
+    failedAttempt = null;
+    onStateChange({ status: "idle" });
+  }
+
+  function isBlocked() {
+    return running || !!failedAttempt;
+  }
+
+  return { discard, isBlocked, reset, retry, submit };
+}
+
+export function submitPageTitleBlurValue(
+  value: string,
+  controller: Pick<ReturnType<typeof createPageTitleMutationController>, "submit"> | null,
+  operation: PageTitleMutationOperation
+): void {
+  void controller?.submit(value, operation);
+}
+
+export type PageLayoutSetting = "fullWidth" | "smallText";
+export type PageLayoutMutationResult = "submitted" | "failed" | "ignored";
+export type PageLayoutMutationState =
+  | { status: "idle" }
+  | { status: "saving"; setting: PageLayoutSetting; value: boolean }
+  | { status: "error"; setting: PageLayoutSetting; value: boolean; error: string };
+
+type PageLayoutMutationOperation = (value: boolean) => Promise<void> | void;
+
+export function createPageLayoutMutationController({
+  onStateChange
+}: {
+  onStateChange: (state: PageLayoutMutationState) => void;
+}) {
+  let generation = 0;
+  let running = false;
+  let failedAttempt: {
+    setting: PageLayoutSetting;
+    value: boolean;
+    operation: PageLayoutMutationOperation;
+  } | null = null;
+
+  async function submit(
+    setting: PageLayoutSetting,
+    value: boolean,
+    operation: PageLayoutMutationOperation,
+    retry = false
+  ): Promise<PageLayoutMutationResult> {
+    if (running || (!retry && failedAttempt)) return "ignored";
+    const attempt = retry ? failedAttempt : { setting, value, operation };
+    if (!attempt) return "ignored";
+    const ownedGeneration = generation;
+    running = true;
+    onStateChange({ status: "saving", setting: attempt.setting, value: attempt.value });
+    try {
+      await attempt.operation(attempt.value);
+      if (ownedGeneration !== generation) return "submitted";
+      running = false;
+      failedAttempt = null;
+      onStateChange({ status: "idle" });
+      return "submitted";
+    } catch (error) {
+      if (ownedGeneration !== generation) return "failed";
+      running = false;
+      failedAttempt = attempt;
+      onStateChange({
+        status: "error",
+        setting: attempt.setting,
+        value: attempt.value,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return "failed";
+    }
+  }
+
+  function retry() {
+    return failedAttempt
+      ? submit(failedAttempt.setting, failedAttempt.value, failedAttempt.operation, true)
+      : Promise.resolve<PageLayoutMutationResult>("ignored");
+  }
+
+  function discard() {
+    if (running || !failedAttempt) return false;
+    failedAttempt = null;
+    onStateChange({ status: "idle" });
+    return true;
+  }
+
+  function reset() {
+    generation += 1;
+    running = false;
+    failedAttempt = null;
+    onStateChange({ status: "idle" });
+  }
+
+  function isBlocked() {
+    return running || !!failedAttempt;
+  }
+
+  return { discard, isBlocked, reset, retry, submit };
 }
 
 export type PageEditorViewState = MarkdownEditorViewState;
@@ -83,7 +255,6 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   page,
   databases,
   pages,
-  entityKind = "page",
   onChange,
   onRename,
   onPickIcon,
@@ -96,7 +267,6 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   onSetFullWidth,
   onSetSmallText,
   onOpenInNewWindow,
-  onDuplicate,
   onOpenEntity,
   viewStateKey,
   initialViewState,
@@ -108,9 +278,18 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   onCreateEmptyTemplate
 }, ref) {
   const { t } = useI18n();
+  const dateTimeDefaults = useDateTimeDisplayDefaults();
   const cache = useDatabaseCache();
   const restoredViewState = initialViewState ?? (viewStateKey ? pageEditorViewStateStore.get(viewStateKey) : undefined);
   const [title, setTitle] = useState(page.meta.title);
+  const [titleMutationState, setTitleMutationState] = useState<PageTitleMutationState>({ status: "idle" });
+  const titleMutationControllerRef = useRef<ReturnType<typeof createPageTitleMutationController> | null>(null);
+  if (!titleMutationControllerRef.current) {
+    titleMutationControllerRef.current = createPageTitleMutationController({
+      onStateChange: setTitleMutationState
+    });
+  }
+  const titlePageIdRef = useRef(page.meta.id);
   const [editorValue, setEditorValue] = useState(page.markdown);
   const [menuOpen, setMenuOpen] = useState(false);
   const [viewPickerOpen, setViewPickerOpen] = useState(false);
@@ -120,9 +299,14 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const [viewPickerError, setViewPickerError] = useState("");
   const [fullWidth, setFullWidth] = useState(!!page.meta.fullWidth);
   const [smallText, setSmallText] = useState(!!page.meta.smallText);
-  const [fullWidthSaving, setFullWidthSaving] = useState(false);
-  const [smallTextSaving, setSmallTextSaving] = useState(false);
-  const [duplicating, setDuplicating] = useState(false);
+  const [layoutMutationState, setLayoutMutationState] = useState<PageLayoutMutationState>({ status: "idle" });
+  const layoutMutationControllerRef = useRef<ReturnType<typeof createPageLayoutMutationController> | null>(null);
+  if (!layoutMutationControllerRef.current) {
+    layoutMutationControllerRef.current = createPageLayoutMutationController({
+      onStateChange: setLayoutMutationState
+    });
+  }
+  const layoutPageIdRef = useRef(page.meta.id);
   const [emptyPromptDismissed, setEmptyPromptDismissed] = useState(false);
   const [emptyPromptIndex, setEmptyPromptIndex] = useState(() => emptyTemplates?.length ?? 0);
   const [backlinks, setBacklinks] = useState<EntityBacklink[]>([]);
@@ -131,6 +315,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const [pageHistoryPreview, setPageHistoryPreview] = useState<GitPageHistoryPreview | null>(null);
   const [pageHistoryBusy, setPageHistoryBusy] = useState(false);
   const [pageHistoryMessage, setPageHistoryMessage] = useState("");
+  const pageHistoryRequestRef = useRef(0);
   const [secondaryExpanded, setSecondaryExpanded] = useState(false);
   const [secondaryPinned, setSecondaryPinned] = useState(false);
   const codeMirrorRef = useRef<CodeMirrorMarkdownEditorHandle | null>(null);
@@ -142,16 +327,32 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const parentPathIndex = parentPathSegmentIndex(pathSegments, parentLink);
 
   useEffect(() => {
-    setTitle(page.meta.title);
-  }, [page.meta.id, page.meta.title]);
+    if (titlePageIdRef.current !== page.meta.id) {
+      titlePageIdRef.current = page.meta.id;
+      titleMutationControllerRef.current?.reset();
+      setTitle(page.meta.title);
+      return;
+    }
+    if (titleMutationState.status === "idle") setTitle(page.meta.title);
+  }, [page.meta.id, page.meta.title, titleMutationState.status]);
 
   useEffect(() => {
+    if (layoutPageIdRef.current !== page.meta.id) {
+      layoutPageIdRef.current = page.meta.id;
+      layoutMutationControllerRef.current?.reset();
+      setFullWidth(!!page.meta.fullWidth);
+      setSmallText(!!page.meta.smallText);
+      return;
+    }
+    if (layoutMutationState.status !== "idle") return;
     setFullWidth(!!page.meta.fullWidth);
-  }, [page.meta.id, page.meta.fullWidth]);
-
-  useEffect(() => {
     setSmallText(!!page.meta.smallText);
-  }, [page.meta.id, page.meta.smallText]);
+  }, [
+    layoutMutationState.status,
+    page.meta.fullWidth,
+    page.meta.id,
+    page.meta.smallText
+  ]);
 
   useEffect(() => {
     if (pageIdRef.current === page.meta.id) return;
@@ -189,16 +390,27 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
     };
   }, [backlinksLoaded, page.meta.id, secondaryExpanded]);
 
+  useEffect(() => {
+    const api = typeof window === "undefined" ? undefined : window.lotion;
+    if (!api?.entities?.onBacklinksUpdated) return;
+    return api.entities.onBacklinksUpdated(() => {
+      setBacklinksLoaded(false);
+    });
+  }, [page.meta.id]);
+
   const loadPageHistory = useCallback(async () => {
     const api = typeof window === "undefined" ? undefined : window.lotion;
     if (!api?.git?.listPageHistory) return;
+    const requestId = ++pageHistoryRequestRef.current;
     setPageHistoryBusy(true);
     try {
       const result = await api.git.listPageHistory(page.meta.id);
+      if (pageHistoryRequestRef.current !== requestId) return;
       setPageHistory(result);
       setPageHistoryMessage("");
       if (result.versions.length === 0) setPageHistoryPreview(null);
     } catch (error) {
+      if (pageHistoryRequestRef.current !== requestId) return;
       setPageHistory({
         state: "failed",
         message: error instanceof Error ? error.message : String(error),
@@ -207,11 +419,12 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
         versions: []
       });
     } finally {
-      setPageHistoryBusy(false);
+      if (pageHistoryRequestRef.current === requestId) setPageHistoryBusy(false);
     }
   }, [page.meta.id, page.meta.title]);
 
   useEffect(() => {
+    pageHistoryRequestRef.current += 1;
     setPageHistory(null);
     setPageHistoryPreview(null);
     setPageHistoryMessage("");
@@ -222,6 +435,11 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
     if (!secondaryExpanded) return;
     if (!pageHistory && !pageHistoryBusy) void loadPageHistory();
   }, [loadPageHistory, pageHistory, pageHistoryBusy, secondaryExpanded]);
+
+  const persistTitle = useCallback(async (nextTitle: string) => {
+    await onRename(nextTitle);
+    if (secondaryExpanded) await loadPageHistory();
+  }, [loadPageHistory, onRename, secondaryExpanded]);
 
   useEffect(() => {
     if (!databases.some((database) => database.id === selectedViewDatabaseId)) {
@@ -305,48 +523,25 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   }
 
   async function toggleFullWidth() {
-    if (fullWidthSaving) return;
-    const previous = fullWidth;
-    const next = !previous;
+    if (
+      layoutMutationState.status !== "idle"
+      || layoutMutationControllerRef.current?.isBlocked()
+      || !onSetFullWidth
+    ) return;
+    const next = !fullWidth;
     setFullWidth(next);
-    setFullWidthSaving(true);
-    try {
-      await onSetFullWidth?.(next);
-    } catch (error) {
-      setFullWidth(previous);
-      console.error("Failed to persist full width setting", error);
-    } finally {
-      setFullWidthSaving(false);
-    }
+    await layoutMutationControllerRef.current?.submit("fullWidth", next, onSetFullWidth);
   }
 
   async function toggleSmallText() {
-    if (smallTextSaving) return;
-    const previous = smallText;
-    const next = !previous;
+    if (
+      layoutMutationState.status !== "idle"
+      || layoutMutationControllerRef.current?.isBlocked()
+      || !onSetSmallText
+    ) return;
+    const next = !smallText;
     setSmallText(next);
-    setSmallTextSaving(true);
-    try {
-      await onSetSmallText?.(next);
-    } catch (error) {
-      setSmallText(previous);
-      console.error("Failed to persist small text setting", error);
-    } finally {
-      setSmallTextSaving(false);
-    }
-  }
-
-  async function duplicateCurrentPage() {
-    if (!onDuplicate || duplicating) return;
-    setDuplicating(true);
-    try {
-      await onDuplicate();
-      setMenuOpen(false);
-    } catch (error) {
-      console.error("Failed to duplicate page", error);
-    } finally {
-      setDuplicating(false);
-    }
+    await layoutMutationControllerRef.current?.submit("smallText", next, onSetSmallText);
   }
 
   function mergeViewState(partial: PageEditorViewState) {
@@ -376,8 +571,8 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
     setPageHistoryBusy(true);
     try {
       const result = await api.git.backupNow(`Lotion page history: ${page.meta.title || page.meta.id}`);
-      setPageHistoryMessage(result.message);
       await loadPageHistory();
+      setPageHistoryMessage(result.message);
     } catch (error) {
       setPageHistoryMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -402,7 +597,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   async function restoreHistoryPreview() {
     const api = typeof window === "undefined" ? undefined : window.lotion;
     if (!api?.git?.restorePageVersion || !pageHistoryPreview) return;
-    const ok = window.confirm(`Restore ${page.meta.title} from ${formatHistoryTime(pageHistoryPreview.version.createdAt)}?`);
+    const ok = window.confirm(`Restore ${page.meta.title} from ${formatHistoryTime(pageHistoryPreview.version.createdAt, dateTimeDefaults)}?`);
     if (!ok) return;
     setPageHistoryBusy(true);
     try {
@@ -412,8 +607,8 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
       setTitle(restored.meta.title);
       onChange(restored.markdown);
       setPageHistoryPreview(null);
-      setPageHistoryMessage("Page restored from local Git history.");
       await loadPageHistory();
+      setPageHistoryMessage("Page restored from local Git history.");
     } catch (error) {
       setPageHistoryMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -482,6 +677,7 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
 
   const coverSlot = page.meta.cover ? (
     <CoverArea
+      mutationKey={page.meta.id}
       src={page.meta.cover}
       offset={page.meta.coverOffset}
       onChangeImage={onPickCover}
@@ -558,8 +754,15 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
         <input
           className="title-input"
           value={title}
+          aria-busy={titleMutationState.status === "saving"}
+          disabled={titleMutationState.status !== "idle"}
           onChange={(event) => setTitle(event.target.value)}
-          onBlur={() => onRename(title)}
+          onBlur={(event) => {
+            // The DOM value is authoritative at the blur boundary. Under a
+            // busy renderer, React may not have committed the final onChange
+            // state before blur fires.
+            submitPageTitleBlurValue(event.currentTarget.value, titleMutationControllerRef.current, persistTitle);
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || !showEmptyPrompt) return;
             event.preventDefault();
@@ -568,7 +771,15 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
         />
         <div className="page-action-bar" aria-label={t("page.actions")}>
           {onToggleFavorite && (
-            <FavoriteToggle favorited={favorited} onToggle={onToggleFavorite} />
+            <button
+              type="button"
+              className={favorited ? "favorite-toggle on" : "favorite-toggle"}
+              onClick={onToggleFavorite}
+              title={favorited ? t("page.unfavorite") : t("page.favorite")}
+              aria-pressed={!!favorited}
+            >
+              <StarIcon filled={!!favorited} />
+            </button>
           )}
           <div className="page-options-wrap">
             <button
@@ -588,8 +799,8 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
                   className="page-menu-item page-menu-item-switch"
                   role="menuitemcheckbox"
                   aria-checked={smallText}
-                  aria-busy={smallTextSaving}
-                  disabled={smallTextSaving}
+                  aria-busy={layoutMutationState.status === "saving" && layoutMutationState.setting === "smallText"}
+                  disabled={layoutMutationState.status !== "idle" || !onSetSmallText}
                   onClick={() => void toggleSmallText()}
                 >
                   <span className="page-menu-icon" aria-hidden="true">
@@ -605,8 +816,8 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
                   className="page-menu-item page-menu-item-switch"
                   role="menuitemcheckbox"
                   aria-checked={fullWidth}
-                  aria-busy={fullWidthSaving}
-                  disabled={fullWidthSaving}
+                  aria-busy={layoutMutationState.status === "saving" && layoutMutationState.setting === "fullWidth"}
+                  disabled={layoutMutationState.status !== "idle" || !onSetFullWidth}
                   onClick={() => void toggleFullWidth()}
                 >
                   <span className="page-menu-icon" aria-hidden="true">
@@ -632,21 +843,6 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
                   </span>
                   <span>{t("page.openInNewWindow")}</span>
                 </button>
-                {onDuplicate && (
-                  <button
-                    type="button"
-                    className="page-menu-item"
-                    role="menuitem"
-                    aria-busy={duplicating}
-                    disabled={duplicating}
-                    onClick={() => void duplicateCurrentPage()}
-                  >
-                    <span className="page-menu-icon" aria-hidden="true">
-                      <Copy size={15} strokeWidth={1.9} />
-                    </span>
-                    <span>{t("page.duplicate")}</span>
-                  </button>
-                )}
                 <button
                   type="button"
                   className="page-menu-item"
@@ -664,6 +860,48 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
           </div>
         </div>
       </div>
+      {titleMutationState.status === "error" && (
+        <div
+          className="database-mutation-toast page-title-feedback error"
+          role="alert"
+          aria-live="assertive"
+          data-title={titleMutationState.title}
+        >
+          <span>Page title failed to save: {titleMutationState.error}</span>
+          <button type="button" onClick={() => { void titleMutationControllerRef.current?.retry(); }}>Retry</button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!titleMutationControllerRef.current?.discard()) return;
+              setTitle(page.meta.title);
+            }}
+          >
+            Discard title
+          </button>
+        </div>
+      )}
+      {layoutMutationState.status === "error" && (
+        <div
+          className="database-mutation-toast page-layout-feedback error"
+          role="alert"
+          aria-live="assertive"
+          data-setting={layoutMutationState.setting}
+          data-value={String(layoutMutationState.value)}
+        >
+          <span>Page layout failed to save: {layoutMutationState.error}</span>
+          <button type="button" onClick={() => { void layoutMutationControllerRef.current?.retry(); }}>Retry</button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!layoutMutationControllerRef.current?.discard()) return;
+              setFullWidth(!!page.meta.fullWidth);
+              setSmallText(!!page.meta.smallText);
+            }}
+          >
+            Discard layout
+          </button>
+        </div>
+      )}
     </>
   );
 
@@ -752,12 +990,6 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
               onViewStateChange={mergeViewState}
               pages={pages}
               databases={databases}
-              currentPage={{
-                id: page.meta.id,
-                kind: entityKind,
-                title: page.meta.title,
-                path: page.meta.path
-              }}
             />
           </div>
         </>
@@ -858,6 +1090,7 @@ export function PageHistoryPanel({
   onPreview?: (version: GitPageHistoryVersion) => void | Promise<void>;
   onRestore?: () => void | Promise<void>;
 }) {
+  const dateTimeDefaults = useDateTimeDisplayDefaults();
   const state = result?.state ?? "history_empty";
   const status = result?.message ?? "Loading local Git history.";
   const versions = result?.versions ?? [];
@@ -887,7 +1120,7 @@ export function PageHistoryPanel({
               disabled={busy}
             >
               <span>{version.message}</span>
-              <small>{formatHistoryTime(version.createdAt)} · {version.shortSha}</small>
+              <small>{formatHistoryTime(version.createdAt, dateTimeDefaults)} · {version.shortSha}</small>
             </button>
           ))}
         </div>
@@ -895,7 +1128,7 @@ export function PageHistoryPanel({
       {preview && (
         <div className="page-history-preview" aria-label="Local Git page history diff preview">
           <div className="page-history-preview-header">
-            <span>{preview.version.path}</span>
+            <span>{pageHistoryPreviewLabel(preview.version)}</span>
             <button type="button" onClick={() => void onRestore?.()} disabled={busy}>Restore</button>
           </div>
           <pre>
@@ -918,16 +1151,13 @@ function pageHistoryStateLabel(state: GitPageHistoryResult["state"]): string {
   return "History empty";
 }
 
-function formatHistoryTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  });
+function formatHistoryTime(value: string, defaults: DateTimeDisplayDefaults): string {
+  return formatDateForField(value, { type: "updated_time" }, defaults);
+}
+
+export function pageHistoryPreviewLabel(version: Pick<GitPageHistoryVersion, "title">): string {
+  const title = version.title.trim() || "Untitled";
+  return `Page snapshot · ${title}`;
 }
 
 interface EmbeddedViewPickerDialogProps {
@@ -1068,7 +1298,7 @@ export function PageBacklinks({
           const sourcePath = backlinkSourcePathLabel(path, title);
           const sourceType = backlinkSourceTypeLabel(backlink.source, t);
           const context = backlinkContextLabel(backlink, t);
-          const excerpt = backlink.excerpt?.trim();
+          const excerpt = backlinkExcerptLabel(backlink.excerpt);
           const ariaLabel = locale === "zh"
             ? `打开反向链接来源：${title}（${sourceType}）`
             : `Open backlink source: ${title} (${sourceType})`;
@@ -1108,6 +1338,16 @@ function backlinkSourcePathLabel(path: string[], title: string): string {
   const last = normalized[normalized.length - 1];
   const parts = last === title ? normalized.slice(0, -1) : normalized;
   return parts.join(" / ");
+}
+
+export function backlinkExcerptLabel(value?: string): string {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) return "";
+  return normalized
+    .replace(/!?\[([^\]]+)\]\((?:\\.|[^)])*\)/g, "$1")
+    .replace(/<(?:(?:databases|pages)\/[^>]+)>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function backlinkSourceTypeLabel(ref: EntityRef, t: ReturnType<typeof useI18n>["t"]): string {

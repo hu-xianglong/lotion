@@ -18,6 +18,9 @@ export async function assertPageBacklinksArtifactContract(summary, {
   for (const viewportName of expectedViewportNames) {
     const entry = viewports.find((candidate) => candidate.viewport === viewportName);
     if (!entry) throw new Error(`Page backlinks artifact contract missing entry for ${viewportName}`);
+    if (!entry.externalRefresh?.removedWithoutNavigation || !entry.externalRefresh?.restoredWithoutNavigation) {
+      throw new Error(`Page backlinks artifact contract missing external incremental refresh evidence for ${viewportName}: ${JSON.stringify(entry.externalRefresh)}`);
+    }
     assertPageBacklinksEvidence(entry, viewportName);
     snapshots.push(await assertPageBacklinksSnapshot(entry, viewportName));
   }
@@ -39,7 +42,12 @@ function assertPageBacklinksEvidence(entry, viewportName) {
   }
   const pageItem = rendered.items.find((item) => item.sourceType === "Page" || item.sourceType === "页面");
   const rowItem = rendered.items.find((item) => item.sourceType === "Database row" || item.sourceType === "数据库行");
-  if (!pageItem?.sourceTitle || !pageItem?.context?.includes("L5") || !pageItem?.excerpt?.includes("[Backlink Target Page]")) {
+  if (
+    !pageItem?.sourceTitle ||
+    !pageItem?.context?.includes("L5") ||
+    !pageItem?.excerpt?.includes("Backlink Target Page") ||
+    /(?:^|\W)(?:pg|db|row)_[a-z0-9_-]+/i.test(pageItem.excerpt)
+  ) {
     throw new Error(`Page backlinks artifact contract missing markdown backlink evidence for ${viewportName}: ${JSON.stringify(pageItem)}`);
   }
   if (!rowItem?.sourceTitle || !rowItem?.sourcePath?.includes("Property Sources") || !rowItem?.context?.includes("Related Page")) {

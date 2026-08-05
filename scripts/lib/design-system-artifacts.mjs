@@ -9,7 +9,8 @@ const REQUIRED_TOKENS = {
 };
 
 export async function assertDesignSystemArtifactContract(summary, {
-  expectedViewportNames = ["desktop", "compact"]
+  expectedViewportNames = ["desktop", "compact"],
+  requiredPerceptualBaselineViewportNames = ["desktop", "compact", "wide"]
 } = {}) {
   if (summary?.status !== "passed") {
     throw new Error(`Design system artifact contract requires passed smoke status, saw ${summary?.status ?? "missing"}`);
@@ -27,7 +28,9 @@ export async function assertDesignSystemArtifactContract(summary, {
     const entry = viewports.find((candidate) => viewportNameFromEntry(candidate) === viewportName);
     if (!entry) throw new Error(`Design system artifact contract missing entry for ${viewportName}`);
     assertDesignSystemEvidence(entry, viewportName);
-    snapshots.push(await assertDesignSystemSnapshot(entry, viewportName));
+    snapshots.push(await assertDesignSystemSnapshot(entry, viewportName, {
+      requirePerceptualBaseline: requiredPerceptualBaselineViewportNames.includes(viewportName)
+    }));
   }
 
   return {
@@ -35,6 +38,7 @@ export async function assertDesignSystemArtifactContract(summary, {
     expectedViewportNames,
     observedViewportNames,
     snapshotCount: snapshots.length,
+    perceptualBaselineCount: snapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length,
     snapshots
   };
 }
@@ -75,6 +79,16 @@ function assertControlState(state, viewportName) {
   if (missing.length > 0) {
     throw new Error(`Design system artifact contract missing status pill(s) for ${viewportName}: ${missing.join(", ")}`);
   }
+  const geometry = Array.isArray(state?.statusPillGeometry) ? state.statusPillGeometry : [];
+  for (const label of REQUIRED_STATUS_PILLS) {
+    const pill = geometry.find((item) => item?.label === label);
+    if (!pill || pill.width <= 0 || pill.height <= 0 || pill.withinLab !== true) {
+      throw new Error(`Design system artifact contract status pill ${label} is missing or clipped for ${viewportName}: ${JSON.stringify(geometry)}`);
+    }
+  }
+  if (state?.statusPillsLayoutValid !== true) {
+    throw new Error(`Design system artifact contract status pills wrap unexpectedly for ${viewportName}`);
+  }
 }
 
 function assertLayoutState(state, viewportName) {
@@ -92,7 +106,7 @@ function assertLayoutState(state, viewportName) {
   }
 }
 
-async function assertDesignSystemSnapshot(entry, viewportName) {
+async function assertDesignSystemSnapshot(entry, viewportName, { requirePerceptualBaseline = false } = {}) {
   const snapshot = entry?.snapshot;
   if (!snapshot?.imagePath || !snapshot?.metadataPath) {
     throw new Error(`Design system artifact contract missing snapshot paths for ${viewportName}`);
@@ -113,14 +127,65 @@ async function assertDesignSystemSnapshot(entry, viewportName) {
   assertThemeState(payload.themeState, viewportName);
   assertControlState(payload.controlState, viewportName);
   assertLayoutState(payload.layoutState, viewportName);
+  const perceptualBaseline = await assertPerceptualBaseline(entry.perceptualBaseline, snapshot, viewportName, {
+    required: requirePerceptualBaseline
+  });
 
   return {
     viewport: viewportName,
     imageBytes: imageInfo.size,
     imagePath: snapshot.imagePath,
     metadataPath: snapshot.metadataPath,
+    ...(perceptualBaseline ? { perceptualBaseline } : {}),
     statusPills: payload.controlState.statusPills,
     tokenCount: Object.keys(REQUIRED_TOKENS).length
+  };
+}
+
+async function assertPerceptualBaseline(baseline, snapshot, viewportName, { required }) {
+  if (!baseline) {
+    if (required) throw new Error(`Design system artifact contract missing committed perceptual baseline for ${viewportName}`);
+    return null;
+  }
+  if (baseline.kind !== "lotion-png-visual-diff" || baseline.status !== "passed") {
+    throw new Error(`Design system artifact contract perceptual baseline did not pass for ${viewportName}: ${JSON.stringify({ kind: baseline.kind, status: baseline.status })}`);
+  }
+  if (baseline.actualPath !== snapshot.imagePath) {
+    throw new Error(`Design system artifact contract perceptual baseline actual path mismatch for ${viewportName}: ${baseline.actualPath}`);
+  }
+  if (!baseline.dimensionsMatch || baseline.diffPixels > baseline.maxDiffPixels || baseline.diffRatio > baseline.maxDiffRatio) {
+    throw new Error(`Design system artifact contract perceptual baseline exceeded tolerance for ${viewportName}: ${JSON.stringify({ dimensionsMatch: baseline.dimensionsMatch, diffPixels: baseline.diffPixels, diffRatio: baseline.diffRatio })}`);
+  }
+  for (const [label, path] of Object.entries({
+    expected: baseline.expectedPath,
+    diff: baseline.diffPath,
+    metadata: baseline.metadataPath,
+    policy: baseline.policyPath
+  })) {
+    if (!path) throw new Error(`Design system artifact contract missing perceptual ${label} path for ${viewportName}`);
+    const info = await stat(path);
+    if (info.size <= 0) throw new Error(`Design system artifact contract found empty perceptual ${label} artifact for ${viewportName}: ${path}`);
+  }
+  const diffMetadata = JSON.parse(await readFile(baseline.metadataPath, "utf8"));
+  if (diffMetadata.status !== "passed" || diffMetadata.expectedPath !== baseline.expectedPath || diffMetadata.actualPath !== baseline.actualPath) {
+    throw new Error(`Design system artifact contract perceptual metadata mismatch for ${viewportName}: ${JSON.stringify(diffMetadata)}`);
+  }
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA,
+    policy: baseline.policy
   };
 }
 

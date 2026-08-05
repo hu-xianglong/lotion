@@ -15,7 +15,7 @@ export interface ReactFieldTypeProvider extends FieldTypeProvider {
 
 export interface RendererFieldRenderContext extends FieldRenderContext {
   commit?(value: RecordValue): void;
-  onOptionsChange?(options: SelectOption[]): void;
+  onOptionsChange?(options: SelectOption[]): Promise<void> | void;
   wrap?: boolean;
   placeholder?: string;
 }

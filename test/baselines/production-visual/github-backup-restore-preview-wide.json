@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "github-backup-restore-preview",
+  "theme": "light",
+  "viewport": {
+    "name": "wide",
+    "width": 1728,
+    "height": 1100
+  },
+  "image": {
+    "path": "test/baselines/production-visual/github-backup-restore-preview-wide.png",
+    "sha256": "088a9a2a50469325e3ff11d246798262d3298813e9435ee916c3cd46d593bd7c",
+    "width": 960,
+    "height": 907
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

@@ -1,21 +1,61 @@
 import { join } from "node:path";
 import type { CreatePageInput, PageDocument, PageMeta, UpdatePageInput } from "../../shared/types.js";
 import { createId } from "../../shared/ids.js";
-import { readMarkdownBody, writeMarkdownBody } from "../storage/markdown-file.js";
+import { parsePage, readMarkdownBody, readPageFile, writeMarkdownBody } from "../storage/markdown-file.js";
 import { defaultPageRecordInput, pageBodyPath, PagesDatabaseService, titleFromPageFileName } from "./pages-database-service.js";
 import type { WorkspaceService } from "./workspace-service.js";
 import { fileService } from "./file-service.js";
 
+export interface StartupPageSnapshot {
+  meta: PageMeta;
+  bodyPath?: string;
+}
+
 export class PageService {
   private readonly pageRecords: PagesDatabaseService;
+  private listPromiseRoot?: string;
+  private listPromise?: Promise<PageMeta[]>;
   private readonly updateQueues = new Map<string, Promise<void>>();
+  private hierarchyUpdateQueue: Promise<void> = Promise.resolve();
+  private nextMetadataWriteFailure?: string;
+  private startupSnapshotsRoot?: string;
+  private startupSnapshots = new Map<string, StartupPageSnapshot>();
 
-  constructor(private readonly workspace: WorkspaceService) {
-    this.pageRecords = new PagesDatabaseService(workspace);
+  constructor(
+    private readonly workspace: WorkspaceService,
+    pageRecords?: PagesDatabaseService
+  ) {
+    this.pageRecords = pageRecords ?? new PagesDatabaseService(workspace);
+  }
+
+  failNextMetadataWriteForDebug(message = "Injected page metadata persistence failure"): void {
+    this.nextMetadataWriteFailure = message;
+  }
+
+  primeStartupSnapshots(snapshots: StartupPageSnapshot[]): void {
+    this.startupSnapshotsRoot = this.workspace.requirePaths().root;
+    this.startupSnapshots = new Map(snapshots.map((snapshot) => [snapshot.meta.id, snapshot]));
   }
 
   async list(): Promise<PageMeta[]> {
+    const root = this.workspace.requirePaths().root;
+    if (this.listPromise && this.listPromiseRoot === root) return this.listPromise;
+    this.listPromiseRoot = root;
+    const promise = this.listFresh();
+    this.listPromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this.listPromise === promise) {
+        this.listPromise = undefined;
+        this.listPromiseRoot = undefined;
+      }
+    }
+  }
+
+  private async listFresh(): Promise<PageMeta[]> {
     const manifest = await this.workspace.getManifest();
+    await this.pageRecords.ensure();
     const known = new Map((await this.pageRecords.listMetas(manifest.pages)).map((meta) => [meta.id, meta]));
     const pages: PageMeta[] = [];
 
@@ -121,15 +161,22 @@ export class PageService {
 
   async bodyPath(id: string): Promise<string> {
     const meta = await this.getOrCreateMeta(id);
-    const bodyPath = await this.pageRecords.getBodyPath(id);
+    const bodyPath = this.startupSnapshot(id)?.bodyPath ?? await this.pageRecords.getBodyPath(id);
     return bodyPath || pageBodyPath(id, meta.title);
   }
 
   async update(id: string, input: UpdatePageInput): Promise<PageDocument> {
-    const previous = this.updateQueues.get(id) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.updateUnlocked(id, input));
+    this.startupSnapshots.delete(id);
+    const previousPage = this.updateQueues.get(id) ?? Promise.resolve();
+    const changesHierarchy = input.parentId !== undefined || input.parentKind !== undefined;
+    const previousHierarchy = changesHierarchy ? this.hierarchyUpdateQueue : Promise.resolve();
+    const next = Promise.all([
+      previousPage.catch(() => undefined),
+      previousHierarchy.catch(() => undefined)
+    ]).then(() => this.updateUnlocked(id, input));
     const marker = next.then(() => undefined, () => undefined);
     this.updateQueues.set(id, marker);
+    if (changesHierarchy) this.hierarchyUpdateQueue = marker;
     marker.finally(() => {
       if (this.updateQueues.get(id) === marker) this.updateQueues.delete(id);
     }).catch(() => undefined);
@@ -138,6 +185,7 @@ export class PageService {
 
   private async updateUnlocked(id: string, input: UpdatePageInput): Promise<PageDocument> {
     const page = await this.get(id);
+    await this.validateParentChange(id, input);
     const meta = { ...page.meta, updated_time: new Date().toISOString() };
     // Partial metadata updates: any field omitted from `input` is
     // left as-is. Empty string/array clears optional properties.
@@ -189,38 +237,98 @@ export class PageService {
       await writeMarkdownBody(join(this.workspace.requirePaths().root, pageBodyPath(id, next.meta.title)), next.markdown);
       await this.pageRecords.upsert({ ...defaultPageRecordInput(next.meta), bodyPath: pageBodyPath(id, next.meta.title) });
     } else {
+      if (this.nextMetadataWriteFailure) {
+        const message = this.nextMetadataWriteFailure;
+        this.nextMetadataWriteFailure = undefined;
+        throw new Error(message);
+      }
       await this.pageRecords.upsert(defaultPageRecordInput(next.meta));
     }
     return next;
   }
 
+  private async validateParentChange(id: string, input: UpdatePageInput): Promise<void> {
+    if (input.parentId === undefined || input.parentId === null || input.parentId === "") return;
+    const parentKind = input.parentKind ?? "page";
+    if (parentKind !== "page") return;
+    if (input.parentId === id) {
+      throw new Error("Cannot parent a page under itself.");
+    }
+
+    const pages = await this.pageRecords.listMetas();
+    const byId = new Map(pages.map((page) => [page.id, page]));
+    const visited = new Set<string>();
+    let ancestorId: string | undefined = input.parentId;
+    while (ancestorId) {
+      if (ancestorId === id) {
+        throw new Error("Page move would create a page hierarchy cycle.");
+      }
+      if (visited.has(ancestorId)) {
+        throw new Error("Page parent hierarchy already contains a cycle.");
+      }
+      visited.add(ancestorId);
+      const ancestor = byId.get(ancestorId);
+      if (!ancestor || ancestor.parentKind !== "page") return;
+      ancestorId = ancestor.parentId;
+    }
+  }
+
   async rename(id: string, title: string): Promise<PageDocument> {
+    this.startupSnapshots.delete(id);
+    const previous = this.updateQueues.get(id) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.renameUnlocked(id, title));
+    const marker = next.then(() => undefined, () => undefined);
+    this.updateQueues.set(id, marker);
+    marker.finally(() => {
+      if (this.updateQueues.get(id) === marker) this.updateQueues.delete(id);
+    }).catch(() => undefined);
+    return next;
+  }
+
+  private async renameUnlocked(id: string, title: string): Promise<PageDocument> {
     const page = await this.get(id);
     const nextTitle = title.trim() || "Untitled";
-    const currentPath = page.meta.path?.map((segment) => segment.trim()).filter(Boolean) ?? [];
-    const nextPath = currentPath.length > 0
-      ? [...currentPath.slice(0, -1), nextTitle]
-      : [nextTitle];
-    const currentHeading = `# ${page.meta.title}`;
-    const markdown = page.markdown === currentHeading || page.markdown.startsWith(`${currentHeading}\n`)
+    if (nextTitle === page.meta.title) return page;
+    const markdown = page.markdown.startsWith("# ")
       ? page.markdown.replace(/^# .*/, `# ${nextTitle}`)
-      : page.markdown;
+      : `# ${nextTitle}\n\n${page.markdown}`;
     const next: PageDocument = {
       meta: {
         ...page.meta,
         title: nextTitle,
-        path: nextPath,
         updated_time: new Date().toISOString()
       },
       markdown
     };
-    await this.renameBodyFile(id, page.meta.title, nextTitle);
-    await this.pageRecords.upsert({ ...defaultPageRecordInput(next.meta), bodyPath: pageBodyPath(id, nextTitle) });
-    await writeMarkdownBody(join(this.workspace.requirePaths().root, pageBodyPath(id, nextTitle)), next.markdown);
+    if (this.nextMetadataWriteFailure) {
+      const message = this.nextMetadataWriteFailure;
+      this.nextMetadataWriteFailure = undefined;
+      throw new Error(message);
+    }
+    const root = this.workspace.requirePaths().root;
+    const previousBodyPath = join(root, pageBodyPath(id, page.meta.title));
+    const nextBodyPath = join(root, pageBodyPath(id, nextTitle));
+    await writeMarkdownBody(nextBodyPath, next.markdown);
+    try {
+      await this.pageRecords.upsert({ ...defaultPageRecordInput(next.meta), bodyPath: pageBodyPath(id, nextTitle) });
+    } catch (error) {
+      if (previousBodyPath === nextBodyPath) {
+        await writeMarkdownBody(previousBodyPath, page.markdown);
+      } else {
+        await fileService.remove(nextBodyPath, { force: true });
+      }
+      throw error;
+    }
+    if (previousBodyPath !== nextBodyPath) {
+      await fileService.remove(previousBodyPath, { force: true }).catch((error) => {
+        console.warn("Failed to remove stale page body after rename", { id, previousBodyPath, error });
+      });
+    }
     return next;
   }
 
   async delete(id: string): Promise<void> {
+    this.startupSnapshots.delete(id);
     await this.pageRecords.ensure();
     const meta = await this.pageRecords.getMeta(id);
     const bodyPath = await this.pageRecords.getBodyPath(id);
@@ -255,6 +363,7 @@ export class PageService {
   }
 
   async setIcon(id: string, icon?: string): Promise<PageMeta> {
+    this.startupSnapshots.delete(id);
     const meta = await this.getOrCreateMeta(id);
     const next = { ...meta, updated_time: new Date().toISOString() };
     if (icon) next.icon = icon;
@@ -263,6 +372,7 @@ export class PageService {
   }
 
   async setCover(id: string, cover?: string): Promise<PageMeta> {
+    this.startupSnapshots.delete(id);
     const meta = await this.getOrCreateMeta(id);
     const next = { ...meta, updated_time: new Date().toISOString() };
     if (cover) next.cover = cover;
@@ -271,16 +381,13 @@ export class PageService {
   }
 
   async setCoverOffset(id: string, offset: number): Promise<PageMeta> {
-    const meta = await this.getOrCreateMeta(id);
-    const next = {
-      ...meta,
-      coverOffset: clampPct(offset),
-      updated_time: new Date().toISOString()
-    };
-    return this.pageRecords.upsert(defaultPageRecordInput(next));
+    return (await this.update(id, { coverOffset: offset })).meta;
   }
 
   private async getOrCreateMeta(id: string): Promise<PageMeta> {
+    const startupSnapshot = this.startupSnapshot(id);
+    if (startupSnapshot) return startupSnapshot.meta;
+    await this.pageRecords.ensure();
     const existing = await this.pageRecords.getMeta(id);
     if (existing) return existing;
     const meta = await this.createFallbackMeta(id);
@@ -294,6 +401,19 @@ export class PageService {
   }
 
   private async createFallbackMeta(id: string): Promise<PageMeta> {
+    const legacyPath = join(this.workspace.requirePaths().pagesDir(), `page_${id}.md`);
+    try {
+      const legacy = await readPageFile(legacyPath);
+      return {
+        ...legacy.meta,
+        id,
+        title: legacy.meta.title || firstMarkdownHeading(legacy.markdown) || "Untitled",
+        created_time: legacy.meta.created_time || new Date().toISOString(),
+        updated_time: legacy.meta.updated_time || legacy.meta.created_time || new Date().toISOString()
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     const bodyPath = await this.pageRecords.getBodyPath(id);
     const markdown = await this.readBody(id);
     const now = new Date().toISOString();
@@ -307,7 +427,7 @@ export class PageService {
 
   private async readBody(id: string, meta?: PageMeta): Promise<string> {
     const paths = this.workspace.requirePaths();
-    const bodyPath = await this.pageRecords.getBodyPath(id);
+    const bodyPath = this.startupSnapshot(id)?.bodyPath ?? await this.pageRecords.getBodyPath(id);
     const candidates = [
       bodyPath ? join(paths.root, bodyPath) : undefined,
       meta ? join(paths.root, pageBodyPath(id, meta.title)) : undefined,
@@ -319,7 +439,7 @@ export class PageService {
     for (const candidate of candidates) {
       const readStartedAt = performance.now();
       try {
-        const markdown = await readMarkdownBody(candidate);
+        const markdown = parsePage(await readMarkdownBody(candidate)).markdown;
         openLog("page.readMarkdown", {
           id,
           title: meta?.title,
@@ -338,17 +458,11 @@ export class PageService {
     return "";
   }
 
-  private async renameBodyFile(id: string, oldTitle: string, nextTitle: string): Promise<void> {
-    const paths = this.workspace.requirePaths();
-    const oldPath = join(paths.root, pageBodyPath(id, oldTitle));
-    const nextPath = join(paths.root, pageBodyPath(id, nextTitle));
-    if (oldPath === nextPath) return;
-    try {
-      await fileService.rename(oldPath, nextPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+  private startupSnapshot(id: string): StartupPageSnapshot | undefined {
+    if (this.startupSnapshotsRoot !== this.workspace.requirePaths().root) return undefined;
+    return this.startupSnapshots.get(id);
   }
+
 }
 
 function clampPct(n: number): number {

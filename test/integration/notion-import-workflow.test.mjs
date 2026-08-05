@@ -195,6 +195,58 @@ test("integration: imports a Notion export and opens the resulting workspace thr
   }
 });
 
+test("integration: combines Markdown and HTML exports and prefers HTML page bodies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-dual-notion-integration-"));
+  const markdownSource = join(root, "notion-markdown-export");
+  const htmlSource = join(root, "notion-html-export");
+  const target = join(root, "imported-workspace");
+  const api = createLotionCustomerApi({ appConfig: createMemoryConfig() });
+
+  try {
+    await mkdir(join(markdownSource, "Projects"), { recursive: true });
+    await mkdir(join(htmlSource, "Projects"), { recursive: true });
+    await writeFile(
+      join(markdownSource, `Projects ${DATABASE_HASH}_all.csv`),
+      "Name,Status\nIntegration Row,Todo\n",
+      "utf8"
+    );
+    await writeFile(
+      join(markdownSource, "Projects", `Integration Row ${ROW_HASH}.md`),
+      "Markdown fallback body.",
+      "utf8"
+    );
+    await writeFile(
+      join(htmlSource, "Projects", `Integration Row ${ROW_HASH}.html`),
+      notionPage("Integration Row", "<p>Richer HTML companion body.</p>"),
+      "utf8"
+    );
+
+    const scan = await api.notion.scan([markdownSource, htmlSource]);
+    assert.deepEqual(scan.formats, { markdown: 1, html: 1, csv: 1 });
+    assert.equal(scan.databasesKept, 1);
+
+    await api.notion.runImport({
+      sourcePaths: [markdownSource, htmlSource],
+      targetPath: target,
+      force: true,
+      options: { includeOriginalHtml: true }
+    });
+    await api.workspace.open(target);
+
+    const projectsSummary = (await api.databases.list()).find((database) => database.name === "Projects");
+    assert.ok(projectsSummary);
+    const projects = await api.databases.get(projectsSummary.id);
+    const row = projects.records.find((record) => record.title === "Integration Row");
+    assert.ok(row);
+    const rowPage = await api.rowPages.open(projects.schema.id, String(row.id));
+    assert.match(rowPage.markdown, /Richer HTML companion body/);
+    assert.doesNotMatch(rowPage.markdown, /Markdown fallback body/);
+    assert.ok(cellByFieldName(projects, row, "Original Notion HTML"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function createMemoryConfig() {
   let state = { active: null, recents: [] };
   return {

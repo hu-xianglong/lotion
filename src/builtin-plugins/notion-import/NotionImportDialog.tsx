@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { FileCode2, FileJson2, FileText, FolderOpen, Table2, X } from "lucide-react";
 import type {
   NotionImportOptions,
   NotionImportProgress,
@@ -36,51 +35,6 @@ const PHASE_RANGES: Record<NotionImportProgress["phase"], [number, number]> = {
 };
 
 const TABS_STORAGE_KEY = "lotion.tabs";
-
-type ImportSourceKind = "markdown_csv" | "html";
-
-function ImportSourcePicker({
-  htmlFolder,
-  markdownCsvFolder,
-  onChoose
-}: {
-  htmlFolder: string;
-  markdownCsvFolder: string;
-  onChoose: (kind: ImportSourceKind) => void;
-}) {
-  return (
-    <section className="notion-import-sources" aria-label="Notion export folders">
-      <div className="notion-import-source">
-        <Table2 aria-hidden="true" size={20} strokeWidth={1.8} />
-        <div className="notion-import-source-copy">
-          <strong>Markdown &amp; CSV export</strong>
-          <small>Database properties, rows, and Markdown pages</small>
-          {markdownCsvFolder ? <code title={markdownCsvFolder}>{markdownCsvFolder}</code> : <span>Not selected</span>}
-        </div>
-        <button type="button" onClick={() => onChoose("markdown_csv")}>
-          <FolderOpen aria-hidden="true" size={15} />
-          {markdownCsvFolder ? "Change" : "Choose folder…"}
-        </button>
-      </div>
-      <div className="notion-import-source">
-        <FileCode2 aria-hidden="true" size={20} strokeWidth={1.8} />
-        <div className="notion-import-source-copy">
-          <strong>HTML export</strong>
-          <small>Rich page blocks, colors, callouts, and embedded views</small>
-          {htmlFolder ? <code title={htmlFolder}>{htmlFolder}</code> : <span>Not selected</span>}
-        </div>
-        <button type="button" onClick={() => onChoose("html")}>
-          <FolderOpen aria-hidden="true" size={15} />
-          {htmlFolder ? "Change" : "Choose folder…"}
-        </button>
-      </div>
-      <p>
-        Select one or both exports. When both are selected, Lotion matches their stable Notion IDs: CSV supplies database
-        structure and values, while HTML replaces the corresponding Markdown body with richer content.
-      </p>
-    </section>
-  );
-}
 
 function ProgressBar({ pct, label }: { pct: number; label: string }) {
   const width = Math.max(1, Math.min(100, Math.round(pct)));
@@ -201,61 +155,19 @@ function ImportStatsPanel({ stats }: { stats: NotionImportStats | null }) {
   );
 }
 
-export function ImportSummary({ summary }: { summary: NotionImportSummary }) {
-  const report = summary.report;
+function ImportSummary({ summary }: { summary: NotionImportSummary }) {
+  const totalRows = summary.scan.databases.reduce((acc, db) => acc + db.rows, 0);
   const topByRows = summary.scan.databases.slice(0, 5);
-  const conflicts = report.nameConflicts;
-  const openArtifact = (path: string) => void window.lotion.shell.openLink(path);
   return (
     <>
-      <div className={`notion-report-status ${report.status}`}>
-        <strong>{report.status === "complete" ? "Import complete" : "Import complete with items to review"}</strong>
-        <span>{formatDuration(report.durationMs)}</span>
-      </div>
       <table className="notion-summary">
         <tbody>
-          <tr><th>Databases imported</th><td>{report.counts.databases.toLocaleString()}</td></tr>
-          <tr><th>Total rows</th><td>{report.counts.rows.toLocaleString()}</td></tr>
-          <tr><th>Pages</th><td>{report.counts.pages.toLocaleString()}</td></tr>
-          <tr><th>Attachments</th><td>{report.counts.attachments.toLocaleString()}</td></tr>
-          <tr><th>Review items</th><td>{report.counts.reviewItems.toLocaleString()}</td></tr>
-          <tr><th>Warnings</th><td>{report.counts.warnings.toLocaleString()}</td></tr>
+          <tr><th>Databases imported</th><td>{summary.scan.databasesKept.toLocaleString()}</td></tr>
+          <tr><th>Total rows</th><td>{totalRows.toLocaleString()}</td></tr>
+          <tr><th>Pages</th><td>{summary.scan.topLevelPages.toLocaleString()}</td></tr>
+          <tr><th>Attachments</th><td>{summary.scan.attachments.toLocaleString()}</td></tr>
         </tbody>
       </table>
-      <details className="notion-db-preview" open={conflicts.groups.length > 0}>
-        <summary>Same-name objects ({conflicts.groups.length.toLocaleString()} groups)</summary>
-        <p className="hint">Names never overwrite another object. Only matching stable Notion IDs are merged.</p>
-        <table>
-          <thead><tr><th>Name</th><th>Pages</th><th>Databases</th></tr></thead>
-          <tbody>
-            {conflicts.groups.slice(0, 12).map((group) => (
-              <tr key={`${group.name}-${group.entries.length}`}>
-                <td>{group.name}</td>
-                <td>{group.entries.filter((entry) => entry.kind === "page").length}</td>
-                <td>{group.entries.filter((entry) => entry.kind === "database").length}</td>
-              </tr>
-            ))}
-            {conflicts.groups.length === 0 && <tr><td colSpan={3}>No same-name pages or databases</td></tr>}
-          </tbody>
-        </table>
-      </details>
-      <details className="notion-db-preview">
-        <summary>Icon coverage</summary>
-        <table>
-          <thead><tr><th>Object</th><th>With icon</th><th>Without icon</th></tr></thead>
-          <tbody>
-            <tr><td>Pages</td><td>{report.icons.pagesWithIcon}</td><td>{report.icons.pagesWithoutIcon}</td></tr>
-            <tr><td>Databases</td><td>{report.icons.databasesWithIcon}</td><td>{report.icons.databasesWithoutIcon}</td></tr>
-            <tr><td>Database rows</td><td>{report.icons.rowsWithIcon}</td><td>{report.icons.rowsWithoutIcon}</td></tr>
-          </tbody>
-        </table>
-      </details>
-      {report.warnings.length > 0 && (
-        <details className="notion-db-preview notion-report-warnings" open>
-          <summary>Items to review ({report.warnings.length})</summary>
-          <ul>{report.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
-        </details>
-      )}
       {topByRows.length > 0 && (
         <details className="notion-db-preview" open>
           <summary>Largest databases</summary>
@@ -275,17 +187,6 @@ export function ImportSummary({ summary }: { summary: NotionImportSummary }) {
           </table>
         </details>
       )}
-      <div className="notion-report-artifacts" aria-label="Import report files">
-        <button type="button" onClick={() => openArtifact(report.artifacts.markdown)}>
-          <FileText aria-hidden="true" size={15} /> Markdown report
-        </button>
-        <button type="button" onClick={() => openArtifact(report.artifacts.json)}>
-          <FileJson2 aria-hidden="true" size={15} /> JSON report
-        </button>
-        <button type="button" onClick={() => openArtifact(report.artifacts.manifest)}>
-          <Table2 aria-hidden="true" size={15} /> Import manifest
-        </button>
-      </div>
     </>
   );
 }
@@ -319,15 +220,12 @@ function ImportOptionsFieldset({
           <small>Blank items are omitted from the imported workspace instead of being kept as empty records.</small>
         </span>
       </label>
-      <details className="notion-import-option-note">
-        <summary>What counts as blank?</summary>
-        <p>
-          A standalone or nested page is blank when, after removing Notion's exported title/property wrapper, its Markdown
-          body is empty. A database row is blank when its cleaned row-page body is empty or missing, and all meaningful user
-          fields are empty; system fields, row id, row icon, page file, generated timestamps, and Original Notion HTML/CSV
-          links do not count as content.
-        </p>
-      </details>
+      <div className="notion-import-option-note">
+        <strong>Blank definition.</strong> A standalone or nested page is blank when, after removing Notion's exported
+        title/property wrapper, its Markdown body is empty. A database row is blank when its cleaned row-page body is empty
+        or missing, and all meaningful user fields are empty; system fields, row id, row icon, page file, generated
+        timestamps, and Original Notion HTML/CSV links do not count as content.
+      </div>
       <label>
         <input
           type="checkbox"
@@ -362,7 +260,7 @@ function ImportOptionsFieldset({
  */
 export function NotionImportPanel({ onClose, embedded = false }: NotionImportPanelProps) {
   const [stage, setStage] = useState<Stage>("pick");
-  const [markdownCsvFolder, setMarkdownCsvFolder] = useState<string>("");
+  const [folder, setFolder] = useState<string>("");
   const [htmlFolder, setHtmlFolder] = useState<string>("");
   const [scan, setScan] = useState<NotionScanSummary | null>(null);
   const [error, setError] = useState<string>("");
@@ -371,7 +269,6 @@ export function NotionImportPanel({ onClose, embedded = false }: NotionImportPan
   const [importStats, setImportStats] = useState<NotionImportStats | null>(null);
   const [doneSummary, setDoneSummary] = useState<NotionImportSummary | null>(null);
   const [options, setOptions] = useState<Required<NotionImportOptions>>(DEFAULT_IMPORT_OPTIONS);
-  const selectedSourcePaths = [markdownCsvFolder, htmlFolder].filter(Boolean);
 
   useEffect(() => {
     if (stage !== "importing") return;
@@ -382,20 +279,27 @@ export function NotionImportPanel({ onClose, embedded = false }: NotionImportPan
     return () => unsubscribe();
   }, [stage]);
 
-  async function chooseSource(kind: ImportSourceKind) {
+  async function pickMarkdownFolder() {
     setError("");
-    const chosen = await window.lotion.notion.pickFolder(kind);
+    const chosen = await window.lotion.notion.pickFolder();
     if (!chosen) return;
-    if (kind === "markdown_csv") setMarkdownCsvFolder(chosen);
-    else setHtmlFolder(chosen);
+    setFolder(chosen);
+    setScan(null);
   }
 
-  async function scanSelectedSources() {
-    if (selectedSourcePaths.length === 0) return;
+  async function pickHtmlFolder() {
     setError("");
+    const chosen = await window.lotion.notion.pickFolder();
+    if (!chosen) return;
+    setHtmlFolder(chosen);
+    setScan(null);
+  }
+
+  async function scanSelectedExports() {
+    if (!folder) return;
     setStage("scanning");
     try {
-      const result = await window.lotion.notion.scan(selectedSourcePaths);
+      const result = await window.lotion.notion.scan([folder, htmlFolder].filter(Boolean));
       setScan(result);
       setStage("preview");
     } catch (e) {
@@ -405,15 +309,15 @@ export function NotionImportPanel({ onClose, embedded = false }: NotionImportPan
   }
 
   async function commit() {
-    if (selectedSourcePaths.length === 0) return;
+    if (!folder) return;
     const target = await window.lotion.notion.pickTarget();
     if (!target) return;
     setStage("importing");
     setProgress(null);
-      setImportStats(null);
+    setImportStats(null);
     try {
       const result = await window.lotion.notion.runImport({
-        sourcePaths: selectedSourcePaths,
+        sourcePaths: [folder, htmlFolder].filter(Boolean),
         targetPath: target,
         options
       });
@@ -451,59 +355,67 @@ export function NotionImportPanel({ onClose, embedded = false }: NotionImportPan
   return (
     <div className={embedded ? "notion-import-panel embedded" : "notion-import-panel"}>
         {embedded && <h2>Import from Notion</h2>}
-        {stage === "pick" && (
-          <ImportSourcePicker
-            htmlFolder={htmlFolder}
-            markdownCsvFolder={markdownCsvFolder}
-            onChoose={chooseSource}
-          />
-        )}
         {(stage === "pick" || stage === "preview" || stage === "error") && (
           <ImportOptionsFieldset options={options} onChange={setImportOption} />
         )}
 
         {stage === "pick" && (
           <>
-            <p className="hint">
-              If either export was split into multiple <code>Export-…</code> parts, select the folder containing those
-              parts.
+            <p>
+              For the most complete import, export the same Notion workspace twice.
+              Use <strong>Markdown &amp; CSV</strong> for database structure and a separate{" "}
+              <strong>HTML</strong> export for richer page bodies, properties, and audit links.
             </p>
+            <div className="notion-import-source-list">
+              <div>
+                <strong>1. Markdown &amp; CSV export</strong> <span className="hint">required</span>
+                <p className="hint">If it was split into multiple <code>Export-…</code> parts, choose their shared parent.</p>
+                {folder && <code>{folder}</code>}
+                <button onClick={pickMarkdownFolder}>{folder ? "Change folder…" : "Choose folder…"}</button>
+              </div>
+              <div>
+                <strong>2. HTML export</strong> <span className="hint">recommended</span>
+                <p className="hint">Adds richer page content and enables Original Notion HTML audit links.</p>
+                {htmlFolder && <code>{htmlFolder}</code>}
+                <button onClick={pickHtmlFolder}>{htmlFolder ? "Change folder…" : "Choose folder…"}</button>
+                {htmlFolder && <button onClick={() => setHtmlFolder("")}>Remove</button>}
+              </div>
+            </div>
             <div className="notion-dialog-actions">
               {onClose && <button onClick={onClose}>Cancel</button>}
-              <button
-                className="primary"
-                disabled={selectedSourcePaths.length === 0}
-                onClick={scanSelectedSources}
-              >
-                {selectedSourcePaths.length === 0
-                  ? "Review selected exports"
-                  : `Review ${selectedSourcePaths.length} export${selectedSourcePaths.length === 1 ? "" : "s"}`}
-              </button>
+              <button className="primary" disabled={!folder} onClick={scanSelectedExports}>Scan exports</button>
             </div>
           </>
         )}
 
         {stage === "scanning" && (
           <>
-            <p>Scanning {selectedSourcePaths.length} selected export{selectedSourcePaths.length === 1 ? "" : "s"}…</p>
+            <p>Scanning {htmlFolder ? "both Notion exports" : <code>{folder}</code>}…</p>
             <p className="hint">Big exports take a few seconds.</p>
           </>
         )}
 
         {stage === "preview" && scan && (
           <>
-            <div className="notion-import-selected-sources">
-              <strong>Selected exports</strong>
-              {selectedSourcePaths.map((sourcePath) => <code key={sourcePath}>{sourcePath}</code>)}
-              <span>{scan.sources.length} source part{scan.sources.length === 1 ? "" : "s"} found</span>
-            </div>
+            <p>
+              Sources: {scan.sources.length} part{scan.sources.length === 1 ? "" : "s"}
+            </p>
             <table className="notion-summary">
               <tbody>
+                <tr><th>Markdown files</th><td>{scan.formats.markdown.toLocaleString()}</td></tr>
+                <tr><th>HTML files</th><td>{scan.formats.html.toLocaleString()}</td></tr>
+                <tr><th>CSV files</th><td>{scan.formats.csv.toLocaleString()}</td></tr>
                 <tr><th>Pages</th><td>{scan.topLevelPages.toLocaleString()}</td></tr>
                 <tr><th>Databases (after dedup)</th><td>{scan.databasesKept.toLocaleString()}<span className="hint"> &nbsp;/ {scan.databasesRaw.toLocaleString()} raw</span></td></tr>
                 <tr><th>Attachments</th><td>{scan.attachments.toLocaleString()}</td></tr>
               </tbody>
             </table>
+            {scan.formats.html === 0 && (
+              <p className="warn">No HTML export was found. The import can continue, but rich page metadata and Original Notion HTML audit links will be unavailable.</p>
+            )}
+            {scan.formats.markdown === 0 && (
+              <p className="warn">No Markdown export was found. Add the Markdown &amp; CSV version for the most reliable database and page structure.</p>
+            )}
 
             {scan.databases.length > 0 && (
               <details className="notion-db-preview">
@@ -531,7 +443,7 @@ export function NotionImportPanel({ onClose, embedded = false }: NotionImportPan
             </p>
             <div className="notion-dialog-actions">
               {onClose && <button onClick={onClose}>Cancel</button>}
-              <button onClick={() => setStage("pick")}>Change export folders</button>
+              <button onClick={() => setStage("pick")}>Change exports</button>
               <button className="primary" onClick={commit}>Choose target & import…</button>
             </div>
           </>
@@ -573,7 +485,7 @@ export function NotionImportPanel({ onClose, embedded = false }: NotionImportPan
               {onClose ? (
                 <button onClick={onClose}>Close</button>
               ) : (
-                <button onClick={() => setStage(selectedSourcePaths.length > 0 && scan ? "preview" : "pick")}>Back</button>
+                <button onClick={() => setStage(folder ? "preview" : "pick")}>Back</button>
               )}
             </div>
           </>
@@ -601,40 +513,10 @@ function persistReportTab(reportPageId: string): void {
  * management page embeds the same panel directly.
  */
 export function NotionImportDialog({ onClose }: NotionImportDialogProps) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
   return (
-    <div
-      className="dialog-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="notion-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="notion-import-dialog-title"
-      >
-        <header className="notion-dialog-header">
-          <div>
-            <h2 id="notion-import-dialog-title">Import from Notion</h2>
-            <p>Combine separate Markdown &amp; CSV and HTML exports in one Lotion workspace.</p>
-          </div>
-          <button type="button" className="notion-dialog-close" onClick={onClose} aria-label="Close import dialog">
-            <X aria-hidden="true" size={17} />
-          </button>
-        </header>
-        <div className="notion-dialog-body">
-          <NotionImportPanel onClose={onClose} />
-        </div>
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog notion-dialog" onClick={(e) => e.stopPropagation()}>
+        <NotionImportPanel onClose={onClose} />
       </div>
     </div>
   );

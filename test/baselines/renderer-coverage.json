@@ -1,0 +1,13 @@
+{
+  "kind": "lotion-renderer-coverage-baseline",
+  "verifiedAt": "2026-07-24",
+  "sourceTask": "tasks/done/embedded-view-first-render-budget.md",
+  "sourceFileCount": 66,
+  "coveredSourceFileCount": 64,
+  "metrics": {
+    "lines": 64.77,
+    "statements": 64.77,
+    "functions": 28.89,
+    "branches": 67.56
+  }
+}

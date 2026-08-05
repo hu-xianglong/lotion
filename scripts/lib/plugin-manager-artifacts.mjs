@@ -20,7 +20,8 @@ const REQUIRED_DETAIL_PLUGINS = [
 ];
 
 export async function assertPluginManagerArtifactContract(summary, {
-  expectedViewportNames = ["desktop", "compact"]
+  expectedViewportNames = ["desktop", "compact"],
+  requiredPerceptualBaselineViewportNames = ["desktop", "compact", "wide"]
 } = {}) {
   if (summary?.status !== "passed") {
     throw new Error(`Plugin manager artifact contract requires passed smoke status, saw ${summary?.status ?? "missing"}`);
@@ -37,7 +38,9 @@ export async function assertPluginManagerArtifactContract(summary, {
     const entry = viewports.find((candidate) => viewportNameFromEntry(candidate) === viewportName);
     if (!entry) throw new Error(`Plugin manager artifact contract missing entry for ${viewportName}`);
     assertPluginManagerViewport(entry, viewportName);
-    snapshots.push(await assertPluginManagerSnapshot(entry, viewportName));
+    snapshots.push(await assertPluginManagerSnapshot(entry, viewportName, {
+      requirePerceptualBaseline: requiredPerceptualBaselineViewportNames.includes(viewportName)
+    }));
   }
 
   return {
@@ -45,6 +48,7 @@ export async function assertPluginManagerArtifactContract(summary, {
     expectedViewportNames,
     observedViewportNames,
     snapshotCount: snapshots.length,
+    perceptualBaselineCount: snapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length,
     snapshots
   };
 }
@@ -86,6 +90,7 @@ function assertPluginManagerViewport(entry, viewportName) {
   if (!String(entry.notification?.renderedText || "").includes("Plugin notify smoke")) {
     throw new Error(`Plugin manager artifact contract missing notification toast evidence for ${viewportName}: ${JSON.stringify(entry.notification)}`);
   }
+  assertSnapshotState(entry.snapshotState, viewportName);
 }
 
 function assertPermissionSummary(permissionSummary, viewportName) {
@@ -142,7 +147,9 @@ function assertCommandSearch(commandSearch, viewportName) {
   }
 }
 
-async function assertPluginManagerSnapshot(entry, viewportName) {
+async function assertPluginManagerSnapshot(entry, viewportName, {
+  requirePerceptualBaseline = false
+} = {}) {
   const snapshot = entry.snapshot;
   if (!snapshot?.imagePath || !snapshot?.metadataPath) {
     throw new Error(`Plugin manager artifact contract missing snapshot paths for ${viewportName}`);
@@ -166,16 +173,85 @@ async function assertPluginManagerSnapshot(entry, viewportName) {
     }
   }
   assertLifecycleControls(payload.lifecycle, viewportName);
+  assertSnapshotState(payload.snapshotState, viewportName);
+  const perceptualBaseline = await assertPerceptualBaseline(entry.perceptualBaseline, snapshot, viewportName, {
+    required: requirePerceptualBaseline
+  });
   return {
     viewport: viewportName,
     imageBytes: imageInfo.size,
     imagePath: snapshot.imagePath,
     metadataPath: snapshot.metadataPath,
+    ...(perceptualBaseline ? { perceptualBaseline } : {}),
     pluginRows: payload.summary.pluginRows,
     providerRows: payload.summary.providerRows,
+    snapshotState: payload.snapshotState,
     detailCount: Array.isArray(payload.details) ? payload.details.length : 0,
     lifecycle: payload.lifecycle,
     commandQuery: payload.commandSearch?.query || ""
+  };
+}
+
+function assertSnapshotState(state, viewportName) {
+  if (
+    state?.managementScrollTop !== 0
+    || state?.pluginRowCount < 7
+    || state?.providerRowCount < 14
+    || !Number.isFinite(state?.managerHeight)
+    || state.managerHeight <= 0
+    || state?.summaryWithinManager !== true
+    || state?.allPluginRowsWithinManager !== true
+    || state?.allProviderRowsWithinManager !== true
+    || state?.lastSectionWithinManager !== true
+  ) {
+    throw new Error(`Plugin manager artifact contract final snapshot surface is incomplete for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+}
+
+async function assertPerceptualBaseline(baseline, snapshot, viewportName, { required }) {
+  if (!baseline) {
+    if (required) throw new Error(`Plugin manager artifact contract missing committed perceptual baseline for ${viewportName}`);
+    return null;
+  }
+  if (baseline.kind !== "lotion-png-visual-diff" || baseline.status !== "passed") {
+    throw new Error(`Plugin manager artifact contract perceptual baseline did not pass for ${viewportName}: ${JSON.stringify({ kind: baseline.kind, status: baseline.status })}`);
+  }
+  if (baseline.actualPath !== snapshot.imagePath) {
+    throw new Error(`Plugin manager artifact contract perceptual baseline actual path mismatch for ${viewportName}: ${baseline.actualPath}`);
+  }
+  if (!baseline.dimensionsMatch || baseline.diffPixels > baseline.maxDiffPixels || baseline.diffRatio > baseline.maxDiffRatio) {
+    throw new Error(`Plugin manager artifact contract perceptual baseline exceeded tolerance for ${viewportName}: ${JSON.stringify({ dimensionsMatch: baseline.dimensionsMatch, diffPixels: baseline.diffPixels, diffRatio: baseline.diffRatio })}`);
+  }
+  for (const [label, path] of Object.entries({
+    expected: baseline.expectedPath,
+    diff: baseline.diffPath,
+    metadata: baseline.metadataPath,
+    policy: baseline.policyPath
+  })) {
+    if (!path) throw new Error(`Plugin manager artifact contract missing perceptual ${label} path for ${viewportName}`);
+    const info = await stat(path);
+    if (info.size <= 0) throw new Error(`Plugin manager artifact contract found empty perceptual ${label} artifact for ${viewportName}: ${path}`);
+  }
+  const diffMetadata = JSON.parse(await readFile(baseline.metadataPath, "utf8"));
+  if (diffMetadata.status !== "passed" || diffMetadata.expectedPath !== baseline.expectedPath || diffMetadata.actualPath !== baseline.actualPath) {
+    throw new Error(`Plugin manager artifact contract perceptual metadata mismatch for ${viewportName}: ${JSON.stringify(diffMetadata)}`);
+  }
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA,
+    policy: baseline.policy
   };
 }
 

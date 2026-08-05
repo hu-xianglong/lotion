@@ -1,0 +1,40 @@
+{
+  "id": "view_created_time_asc",
+  "databaseId": "db_reading",
+  "name": "Created date asc",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "created_time",
+    "author",
+    "next_action",
+    "status",
+    "finished",
+    "rating"
+  ],
+  "fieldOrder": [
+    "title",
+    "created_time",
+    "author",
+    "next_action",
+    "status",
+    "finished",
+    "rating"
+  ],
+  "wrapFieldIds": [
+    "title",
+    "created_time",
+    "author",
+    "next_action",
+    "status",
+    "finished",
+    "rating"
+  ],
+  "sorts": [
+    {
+      "fieldId": "created_time",
+      "direction": "asc"
+    }
+  ],
+  "filters": []
+}

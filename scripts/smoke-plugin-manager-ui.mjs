@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertPluginManagerArtifactContract } from "./lib/plugin-manager-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertNoDocumentHorizontalOverflow,
   assertWithinViewport,
@@ -74,25 +75,46 @@ const result = await withLotionUIHarness("plugin-manager-ui", async ({ artifactR
       providerRows: document.querySelectorAll(".plugin-provider-icon").length,
       settingsHosts: document.querySelectorAll(".plugin-settings-tab-host").length
     }));
-    const snapshot = await captureElementSnapshot({
-      artifactRoot,
-      locator: page.locator(".plugin-manager").first(),
-      metadata: {
-        commandSearch,
-        details,
-        extensionPointTitles,
-        listedPlugins,
-        permissionSummary,
-        providerSourceDrilldown,
-        lifecycle,
-        sourceDrilldown,
-        summary,
-        viewport: viewport.name
-      },
-      name: `plugin-manager-${viewport.name}`,
-      page,
-      viewport
-    });
+    await resetPluginManagerScroll(page);
+    const snapshotState = await readPluginManagerSnapshotState(page, viewport.name);
+    let snapshot;
+    await exposeFullPluginManagerForSnapshot(page);
+    try {
+      snapshot = await captureElementSnapshot({
+        artifactRoot,
+        locator: page.locator(".plugin-manager").first(),
+        metadata: {
+          commandSearch,
+          details,
+          extensionPointTitles,
+          listedPlugins,
+          permissionSummary,
+          providerSourceDrilldown,
+          lifecycle,
+          snapshotState,
+          sourceDrilldown,
+          summary,
+          viewport: viewport.name
+        },
+        name: `plugin-manager-${viewport.name}`,
+        page,
+        viewport
+      });
+    } finally {
+      await restorePluginManagerAfterSnapshot(page);
+    }
+    const baselinePolicy = {
+      compact: "test/baselines/production-visual/plugin-manager-compact.json",
+      desktop: "test/baselines/production-visual/plugin-manager-desktop.json",
+      wide: "test/baselines/production-visual/plugin-manager-wide.json"
+    }[viewport.name];
+    const perceptualBaseline = baselinePolicy && process.env.LOTION_PLUGIN_MANAGER_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: snapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
     await assertNoDocumentHorizontalOverflow(page, `plugin manager completed ${viewport.name}`);
     viewportResults.push({
       viewport: viewport.name,
@@ -106,7 +128,9 @@ const result = await withLotionUIHarness("plugin-manager-ui", async ({ artifactR
       lifecycle,
       commandSearch,
       notification,
-      snapshot
+      snapshotState,
+      snapshot,
+      perceptualBaseline
     });
   });
 
@@ -117,7 +141,10 @@ const result = await withLotionUIHarness("plugin-manager-ui", async ({ artifactR
     status: "passed"
   };
   summary.artifactContract = await assertPluginManagerArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_PLUGIN_MANAGER_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
   });
   return summary;
 });
@@ -132,6 +159,97 @@ async function assertPluginManagerLayout(page, viewportName) {
     4
   );
   await assertNoDocumentHorizontalOverflow(page, `plugin manager ${viewportName}`);
+}
+
+async function resetPluginManagerScroll(page) {
+  const scroller = page.locator(".management-view").first();
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await page.waitForFunction(() => document.querySelector(".management-view")?.scrollTop === 0);
+}
+
+async function readPluginManagerSnapshotState(page, viewportName) {
+  const state = await page.evaluate(() => {
+    const manager = document.querySelector(".plugin-manager");
+    const summary = document.querySelector(".plugin-summary-grid");
+    const scroller = document.querySelector(".management-view");
+    const pluginRows = Array.from(document.querySelectorAll("tr.plugin-row"));
+    const providerRows = Array.from(document.querySelectorAll(".plugin-provider-icon"));
+    const managerRect = manager?.getBoundingClientRect();
+    const withinManager = (element) => {
+      const rect = element.getBoundingClientRect();
+      return Boolean(
+        managerRect
+        && rect.width > 0
+        && rect.height > 0
+        && rect.left >= managerRect.left
+        && rect.right <= managerRect.right
+        && rect.top >= managerRect.top
+        && rect.bottom <= managerRect.bottom + 1
+      );
+    };
+    const lastSection = manager?.lastElementChild;
+    return {
+      allPluginRowsWithinManager: pluginRows.every(withinManager),
+      allProviderRowsWithinManager: providerRows.every(withinManager),
+      lastSectionWithinManager: lastSection instanceof HTMLElement && withinManager(lastSection),
+      managementScrollTop: scroller instanceof HTMLElement ? scroller.scrollTop : null,
+      managerHeight: managerRect?.height ?? 0,
+      pluginRowCount: pluginRows.length,
+      providerRowCount: providerRows.length,
+      summaryWithinManager: summary instanceof HTMLElement && withinManager(summary)
+    };
+  });
+  if (
+    state.managementScrollTop !== 0
+    || state.pluginRowCount < 7
+    || state.providerRowCount < 14
+    || state.managerHeight <= 0
+    || !state.summaryWithinManager
+    || !state.allPluginRowsWithinManager
+    || !state.allProviderRowsWithinManager
+    || !state.lastSectionWithinManager
+  ) {
+    throw new Error(`Plugin manager snapshot state failed for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  return state;
+}
+
+async function exposeFullPluginManagerForSnapshot(page) {
+  await page.evaluate(() => {
+    const rules = [
+      [".app-shell", { height: "auto", minHeight: "100vh" }],
+      [".main-area", { overflow: "visible" }],
+      [".main-content", { overflow: "visible" }],
+      [".management-view", { height: "auto", overflow: "visible" }]
+    ];
+    for (const [selector, styles] of rules) {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) continue;
+      element.dataset.pluginManagerSnapshotStyle = element.getAttribute("style") || "";
+      Object.assign(element.style, styles);
+    }
+    const manager = document.querySelector(".plugin-manager");
+    if (manager instanceof HTMLElement) {
+      manager.dataset.pluginManagerSnapshotStyle = manager.getAttribute("style") || "";
+      const rect = manager.getBoundingClientRect();
+      manager.style.translate = `${Math.round(rect.left) - rect.left}px ${Math.round(rect.top) - rect.top}px`;
+    }
+  });
+}
+
+async function restorePluginManagerAfterSnapshot(page) {
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll("[data-plugin-manager-snapshot-style]")) {
+      if (!(element instanceof HTMLElement)) continue;
+      const original = element.dataset.pluginManagerSnapshotStyle || "";
+      if (original) element.setAttribute("style", original);
+      else element.removeAttribute("style");
+      delete element.dataset.pluginManagerSnapshotStyle;
+    }
+  });
 }
 
 async function openPluginManager(page) {

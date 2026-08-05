@@ -37,3 +37,11 @@ still uses the full production visual viewport set.
 - [x] `node --test --test-name-pattern "production visual" test/ui-harness-artifacts.test.mjs`
 - [x] `npm run typecheck`
 - [x] `git diff --check`
+
+## Follow-up
+
+On 2026-07-22, queue item 642 found that the inner production contract honored
+custom viewport names but the outer UI suite artifact writer and minimum
+screenshot count still assumed multiple default viewports. Those two remaining
+paths are now covered by focused single-viewport tests and a passing real
+Design System production-gate run.

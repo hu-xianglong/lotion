@@ -235,7 +235,7 @@ export function SearchAiSurface({ onClose }: SearchAiSurfaceProps) {
                     </span>
                     <span className="search-ai-hit-main">
                       <strong>{hitTitle(hit)}</strong>
-                      <small>{hitSubtitle(hit)}</small>
+                      <small>{searchAiHitSubtitle(hit)}</small>
                       <span>{hit.text}</span>
                     </span>
                   </button>
@@ -257,7 +257,7 @@ export function SearchAiSurface({ onClose }: SearchAiSurfaceProps) {
                 <div className="search-ai-selected-source" data-testid="search-ai-selected-source">
                   <span>Selected source</span>
                   <strong>{hitTitle(selectedHit)}</strong>
-                  <small>{hitSubtitle(selectedHit)}</small>
+                  <small>{searchAiHitSubtitle(selectedHit)}</small>
                 </div>
               )}
               <div className="search-ai-chat-actions">
@@ -318,10 +318,34 @@ function hitTitle(hit: SearchHit): string {
   return hit.title || "Untitled";
 }
 
-function hitSubtitle(hit: SearchHit): string {
-  const path = hit.entityPath || hit.path;
-  if (hit.kind === "database") return `Database · ${path}`;
-  if (hit.kind === "row" || hit.kind === "rowPage") return `Row page · ${hit.databaseName} · ${path}`;
-  if (hit.databaseName) return `Page · ${hit.databaseName} · ${path}`;
-  return `Page · ${path}`;
+export function searchAiHitSubtitle(hit: SearchHit): string {
+  const entityPath = readableEntityPath(hit.entityPath);
+  if (hit.kind === "database") {
+    return subtitleParts("Database", entityPath || hit.databaseName);
+  }
+  if (hit.kind === "row" || hit.kind === "rowPage") {
+    return subtitleParts("Row page", hit.databaseName, entityPath);
+  }
+  if (hit.databaseName) {
+    const rowBacked = Boolean(
+      hit.rowId
+      || hit.pageFile
+      || /(?:^|\/)data\.csv$/i.test(hit.path)
+      || /(?:^|\/)pages\/[^/]+\.md$/i.test(hit.path)
+    );
+    return subtitleParts(rowBacked ? "Row page" : "Page", hit.databaseName, entityPath);
+  }
+  return subtitleParts("Page", entityPath || "Workspace");
+}
+
+function readableEntityPath(value: string | undefined): string {
+  const path = String(value || "").trim();
+  if (!path || /(?:^|\/)databases\/|--(?:db|row|pg)_|(?:^|\/)(?:data\.csv|[^/]+\.md)$/i.test(path)) {
+    return "";
+  }
+  return path;
+}
+
+function subtitleParts(...parts: Array<string | undefined>): string {
+  return parts.map((part) => String(part || "").trim()).filter(Boolean).join(" · ");
 }

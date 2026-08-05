@@ -8,9 +8,12 @@ import { promisify } from "node:util";
 import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/constants.js";
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
+import { assertGitHubBackupArtifactContract } from "./lib/github-backup-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertNoDocumentHorizontalOverflow,
   assertWithinViewport,
+  captureElementSnapshot,
   forEachViewport,
   openPage,
   selectedViewports,
@@ -23,15 +26,18 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-await withLotionUIHarness("github-backup-ui", async ({ page, openWorkspace }) => {
+const result = await withLotionUIHarness("github-backup-ui", async ({ artifactRoot, cdpUrl, page, openWorkspace, registerTempWorkspace }) => {
   const fixture = await createGitHubBackupFixture();
+  registerTempWorkspace(fixture.root);
   await openWorkspace(fixture.root);
+  const expectedViewports = selectedViewports();
+  const viewportResults = [];
   await page.waitForFunction(async (databaseId) => {
     const databases = await window.lotion.databases.list();
     return databases.some((database) => database.id === databaseId);
   }, fixture.databaseId, { timeout: 8_000 });
 
-  for (const viewport of selectedViewports()) {
+  for (const viewport of expectedViewports) {
     await forEachViewport(page, [viewport], async () => {
       await page.evaluate(({ pageId, markdown }) => window.lotion.pages.update(pageId, { markdown }), {
         pageId: fixture.pageId,
@@ -47,7 +53,7 @@ await withLotionUIHarness("github-backup-ui", async ({ page, openWorkspace }) =>
         { timeout: 8_000 }
       );
       await openGitHubBackup(page);
-      await assertInitialState(page, viewport.name);
+      const initial = await assertInitialState(page, viewport.name);
       await runBackupAndAssert(page, "first", 1);
 
       await page.evaluate(({ pageId, markdown }) => window.lotion.pages.update(pageId, { markdown }), {
@@ -55,18 +61,66 @@ await withLotionUIHarness("github-backup-ui", async ({ page, openWorkspace }) =>
         markdown: fixture.changedMarkdown
       });
       await runBackupAndAssert(page, "second", 2);
-      await assertPreviewAndRestore(page, fixture, viewport.name);
-      await assertGitHubApiNotConfiguredState(page);
+      const backups = await stabilizeBackupEvidence(page);
+      const { overlay, preview } = await assertPreview(page, viewport.name);
+      const { completeSurface, snapshot } = await captureGitHubBackupSnapshot({
+        artifactRoot,
+        backups,
+        initial,
+        overlay,
+        page,
+        preview,
+        viewport
+      });
+      const baselinePolicy = {
+        compact: "test/baselines/production-visual/github-backup-restore-preview-compact.json",
+        desktop: "test/baselines/production-visual/github-backup-restore-preview-desktop.json",
+        wide: "test/baselines/production-visual/github-backup-restore-preview-wide.json"
+      }[viewport.name];
+      const perceptualBaseline = baselinePolicy && process.env.LOTION_GITHUB_BACKUP_SKIP_BASELINE !== "1"
+        ? await assertProductionVisualBaseline({
+          actualPath: snapshot.imagePath,
+          artifactRoot,
+          policyPath: baselinePolicy
+        })
+        : null;
+      const restore = await assertRestore(page, fixture, viewport.name);
+      const notConfigured = await assertGitHubApiNotConfiguredState(page);
+      await assertNoDocumentHorizontalOverflow(page, `github backup completed ${viewport.name}`);
+      viewportResults.push({
+        viewport: viewport.name,
+        workspaceRoot: fixture.root,
+        initial,
+        backups,
+        overlay,
+        preview,
+        completeSurface,
+        snapshot,
+        perceptualBaseline,
+        restore,
+        notConfigured,
+        noHorizontalOverflow: true
+      });
       await closeGitHubBackup(page);
     });
   }
 
-  console.log(JSON.stringify({
+  const summary = {
+    cdpUrl,
     workspaceRoot: fixture.root,
-    viewports: selectedViewports().map((viewport) => viewport.name),
+    viewports: viewportResults,
     status: "passed"
-  }, null, 2));
+  };
+  summary.artifactContract = await assertGitHubBackupArtifactContract(summary, {
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_GITHUB_BACKUP_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
+  });
+  return summary;
 });
+
+console.log(JSON.stringify(result, null, 2));
 
 async function openGitHubBackup(page) {
   await closeGitHubBackup(page);
@@ -117,6 +171,11 @@ async function assertInitialState(page, viewportName) {
   await modal.getByText("History empty for the current page.").waitFor({ timeout: 8_000 });
   await assertWithinViewport(page, modal.locator(".github-backup-form").first(), `github backup form ${viewportName}`, 4);
   await assertWithinViewport(page, modal.locator(".github-backup-history").first(), `github backup history ${viewportName}`, 4);
+  return {
+    status: (await modal.locator(".github-backup-status").textContent())?.trim() ?? "",
+    historyCount: await modal.locator(".github-backup-version").count(),
+    message: (await modal.locator(".github-backup-message").textContent())?.trim() ?? ""
+  };
 }
 
 async function runBackupAndAssert(page, label, expectedHistoryCount) {
@@ -131,7 +190,54 @@ async function runBackupAndAssert(page, label, expectedHistoryCount) {
   }
 }
 
-async function assertPreviewAndRestore(page, fixture, viewportName) {
+async function stabilizeBackupEvidence(page) {
+  const backups = await page.evaluate(async () => {
+    const remote = await window.lotion.plugins.readJson("github-backup", "github-backup-local-remote.json");
+    if (!remote || !Array.isArray(remote.commits) || remote.commits.length !== 2) {
+      throw new Error(`Expected two local-mock commits, saw ${JSON.stringify(remote)}`);
+    }
+    const deterministic = [
+      {
+        message: "Backup snapshot 2",
+        createdAt: "2026-06-12T12:00:00.000Z",
+        sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        message: "Backup snapshot 1",
+        createdAt: "2026-06-11T12:00:00.000Z",
+        sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ];
+    remote.commits = remote.commits.map((commit, index) => ({
+      ...commit,
+      ...deterministic[index]
+    }));
+    await window.lotion.plugins.writeJson("github-backup", "github-backup-local-remote.json", remote);
+    const status = await window.lotion.plugins.readJson("github-backup", "github-backup-status.json");
+    await window.lotion.plugins.writeJson("github-backup", "github-backup-status.json", {
+      ...status,
+      state: "backed_up",
+      message: "Backed up 1 changed file.",
+      lastBackupAt: deterministic[0].createdAt,
+      lastCommitSha: deterministic[0].sha
+    });
+    return {
+      commitCount: remote.commits.length,
+      newestMessage: deterministic[0].message,
+      oldestMessage: deterministic[1].message
+    };
+  });
+  await closeGitHubBackup(page);
+  const modal = await openGitHubBackup(page);
+  await modal.getByText("Backup snapshot 2").waitFor({ timeout: 8_000 });
+  return {
+    ...backups,
+    status: (await modal.locator(".github-backup-status").textContent())?.trim() ?? "",
+    historyCount: await modal.locator(".github-backup-version").count()
+  };
+}
+
+async function assertPreview(page, viewportName) {
   const modal = githubBackupModal(page);
   const versions = modal.locator(".github-backup-version");
   await versions.nth(1).click();
@@ -140,11 +246,35 @@ async function assertPreviewAndRestore(page, fixture, viewportName) {
   await modal.locator(".github-backup-diff-line.added").filter({ hasText: "Original backup body" }).waitFor({ timeout: 8_000 });
   await waitForPreviewInViewport(page);
   await assertPreviewLayout(page, viewportName);
-  page.once("dialog", (dialog) => dialog.accept());
+  const overlay = await readModalOverlay(page);
+  const preview = await readPreviewState(page);
+  return { overlay, preview };
+}
+
+async function assertRestore(page, fixture, viewportName) {
+  const modal = githubBackupModal(page);
+  await page.evaluate(() => {
+    const original = window.confirm;
+    window.__lotionGithubBackupConfirmations = [];
+    window.confirm = (message) => {
+      window.__lotionGithubBackupConfirmations.push(String(message));
+      window.confirm = original;
+      return true;
+    };
+  });
   await modal.getByRole("button", { name: "Restore this version" }).click();
   await waitForPageMarkdown(page, fixture.pageId, "Original backup body", "restored GitHub backup page");
   await modal.getByText("Page restored from selected version.").waitFor({ timeout: 8_000 });
+  await modal.locator(".github-backup-preview").waitFor({ state: "detached", timeout: 8_000 });
   await assertNoDocumentHorizontalOverflow(page, `github backup restored preview ${viewportName}`);
+  const confirmation = await page.evaluate(() => window.__lotionGithubBackupConfirmations?.[0] ?? "");
+  const persistedMarkdown = await page.evaluate((pageId) => window.lotion.pages.get(pageId).then((entry) => entry.markdown), fixture.pageId);
+  return {
+    confirmation,
+    message: (await modal.locator(".github-backup-message").textContent())?.trim() ?? "",
+    persisted: persistedMarkdown.includes("Original backup body"),
+    previewCleared: await modal.locator(".github-backup-preview").count() === 0
+  };
 }
 
 async function waitForPreviewInViewport(page) {
@@ -207,6 +337,241 @@ async function assertGitHubApiNotConfiguredState(page) {
   await modal.getByRole("button", { name: "Save settings" }).click();
   await modal.getByRole("button", { name: "Run backup" }).click();
   await modal.locator(".github-backup-status").filter({ hasText: "Not configured" }).waitFor({ timeout: 8_000 });
+  return {
+    status: (await modal.locator(".github-backup-status").textContent())?.trim() ?? "",
+    message: (await modal.locator(".github-backup-state p").first().textContent())?.trim() ?? ""
+  };
+}
+
+async function readModalOverlay(page) {
+  return page.evaluate(() => {
+    const backdrop = document.querySelector(".plugin-modal-backdrop");
+    const modal = document.querySelector(".plugin-modal");
+    const body = modal?.querySelector(".plugin-modal-body");
+    const pageTitle = document.querySelector(".title-input");
+    const modalRect = modal?.getBoundingClientRect();
+    const backdropRect = backdrop?.getBoundingClientRect();
+    const center = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    const overflowY = body ? getComputedStyle(body).overflowY : "";
+    return {
+      title: modal?.querySelector(".dialog-header h2")?.textContent?.trim() ?? "",
+      modalRole: modal?.getAttribute("role") ?? "",
+      ariaModal: modal?.getAttribute("aria-modal") ?? "",
+      backdropCoversViewport: Boolean(backdropRect)
+        && backdropRect.left <= 1
+        && backdropRect.top <= 1
+        && backdropRect.right >= window.innerWidth - 1
+        && backdropRect.bottom >= window.innerHeight - 1,
+      centerInsideModal: Boolean(center?.closest(".plugin-modal")),
+      modalContainsPageTitle: Boolean(modal && pageTitle && modal.contains(pageTitle)),
+      modalInsideViewport: Boolean(modalRect)
+        && modalRect.left >= 4
+        && modalRect.top >= 4
+        && modalRect.right <= window.innerWidth - 4
+        && modalRect.bottom <= window.innerHeight - 4,
+      bodyOwnsVerticalScroll: body instanceof HTMLElement
+        && ["auto", "scroll"].includes(overflowY)
+        && body.scrollHeight >= body.clientHeight
+    };
+  });
+}
+
+async function readPreviewState(page) {
+  return page.evaluate(() => {
+    const modal = document.querySelector(".plugin-modal");
+    const panel = document.querySelector(".github-backup-panel");
+    const status = document.querySelector(".github-backup-status");
+    const selected = document.querySelector(".github-backup-version.selected");
+    const preview = document.querySelector(".github-backup-preview");
+    const previewLabel = preview?.querySelector(".github-backup-history-header p");
+    const restore = Array.from(preview?.querySelectorAll("button") || [])
+      .find((candidate) => candidate.textContent?.includes("Restore this version"));
+    const diff = preview?.querySelector("pre");
+    const rect = (node) => {
+      const value = node?.getBoundingClientRect();
+      return value ? {
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        left: value.left,
+        width: value.width,
+        height: value.height
+      } : null;
+    };
+    const inside = (child, parent, allowance = 2) => {
+      const childRect = child?.getBoundingClientRect();
+      const parentRect = parent?.getBoundingClientRect();
+      return Boolean(childRect && parentRect
+        && childRect.left >= parentRect.left - allowance
+        && childRect.right <= parentRect.right + allowance
+        && childRect.top >= parentRect.top - allowance
+        && childRect.bottom <= parentRect.bottom + allowance);
+    };
+    const label = previewLabel?.textContent?.trim() ?? "";
+    const leaks = label.match(/(?:lotion-backups|databases|pages)\/|--(?:db|pg|row)_|\.md\b/gi) || [];
+    const style = panel ? getComputedStyle(panel) : null;
+    return {
+      modalRect: rect(modal),
+      panelRect: rect(panel),
+      statusRect: rect(status),
+      selectedRect: rect(selected),
+      previewRect: rect(preview),
+      previewLabelRect: rect(previewLabel),
+      restoreButtonRect: rect(restore),
+      diffRect: rect(diff),
+      status: status?.textContent?.trim() ?? "",
+      historyCount: document.querySelectorAll(".github-backup-version").length,
+      selectedCount: document.querySelectorAll(".github-backup-version.selected").length,
+      previewLabel: label,
+      restoreButtonText: restore?.textContent?.trim() ?? "",
+      diffLineCount: preview?.querySelectorAll(".github-backup-diff-line").length ?? 0,
+      addedLineCount: preview?.querySelectorAll(".github-backup-diff-line.added").length ?? 0,
+      removedLineCount: preview?.querySelectorAll(".github-backup-diff-line.removed").length ?? 0,
+      storageLeakMatches: [...new Set(leaks)],
+      selectedInsideModal: inside(selected, modal),
+      previewInsideModal: inside(preview, modal),
+      previewLabelInsidePreview: inside(previewLabel, preview),
+      restoreInsidePreview: inside(restore, preview),
+      diffInsidePreview: inside(diff, preview),
+      horizontalOverflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+      visibility: style?.visibility ?? "",
+      opacity: style?.opacity ?? ""
+    };
+  });
+}
+
+async function captureGitHubBackupSnapshot({
+  artifactRoot,
+  backups,
+  initial,
+  overlay,
+  page,
+  preview,
+  viewport
+}) {
+  await exposeFullGitHubBackupSurface(page);
+  try {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const completeSurface = await readCompleteSurface(page);
+    const snapshotPreview = await readPreviewState(page);
+    const snapshot = await captureElementSnapshot({
+      artifactRoot,
+      locator: githubBackupModal(page),
+      metadata: {
+        backups,
+        completeSurface,
+        initial,
+        overlay,
+        phase: "github-backup-restore-preview",
+        preview: snapshotPreview,
+        viewport: viewport.name
+      },
+      name: `github-backup-restore-preview-${viewport.name}`,
+      page,
+      viewport
+    });
+    return { completeSurface, snapshot };
+  } finally {
+    await restoreGitHubBackupSurface(page);
+    await githubBackupModal(page).locator(".github-backup-preview").evaluate((node) => {
+      node.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    await waitForPreviewInViewport(page);
+  }
+}
+
+async function exposeFullGitHubBackupSurface(page) {
+  await page.evaluate(() => {
+    const rules = [
+      [".plugin-modal-backdrop", { alignItems: "flex-start", overflow: "visible", paddingBlock: "16px", position: "absolute" }],
+      [".plugin-modal", { maxHeight: "none", overflow: "visible" }],
+      [".plugin-modal-body", { maxHeight: "none", overflow: "visible" }]
+    ];
+    for (const [selector, styles] of rules) {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) continue;
+      element.dataset.githubBackupSnapshotStyle = element.getAttribute("style") || "";
+      Object.assign(element.style, styles);
+    }
+    const modal = document.querySelector(".plugin-modal");
+    if (modal instanceof HTMLElement) {
+      const rect = modal.getBoundingClientRect();
+      modal.style.translate = `${Math.round(rect.left) - rect.left}px ${Math.round(rect.top) - rect.top}px`;
+    }
+    const body = document.querySelector(".plugin-modal-body");
+    if (body instanceof HTMLElement) body.scrollTop = 0;
+    for (const element of document.querySelectorAll(".plugin-modal, .plugin-modal *")) {
+      if (!(element instanceof HTMLElement)) continue;
+      element.dataset.githubBackupSnapshotTransition = element.style.transition;
+      element.style.transition = "none";
+      element.style.animation = "none";
+    }
+  });
+}
+
+async function restoreGitHubBackupSurface(page) {
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll("[data-github-backup-snapshot-style]")) {
+      if (!(element instanceof HTMLElement)) continue;
+      const original = element.dataset.githubBackupSnapshotStyle || "";
+      if (original) element.setAttribute("style", original);
+      else element.removeAttribute("style");
+      delete element.dataset.githubBackupSnapshotStyle;
+    }
+    for (const element of document.querySelectorAll("[data-github-backup-snapshot-transition]")) {
+      if (!(element instanceof HTMLElement)) continue;
+      element.style.transition = element.dataset.githubBackupSnapshotTransition || "";
+      element.style.animation = "";
+      delete element.dataset.githubBackupSnapshotTransition;
+    }
+  });
+}
+
+async function readCompleteSurface(page) {
+  return page.evaluate(() => {
+    const modal = document.querySelector(".plugin-modal");
+    const panel = document.querySelector(".github-backup-panel");
+    const form = document.querySelector(".github-backup-form");
+    const state = document.querySelector(".github-backup-state");
+    const history = document.querySelector(".github-backup-history");
+    const preview = document.querySelector(".github-backup-preview");
+    const rect = (node) => {
+      const value = node?.getBoundingClientRect();
+      return value ? {
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        left: value.left,
+        width: value.width,
+        height: value.height
+      } : null;
+    };
+    const inside = (child, parent, allowance = 2) => {
+      const childRect = child?.getBoundingClientRect();
+      const parentRect = parent?.getBoundingClientRect();
+      return Boolean(childRect && parentRect
+        && childRect.left >= parentRect.left - allowance
+        && childRect.right <= parentRect.right + allowance
+        && childRect.top >= parentRect.top - allowance
+        && childRect.bottom <= parentRect.bottom + allowance);
+    };
+    const style = panel ? getComputedStyle(panel) : null;
+    return {
+      modalRect: rect(modal),
+      panelRect: rect(panel),
+      formRect: rect(form),
+      stateRect: rect(state),
+      historyRect: rect(history),
+      previewRect: rect(preview),
+      panelInsideModal: inside(panel, modal),
+      formInsidePanel: inside(form, panel),
+      stateInsidePanel: inside(state, panel),
+      historyInsidePanel: inside(history, panel),
+      previewInsidePanel: inside(preview, panel),
+      visibility: style?.visibility ?? "",
+      opacity: style?.opacity ?? ""
+    };
+  });
 }
 
 async function assertLocalPageHistory(page, fixture, viewportName) {
@@ -232,7 +597,13 @@ async function assertLocalPageHistory(page, fixture, viewportName) {
   if (!restoreFocused) {
     throw new Error(`Local page history restore action did not receive focus at ${viewportName}; active before: ${activeBeforeFocus}`);
   }
-  page.once("dialog", (dialog) => dialog.accept());
+  await page.evaluate(() => {
+    const original = window.confirm;
+    window.confirm = () => {
+      window.confirm = original;
+      return true;
+    };
+  });
   await history.getByRole("button", { name: "Restore" }).click();
   await waitForPageMarkdown(page, fixture.pageId, "Original backup body", `local page history restored ${viewportName}`);
   await history.getByText("Page restored from local Git history.").waitFor({ timeout: 8_000 });

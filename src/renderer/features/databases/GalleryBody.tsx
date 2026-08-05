@@ -1,14 +1,14 @@
 import type { DatabaseRecord, FieldSchema, TableView } from "../../../shared/types";
-import { formatDateForField, isDateLikeFieldType } from "../../../shared/date-values";
+import { formatDateForField, isDateLikeFieldType, type DateTimeDisplayDefaults } from "../../../shared/date-values";
 import { EntityIcon, iconUrl } from "../../components/EntityIcon";
-import { resolveRowIcon } from "../../../shared/row-icons";
+import { useDateTimeDisplayDefaults } from "../../lib/settings";
 
 interface GalleryBodyProps {
   records: DatabaseRecord[];
   fields: FieldSchema[];
   view: TableView;
-  databaseIcon?: string;
   onOpenRow: (rowId: string) => void;
+  onOpenRowMenu?: (record: DatabaseRecord, anchor: { left: number; top: number }) => void;
 }
 
 /**
@@ -22,7 +22,8 @@ interface GalleryBodyProps {
  * a user can either use the row-detail cover or point the gallery at
  * a custom field (e.g. an image-URL column).
  */
-export function GalleryBody({ records, fields, view, databaseIcon, onOpenRow }: GalleryBodyProps) {
+export function GalleryBody({ records, fields, view, onOpenRow, onOpenRowMenu }: GalleryBodyProps) {
+  const dateTimeDefaults = useDateTimeDisplayDefaults();
   // `fields` is the view's visible-field list. A cover field can be hidden
   // from the card captions while still driving the image, matching Notion's
   // gallery cover behavior.
@@ -50,6 +51,7 @@ export function GalleryBody({ records, fields, view, databaseIcon, onOpenRow }: 
             type="button"
             className="gallery-card"
             onClick={() => onOpenRow(String(record.id))}
+            onContextMenu={(event) => { event.preventDefault(); onOpenRowMenu?.(record, { left: event.clientX, top: event.clientY }); }}
           >
             <div className="gallery-card-cover">
               {coverPath ? (
@@ -63,8 +65,9 @@ export function GalleryBody({ records, fields, view, databaseIcon, onOpenRow }: 
               )}
             </div>
             <div className="gallery-card-meta">
+              <span className="row-context-handle" role="button" tabIndex={0} aria-label={`Row actions ${String(record.title ?? "Untitled")}`} onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); onOpenRowMenu?.(record, { left: rect.left, top: rect.bottom + 4 }); }} onKeyDown={(event) => { if (event.key !== "Enter" && event.key !== " ") return; event.preventDefault(); event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); onOpenRowMenu?.(record, { left: rect.left, top: rect.bottom + 4 }); }}>•••</span>
               <div className="gallery-card-title">
-                <EntityIcon kind="row_page" icon={resolveRowIcon(record, databaseIcon)} size={16} />
+                <EntityIcon kind="row_page" icon={String(record.row_icon ?? "") || undefined} size={16} />
                 <span>{String(record.title ?? "") || "Untitled"}</span>
               </div>
               {captionFields.map((field) => {
@@ -73,7 +76,7 @@ export function GalleryBody({ records, fields, view, databaseIcon, onOpenRow }: 
                 return (
                   <div key={field.id} className="gallery-card-caption">
                     <span className="gallery-card-caption-label">{field.name}</span>
-                    <span className="gallery-card-caption-value">{formatGalleryCaptionValue(v, field)}</span>
+                    <span className="gallery-card-caption-value">{formatGalleryCaptionValue(v, field, dateTimeDefaults)}</span>
                   </div>
                 );
               })}
@@ -85,7 +88,7 @@ export function GalleryBody({ records, fields, view, databaseIcon, onOpenRow }: 
   );
 }
 
-function formatGalleryCaptionValue(value: unknown, field: FieldSchema): string {
-  if (isDateLikeFieldType(field.type)) return formatDateForField(value, field);
+function formatGalleryCaptionValue(value: unknown, field: FieldSchema, defaults: DateTimeDisplayDefaults): string {
+  if (isDateLikeFieldType(field.type)) return formatDateForField(value, field, defaults);
   return String(value);
 }

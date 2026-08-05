@@ -288,13 +288,66 @@ const OPTION_COLORS = [
   { id: "pink", label: "Pink", background: "#fdeef6", border: "#e7b3ce", text: "#84375c" }
 ] as const;
 
+export type OptionMutationResult = "submitted" | "failed" | "ignored";
+export type OptionMutationSnapshot =
+  | { status: "idle" }
+  | { status: "pending"; input: SelectOption[] }
+  | { status: "error"; input: SelectOption[]; error: string };
+
+export function createOptionMutationController({
+  onStateChange,
+  operation
+}: {
+  onStateChange: (snapshot: OptionMutationSnapshot) => void;
+  operation: (options: SelectOption[]) => Promise<void> | void;
+}) {
+  let running = false;
+  let failedInput: SelectOption[] | null = null;
+
+  async function submit(input: SelectOption[], retry = false): Promise<OptionMutationResult> {
+    if (running || (!retry && failedInput)) return "ignored";
+    const ownedInput = retry ? failedInput : input;
+    if (!ownedInput) return "ignored";
+    running = true;
+    onStateChange({ status: "pending", input: ownedInput });
+    try {
+      await operation(ownedInput);
+      running = false;
+      failedInput = null;
+      onStateChange({ status: "idle" });
+      return "submitted";
+    } catch (error) {
+      running = false;
+      failedInput = ownedInput;
+      onStateChange({
+        status: "error",
+        input: ownedInput,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return "failed";
+    }
+  }
+
+  function retry() {
+    return failedInput ? submit(failedInput, true) : Promise.resolve<OptionMutationResult>("ignored");
+  }
+
+  function discard() {
+    if (running || !failedInput) return false;
+    failedInput = null;
+    onStateChange({ status: "idle" });
+    return true;
+  }
+
+  return { discard, retry, submit };
+}
+
 function OptionDropdown({
   mode,
   options,
   value,
   placeholder,
   onChange,
-  onOptionColorChange,
   onOptionsChange
 }: {
   mode: "select" | "multi_select";
@@ -302,8 +355,7 @@ function OptionDropdown({
   value: RecordValue | undefined;
   placeholder?: string;
   onChange: (value: RecordValue) => void;
-  onOptionColorChange?: (optionId: string, color: string) => void;
-  onOptionsChange?: (options: SelectOption[]) => void;
+  onOptionsChange?: (options: SelectOption[]) => Promise<void> | void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [draggedOptionId, setDraggedOptionId] = useState<string>();
@@ -311,13 +363,29 @@ function OptionDropdown({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const optionsOperationRef = useRef(onOptionsChange);
+  optionsOperationRef.current = onOptionsChange;
+  const mutationStateRef = useRef<OptionMutationSnapshot>({ status: "idle" });
+  const [mutationState, setMutationState] = useState<OptionMutationSnapshot>({ status: "idle" });
+  const mutationControllerRef = useRef<ReturnType<typeof createOptionMutationController> | null>(null);
+  if (!mutationControllerRef.current) {
+    mutationControllerRef.current = createOptionMutationController({
+      operation: async (next) => optionsOperationRef.current?.(next),
+      onStateChange: (snapshot) => {
+        mutationStateRef.current = snapshot;
+        setMutationState(snapshot);
+      }
+    });
+  }
   const selectedNames = mode === "multi_select" ? parseMultiSelectValue(value) : [String(value ?? "")].filter(Boolean);
   const optionList = getOptionsWithCurrentValue(options, value);
+  const controlsBlocked = mutationState.status !== "idle";
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
       const target = event.target as Node;
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
+        if (mutationStateRef.current.status !== "idle") return;
         setIsOpen(false);
       }
     }
@@ -337,6 +405,7 @@ function OptionDropdown({
   useEffect(() => {
     if (!isOpen) return;
     function close() {
+      if (mutationStateRef.current.status !== "idle") return;
       setIsOpen(false);
     }
     window.addEventListener("resize", close);
@@ -348,6 +417,7 @@ function OptionDropdown({
   }, [isOpen]);
 
   function toggleOption(option: SelectOption) {
+    if (controlsBlocked) return;
     if (mode === "select") {
       onChange(option.name);
       setIsOpen(false);
@@ -360,11 +430,13 @@ function OptionDropdown({
   }
 
   function clear() {
+    if (controlsBlocked) return;
     onChange("");
     if (mode === "select") setIsOpen(false);
   }
 
   function reorderOption(sourceId: string | undefined, targetId: string) {
+    if (controlsBlocked) return;
     if (!sourceId || sourceId === targetId || !onOptionsChange) return;
     const sourceIndex = options.findIndex((option) => option.id === sourceId);
     const targetIndex = options.findIndex((option) => option.id === targetId);
@@ -372,25 +444,26 @@ function OptionDropdown({
     const next = [...options];
     const [moved] = next.splice(sourceIndex, 1);
     next.splice(targetIndex, 0, moved);
-    onOptionsChange(next);
+    void mutationControllerRef.current?.submit(next);
   }
 
   function deleteOption(option: SelectOption) {
-    if (!onOptionsChange || options.length <= 1) return;
-    onOptionsChange(options.filter((item) => item.id !== option.id));
+    if (controlsBlocked || !onOptionsChange || options.length <= 1) return;
+    void mutationControllerRef.current?.submit(options.filter((item) => item.id !== option.id));
   }
 
   const menu = isOpen && menuPosition
     ? createPortal(
       <div
         ref={menuRef}
-        className="option-menu"
+        className={controlsBlocked ? "option-menu option-menu-blocked" : "option-menu"}
+        aria-busy={mutationState.status === "pending"}
         style={{
           ...popoverPositionStyle({ top: menuPosition.top, left: menuPosition.left }, { maxWidth: 430, maxHeight: 260 }),
           minWidth: menuPosition.minWidth
         }}
       >
-        <button className="option-menu-item clear-item" onClick={clear}>Clear</button>
+        <button className="option-menu-item clear-item" disabled={controlsBlocked} onClick={clear}>Clear</button>
         {optionList.map((option) => {
           const selected = selectedNames.includes(option.name);
           const canManage = Boolean(onOptionsChange) && !option.id.startsWith("unknown_");
@@ -399,11 +472,13 @@ function OptionDropdown({
               className={draggedOptionId === option.id ? "option-menu-item dragging" : "option-menu-item"}
               key={option.id}
               role="button"
+              aria-disabled={controlsBlocked}
               tabIndex={0}
               onDragOver={(event) => {
-                if (canManage) event.preventDefault();
+                if (canManage && !controlsBlocked) event.preventDefault();
               }}
               onDrop={(event) => {
+                if (controlsBlocked) return;
                 event.preventDefault();
                 reorderOption(draggedOptionId, option.id);
                 setDraggedOptionId(undefined);
@@ -419,7 +494,7 @@ function OptionDropdown({
               {canManage && (
                 <span
                   className="drag-handle"
-                  draggable
+                  draggable={!controlsBlocked}
                   title="Drag to reorder"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => event.stopPropagation()}
@@ -436,17 +511,21 @@ function OptionDropdown({
               {mode === "multi_select" && <input type="checkbox" readOnly checked={selected} />}
               {mode === "select" && <span className={selected ? "single-check selected" : "single-check"} />}
               <OptionPill option={option} muted={!selected} />
-              {onOptionColorChange && !option.id.startsWith("unknown_") && (
+              {onOptionsChange && !option.id.startsWith("unknown_") && (
                 <select
                   className="option-color-select"
                   aria-label={`Change color for ${option.name}`}
                   value={option.color || "gray"}
+                  disabled={controlsBlocked}
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => event.stopPropagation()}
                   onKeyDown={(event) => event.stopPropagation()}
                   onChange={(event) => {
                     event.stopPropagation();
-                    onOptionColorChange(option.id, event.target.value);
+                    const color = event.target.value;
+                    void mutationControllerRef.current?.submit(
+                      options.map((item) => item.id === option.id ? { ...item, color } : item)
+                    );
                   }}
                 >
                   {OPTION_COLORS.map((color) => (
@@ -457,7 +536,7 @@ function OptionDropdown({
               {canManage && (
                 <button
                   className="option-delete-button"
-                  disabled={options.length <= 1}
+                  disabled={controlsBlocked || options.length <= 1}
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -470,6 +549,25 @@ function OptionDropdown({
             </div>
           );
         })}
+        {mutationState.status === "error" && (
+          <div
+            className="option-mutation-feedback"
+            role="alert"
+            aria-live="assertive"
+            data-options={JSON.stringify(mutationState.input)}
+          >
+            <span>Option update failed: {mutationState.error}</span>
+            <button type="button" onClick={() => { void mutationControllerRef.current?.retry(); }}>Retry</button>
+            <button
+              type="button"
+              onClick={() => {
+                if (mutationControllerRef.current?.discard()) setIsOpen(false);
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        )}
       </div>,
       document.body
     )
@@ -480,6 +578,7 @@ function OptionDropdown({
       <button
         ref={triggerRef}
         className="option-dropdown-trigger"
+        disabled={controlsBlocked}
         onClick={() => setIsOpen((current) => !current)}
       >
         <span className="selected-options">
@@ -580,11 +679,6 @@ const selectProvider: ReactFieldTypeProvider = {
         value={value}
         placeholder={ctx.placeholder}
         onChange={(next) => ctx.commit?.(next)}
-        onOptionColorChange={(optionId, color) =>
-          ctx.onOptionsChange?.(
-            options.map((o) => (o.id === optionId ? { ...o, color } : o))
-          )
-        }
         onOptionsChange={(next) => ctx.onOptionsChange?.(next)}
       />
     );
@@ -606,11 +700,6 @@ const multiSelectProvider: ReactFieldTypeProvider = {
         value={value}
         placeholder={ctx.placeholder}
         onChange={(next) => ctx.commit?.(next)}
-        onOptionColorChange={(optionId, color) =>
-          ctx.onOptionsChange?.(
-            options.map((o) => (o.id === optionId ? { ...o, color } : o))
-          )
-        }
         onOptionsChange={(next) => ctx.onOptionsChange?.(next)}
       />
     );

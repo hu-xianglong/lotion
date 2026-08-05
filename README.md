@@ -352,6 +352,18 @@ welcome. Before opening a pull request:
 Use [GitHub Issues](https://github.com/hu-xianglong/lotion/issues) for bugs and
 proposals.
 
+## Storage Model
+
+Workspace CSV, Markdown, and JSON files remain the source of truth. Lotion
+builds a disposable, machine-local cache under the app's
+`workspace-cache/` directory in Application Support. A small SQLite projection
+contains only the page and database summaries needed for the first paint.
+Row-page metadata and body paths live in a generation-addressed sidecar with a
+lazy offset index, so opening a row page remains fast without loading every row
+during startup. Source fingerprints are validated before every cache hit.
+These local cache files can be deleted at any time; Lotion rebuilds them from
+the workspace source files without writing cached values back into them.
+
 ## License
 
 Lotion is available under the [MIT License](LICENSE).

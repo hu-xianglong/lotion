@@ -17,13 +17,13 @@ Operational queue: `tasks/QUEUE.md`. Use that file as the source of truth when
 working continuously; this document explains the product rationale.
 
 1. Page embedded view picker and settings.
-   - Source task: `tasks/todo/page-embedded-view-picker-and-settings.md`.
+   - Source task: `tasks/done/page-embedded-view-picker-and-settings.md`.
    - Add picker UI, embedded view header, Open/Refresh/Settings actions, and
      saved-view settings reuse.
    - Must keep embedded table and plugin-backed Kanban views editable.
 
 2. Frontend architecture boundaries.
-   - Source task: `tasks/todo/frontend-architecture-boundaries.md`.
+   - Source task: `tasks/done/frontend-architecture-boundaries.md`.
    - Give page layout one owner, split `DatabaseTable`, and isolate the
      CodeMirror-to-React bridge.
    - This should happen before more layout-heavy Notion parity work.
@@ -78,7 +78,11 @@ working continuously; this document explains the product rationale.
 
 ## Current Next Step
 
-The operational queue has completed items 1-237. In addition to the first-pass
+The operational queue has completed items 1-655, including the isolated real
+`Notion Import` workspace visual pass and committed desktop, compact, and wide
+Design System, White Theme page, Settings Center, and Plugin Manager perceptual
+baselines, plus the LLM Chat conversation and Advanced Search stale-result
+baselines and the unified Search & AI chat-handoff baseline. In addition to the first-pass
 Notion parity work (embedded views, hierarchy, slash/live-preview editing,
 database view management, relation/rollup foundations, templates, gallery,
 calendar, list views, LLM workflows, Git sync, and plugin surfaces), the queue

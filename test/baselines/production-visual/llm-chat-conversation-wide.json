@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "llm-chat-conversation",
+  "theme": "light",
+  "viewport": {
+    "name": "wide",
+    "width": 1728,
+    "height": 1100
+  },
+  "image": {
+    "path": "test/baselines/production-visual/llm-chat-conversation-wide.png",
+    "sha256": "dcdb77c2d3fa437201ceef90bb37be7087d8980eed03db2d6ce6c7bd05f375e4",
+    "width": 560,
+    "height": 1069
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

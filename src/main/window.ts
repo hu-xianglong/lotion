@@ -23,7 +23,11 @@ export function createMainWindow(options: CreateWindowOptions = { openDevTools: 
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // The production renderer is stable between releases. Persist V8's
+      // compiled-code cache after the first run instead of waiting for
+      // Chromium's normal navigation heat threshold.
+      v8CacheOptions: "bypassHeatCheck"
     }
   });
 

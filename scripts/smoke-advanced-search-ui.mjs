@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertAdvancedSearchArtifactContract } from "./lib/advanced-search-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertNoDocumentHorizontalOverflow,
   assertWithinViewport,
@@ -70,12 +71,25 @@ await withLotionUIHarness("advanced-search-ui", async ({ artifactRoot, page, ope
         viewport
       }));
       await assertStaleAdvancedSearchState(page, fixture);
-      visualSnapshots.push(await captureAdvancedSearchSnapshot({
+      const staleResultsSnapshot = await captureAdvancedSearchSnapshot({
         artifactRoot,
         page,
         phase: "stale-results",
         viewport
-      }));
+      });
+      const baselinePolicy = {
+        compact: "test/baselines/production-visual/advanced-search-stale-results-compact.json",
+        desktop: "test/baselines/production-visual/advanced-search-stale-results-desktop.json",
+        wide: "test/baselines/production-visual/advanced-search-stale-results-wide.json"
+      }[viewport.name];
+      staleResultsSnapshot.perceptualBaseline = baselinePolicy && process.env.LOTION_ADVANCED_SEARCH_SKIP_BASELINE !== "1"
+        ? await assertProductionVisualBaseline({
+          actualPath: staleResultsSnapshot.imagePath,
+          artifactRoot,
+          policyPath: baselinePolicy
+        })
+        : null;
+      visualSnapshots.push(staleResultsSnapshot);
       await assertEmptyAdvancedSearchState(page);
       visualSnapshots.push(await captureAdvancedSearchSnapshot({
         artifactRoot,
@@ -125,7 +139,10 @@ await withLotionUIHarness("advanced-search-ui", async ({ artifactRoot, page, ope
     status: "passed"
   };
   summary.artifactContract = await assertAdvancedSearchArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_ADVANCED_SEARCH_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
   });
   console.log(JSON.stringify(summary, null, 2));
   return summary;
@@ -437,6 +454,7 @@ async function captureAdvancedSearchSnapshot({ artifactRoot, page, phase, viewpo
   await modal.waitFor({ timeout: 8_000 });
   const panel = modal.locator(".advanced-search-panel").first();
   await panel.waitFor({ state: "visible", timeout: 8_000 });
+  await stabilizeAdvancedSearchSnapshot(page, panel);
   const visibleState = await collectAdvancedSearchVisibleState(page);
   const geometry = await collectAdvancedSearchGeometry(page);
   return {
@@ -458,6 +476,18 @@ async function captureAdvancedSearchSnapshot({ artifactRoot, page, phase, viewpo
   };
 }
 
+async function stabilizeAdvancedSearchSnapshot(page, panel) {
+  await page.mouse.move(0, 0);
+  await panel.evaluate(async (root) => {
+    if (root.contains(document.activeElement) && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    const animations = root.getAnimations({ subtree: true });
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
 async function collectAdvancedSearchVisibleState(page) {
   return await page.evaluate(() => {
     const panel = document.querySelector(".advanced-search-panel");
@@ -466,7 +496,30 @@ async function collectAdvancedSearchVisibleState(page) {
     const controls = Array.from(panel?.querySelectorAll(".advanced-search-controls select") ?? []);
     const inputs = Array.from(panel?.querySelectorAll(".advanced-search-controls input") ?? []);
     const progress = panel?.querySelector('[data-testid="advanced-search-progress"]');
+    const results = panel?.querySelector(".advanced-search-results");
+    const resultsRect = results?.getBoundingClientRect();
     const hits = Array.from(panel?.querySelectorAll(".advanced-search-hit") ?? []);
+    const hitVisibility = hits.map((hit) => {
+      const rect = hit.getBoundingClientRect();
+      return {
+        title: hit.querySelector(".advanced-search-hit-title")?.textContent?.trim() ?? "",
+        fullyVisible: Boolean(
+          resultsRect
+          && rect.width > 0
+          && rect.height > 0
+          && rect.top >= resultsRect.top
+          && rect.bottom <= resultsRect.bottom + 0.5
+        ),
+        rect: {
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height
+        }
+      };
+    });
     return {
       baseUrlValue: inputs[0]?.value ?? "",
       emptyText: text(".advanced-search-empty"),
@@ -480,6 +533,12 @@ async function collectAdvancedSearchVisibleState(page) {
       queryPlaceholder: panel?.querySelector(".advanced-search-query-row input")?.getAttribute("placeholder") ?? "",
       queryValue: inputValue(".advanced-search-query-row input"),
       resultCount: hits.length,
+      resultsViewport: {
+        clientHeight: results instanceof HTMLElement ? results.clientHeight : 0,
+        scrollHeight: results instanceof HTMLElement ? results.scrollHeight : 0,
+        scrollTop: results instanceof HTMLElement ? results.scrollTop : 0
+      },
+      resultVisibility: hitVisibility,
       snippets: hits.map((hit) => hit.querySelector(".advanced-search-hit-snippet")?.textContent?.trim() ?? ""),
       sources: hits.map((hit) => hit.querySelector(".advanced-search-source")?.textContent?.trim() ?? ""),
       statusLabel: text(".advanced-search-status"),

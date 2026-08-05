@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import type { CopyFieldToSystemTimeResult, DatabaseBundle, DatabaseRecord, DatabaseSummary, DateDisplayFormat, FieldSchema, FieldType, RelationFieldConfig, RollupAggregation, RollupFieldConfig, SelectOption, SystemTimeFieldId, TimeDisplayFormat } from "../../../shared/types";
-import { defaultDateFormatForField, defaultTimeFormatForField, isDateLikeFieldType } from "../../../shared/date-values";
+import { useEffect, useRef, useState } from "react";
+import type { DatabaseBundle, DatabaseRecord, DatabaseSummary, DateDisplayFormat, FieldSchema, FieldType, RelationFieldConfig, RollupAggregation, RollupFieldConfig, SelectOption, TimeDisplayFormat } from "../../../shared/types";
+import { isDateLikeFieldType } from "../../../shared/date-values";
 import { evaluateFormula, formulaColumnLabel } from "../../../shared/formula";
 import { useI18n } from "../../lib/i18n";
 import { OPTION_COLORS } from "./option-colors";
@@ -16,13 +16,69 @@ interface FieldSettingsDialogProps {
   wrap?: boolean;
   onToggleWrap?: () => void | Promise<void>;
   onHide?: () => void | Promise<void>;
-  onCopyToSystemTime?: (targetFieldId: SystemTimeFieldId) => Promise<CopyFieldToSystemTimeResult>;
   onClose: () => void;
   onSave: (input: { name: string; type: FieldType; options?: SelectOption[]; formula?: string; relation?: RelationFieldConfig; rollup?: RollupFieldConfig; dateFormat?: DateDisplayFormat; timeFormat?: TimeDisplayFormat }) => Promise<void>;
 }
 
-export function FieldSettingsDialog({ field, fields = [], records = [], databases = [], loadDatabase, wrap = false, onToggleWrap, onHide, onCopyToSystemTime, onClose, onSave }: FieldSettingsDialogProps) {
-  const { locale, t } = useI18n();
+export type FieldSettingsAction = "save" | "toggle-wrap" | "hide";
+export type FieldSettingsActionStatus = "submitted" | "failed" | "ignored";
+export type DateFormatSelection = DateDisplayFormat | "";
+export type TimeFormatSelection = TimeDisplayFormat | "";
+
+export function fieldFormatOverrides(
+  type: FieldType,
+  dateFormat: DateFormatSelection,
+  timeFormat: TimeFormatSelection
+): { dateFormat?: DateDisplayFormat; timeFormat?: TimeDisplayFormat } {
+  if (!isDateLikeFieldType(type)) return {};
+  return {
+    ...(dateFormat ? { dateFormat } : {}),
+    ...(timeFormat ? { timeFormat } : {})
+  };
+}
+
+export function dismissFieldSettingsIfIdle(guard: { current: boolean }, onClose: () => void): boolean {
+  if (guard.current) return false;
+  onClose();
+  return true;
+}
+
+export function shouldHydrateFieldSettingsDraft(activeFieldId: string, nextFieldId: string, preserveDraft: boolean): boolean {
+  return activeFieldId !== nextFieldId || !preserveDraft;
+}
+
+export async function runFieldSettingsAction({
+  guard,
+  onError,
+  onPendingChange,
+  onSuccess,
+  operation
+}: {
+  guard: { current: boolean };
+  onError: (message: string) => void;
+  onPendingChange: (pending: boolean) => void;
+  onSuccess: () => void;
+  operation: () => Promise<void>;
+}): Promise<FieldSettingsActionStatus> {
+  if (guard.current) return "ignored";
+  guard.current = true;
+  onError("");
+  onPendingChange(true);
+  try {
+    await operation();
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return "failed";
+  } finally {
+    guard.current = false;
+    onPendingChange(false);
+  }
+  onSuccess();
+  return "submitted";
+}
+
+export function FieldSettingsDialog({ field, fields = [], records = [], databases = [], loadDatabase, wrap = false, onToggleWrap, onHide, onClose, onSave }: FieldSettingsDialogProps) {
+  const { t } = useI18n();
   const [name, setName] = useState(field.name);
   const [type, setType] = useState<FieldType>(field.type);
   const [options, setOptions] = useState<SelectOption[]>(field.options || defaultOptions());
@@ -35,18 +91,30 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
   const [rollupTargetFields, setRollupTargetFields] = useState<FieldSchema[]>([]);
   const [rollupTargetLoadState, setRollupTargetLoadState] = useState<"idle" | "loading" | "error">("idle");
   const [rollupAggregation, setRollupAggregation] = useState<RollupAggregation>(field.rollup?.aggregation || "count");
-  const [dateFormat, setDateFormat] = useState<DateDisplayFormat>(field.dateFormat ?? defaultDateFormatForField(field.type));
-  const [timeFormat, setTimeFormat] = useState<TimeDisplayFormat>(field.timeFormat ?? defaultTimeFormatForField(field.type));
-  const [isSaving, setIsSaving] = useState(false);
-  const [copyingTimeTarget, setCopyingTimeTarget] = useState<SystemTimeFieldId>();
-  const [copyTimeMessage, setCopyTimeMessage] = useState("");
+  const [dateFormat, setDateFormat] = useState<DateFormatSelection>(field.dateFormat ?? "");
+  const [timeFormat, setTimeFormat] = useState<TimeFormatSelection>(field.timeFormat ?? "");
+  const [pendingAction, setPendingAction] = useState<FieldSettingsAction | null>(null);
+  const [actionError, setActionError] = useState("");
+  const actionRef = useRef(false);
+  const retryRef = useRef<{
+    action: FieldSettingsAction;
+    operation: () => Promise<void>;
+    onSuccess: () => void;
+  } | null>(null);
+  const draftFieldIdRef = useRef(field.id);
+  const preserveDraftRef = useRef(false);
+  const draggedOptionIndex = useRef<number | null>(null);
   const providers = pluginHost.fields.list();
   const providerTypes = new Set(providers.map((provider) => provider.type));
   const rollupRelationFields = fields.filter((candidate) => candidate.type === "entity_ref" && !candidate.hidden);
   const selectedRollupRelationField = rollupRelationFields.find((candidate) => candidate.id === rollupRelationFieldId);
   const rollupTargetDatabaseId = selectedRollupRelationField?.relation?.targetDatabaseId?.trim() || "";
+  const pending = pendingAction !== null;
 
   useEffect(() => {
+    if (!shouldHydrateFieldSettingsDraft(draftFieldIdRef.current, field.id, preserveDraftRef.current)) return;
+    draftFieldIdRef.current = field.id;
+    preserveDraftRef.current = false;
     setName(field.name);
     setType(field.type);
     setOptions(field.options || defaultOptions());
@@ -57,10 +125,8 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
     setRollupRelationFieldId(field.rollup?.relationFieldId || "");
     setRollupTargetFieldId(field.rollup?.targetFieldId || "");
     setRollupAggregation(field.rollup?.aggregation || "count");
-    setDateFormat(field.dateFormat ?? defaultDateFormatForField(field.type));
-    setTimeFormat(field.timeFormat ?? defaultTimeFormatForField(field.type));
-    setCopyingTimeTarget(undefined);
-    setCopyTimeMessage("");
+    setDateFormat(field.dateFormat ?? "");
+    setTimeFormat(field.timeFormat ?? "");
   }, [field]);
 
   useEffect(() => {
@@ -90,10 +156,30 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
     };
   }, [loadDatabase, rollupTargetDatabaseId, type]);
 
-  async function save() {
-    const dateLike = isDateLikeFieldType(type);
-    setIsSaving(true);
-    await onSave({
+  function closeIfIdle() {
+    dismissFieldSettingsIfIdle(actionRef, onClose);
+  }
+
+  function runAction(action: FieldSettingsAction, operation: () => Promise<void>, onSuccess: () => void = () => {}) {
+    if (!actionRef.current) {
+      retryRef.current = { action, operation, onSuccess };
+      preserveDraftRef.current = true;
+    }
+    return runFieldSettingsAction({
+      guard: actionRef,
+      onError: setActionError,
+      onPendingChange: (nextPending) => setPendingAction(nextPending ? action : null),
+      onSuccess: () => {
+        retryRef.current = null;
+        preserveDraftRef.current = false;
+        onSuccess();
+      },
+      operation
+    });
+  }
+
+  function save() {
+    const input = {
       name,
       type,
       options: usesOptions(type) ? cleanOptions(options) : undefined,
@@ -111,11 +197,9 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
           aggregation: rollupAggregation
         }
         : undefined,
-      dateFormat: dateLike ? dateFormat : undefined,
-      timeFormat: dateLike ? timeFormat : undefined
-    });
-    setIsSaving(false);
-    onClose();
+      ...fieldFormatOverrides(type, dateFormat, timeFormat)
+    };
+    return runAction("save", () => onSave(input), onClose);
   }
 
   function updateOption(index: number, value: string) {
@@ -138,8 +222,8 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
     const wasDateLike = isDateLikeFieldType(type);
     setType(nextType);
     if (!wasDateLike && isDateLikeFieldType(nextType)) {
-      setDateFormat(defaultDateFormatForField(nextType));
-      setTimeFormat(defaultTimeFormatForField(nextType));
+      setDateFormat("");
+      setTimeFormat("");
     }
   }
 
@@ -156,42 +240,18 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
     setFormulaPreview({ row: 1, value: "" });
   }
 
-  async function copyToSystemTime(targetFieldId: SystemTimeFieldId) {
-    if (!onCopyToSystemTime || copyingTimeTarget) return;
-    const targetLabel = targetFieldId === "created_time"
-      ? (locale === "zh" ? "创建时间" : "Created time")
-      : (locale === "zh" ? "最后更新时间" : "Last updated time");
-    const confirmed = window.confirm(locale === "zh"
-      ? `将“${field.name}”中的有效日期复制到“${targetLabel}”？现有系统时间会被覆盖。`
-      : `Copy valid dates from “${field.name}” to ${targetLabel}? Existing system timestamps will be overwritten.`);
-    if (!confirmed) return;
-    setCopyingTimeTarget(targetFieldId);
-    setCopyTimeMessage("");
-    try {
-      const result = await onCopyToSystemTime(targetFieldId);
-      setCopyTimeMessage(locale === "zh"
-        ? `已复制 ${result.copiedRows} 行；${result.unchangedRows} 行无需修改；跳过 ${result.skippedEmptyRows} 个空值和 ${result.skippedInvalidRows} 个非法值。`
-        : `Copied ${result.copiedRows} rows; ${result.unchangedRows} unchanged; skipped ${result.skippedEmptyRows} empty and ${result.skippedInvalidRows} invalid values.`);
-    } catch (error) {
-      setCopyTimeMessage(locale === "zh"
-        ? `复制失败：${error instanceof Error ? error.message : String(error)}`
-        : `Copy failed: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setCopyingTimeTarget(undefined);
-    }
-  }
-
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="field-dialog" role="dialog" aria-modal="true" aria-label="Field settings" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={closeIfIdle}>
+      <div className="field-dialog" role="dialog" aria-modal="true" aria-label="Field settings" aria-busy={pending} onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <div>
             <h2>{t("field.settings")}</h2>
             <p>{field.id}</p>
           </div>
-          <button onClick={onClose}>{t("common.close")}</button>
+          <button disabled={pending} onClick={closeIfIdle}>{t("common.close")}</button>
         </div>
 
+        <fieldset className="field-settings-controls" disabled={pending}>
         <label className="form-row">
           <span>{t("field.name")}</span>
           <input value={name} disabled={field.system} onChange={(event) => setName(event.target.value)} />
@@ -220,7 +280,8 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
           <>
             <label className="form-row">
               <span>{t("field.dateFormat")}</span>
-              <select value={dateFormat} onChange={(event) => setDateFormat(event.target.value as DateDisplayFormat)}>
+              <select value={dateFormat} onChange={(event) => setDateFormat(event.target.value as DateFormatSelection)}>
+                <option value="">{t("field.format.useGlobalDefault")}</option>
                 <option value="full">{t("field.dateFormat.full")}</option>
                 <option value="month_day_year">{t("field.dateFormat.monthDayYear")}</option>
                 <option value="day_month_year">{t("field.dateFormat.dayMonthYear")}</option>
@@ -230,41 +291,13 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
             </label>
             <label className="form-row">
               <span>{t("field.timeFormat")}</span>
-              <select value={timeFormat} onChange={(event) => setTimeFormat(event.target.value as TimeDisplayFormat)}>
+              <select value={timeFormat} onChange={(event) => setTimeFormat(event.target.value as TimeFormatSelection)}>
+                <option value="">{t("field.format.useGlobalDefault")}</option>
                 <option value="none">{t("field.timeFormat.none")}</option>
                 <option value="h12">{t("field.timeFormat.h12")}</option>
                 <option value="h24">{t("field.timeFormat.h24")}</option>
               </select>
             </label>
-            {onCopyToSystemTime && isDateLikeFieldType(field.type) && (
-              <div className="field-time-copy-row">
-                <strong>{t("field.copyTimeValues")}</strong>
-                <div className="field-time-copy-actions">
-                  {field.id !== "created_time" && (
-                    <button
-                      type="button"
-                      className="secondary-action"
-                      disabled={!!copyingTimeTarget}
-                      onClick={() => void copyToSystemTime("created_time")}
-                    >
-                      {copyingTimeTarget === "created_time" ? t("field.copyingTimeValues") : t("field.copyToCreatedTime")}
-                    </button>
-                  )}
-                  {field.id !== "updated_time" && (
-                    <button
-                      type="button"
-                      className="secondary-action"
-                      disabled={!!copyingTimeTarget}
-                      onClick={() => void copyToSystemTime("updated_time")}
-                    >
-                      {copyingTimeTarget === "updated_time" ? t("field.copyingTimeValues") : t("field.copyToUpdatedTime")}
-                    </button>
-                  )}
-                </div>
-                <p className="helper-text">{t("field.copyTimeHelper")}</p>
-                {copyTimeMessage && <output className="field-time-copy-result">{copyTimeMessage}</output>}
-              </div>
-            )}
           </>
         )}
 
@@ -273,7 +306,25 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
             <span>{t("field.options")}</span>
             <div className="option-list">
               {options.map((option, index) => (
-                <div className="option-editor-row" key={`${option.id}-${index}`}>
+                <div
+                  className="option-editor-row"
+                  key={`${option.id}-${index}`}
+                  draggable
+                  onDragStart={() => { draggedOptionIndex.current = index; }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => {
+                    const from = draggedOptionIndex.current;
+                    draggedOptionIndex.current = null;
+                    if (from === null || from === index) return;
+                    setOptions((current) => {
+                      const next = [...current];
+                      const [moved] = next.splice(from, 1);
+                      next.splice(index, 0, moved);
+                      return next;
+                    });
+                  }}
+                >
+                  <span className="drag-handle" aria-hidden="true">⠿</span>
                   <input value={option.name} onChange={(event) => updateOption(index, event.target.value)} />
                   <select value={option.color || "gray"} onChange={(event) => updateOptionColor(index, event.target.value)}>
                     {OPTION_COLORS.map((color) => (
@@ -466,7 +517,7 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
 
         {onToggleWrap && (
           <label className="field-wrap-row">
-            <input type="checkbox" checked={wrap} onChange={() => onToggleWrap()} />
+            <input type="checkbox" checked={wrap} onChange={() => void runAction("toggle-wrap", async () => { await onToggleWrap(); })} />
             <span>
               <strong>{t("field.wrap")}</strong>
               <em>{t("field.wrapHelper")}</em>
@@ -476,19 +527,36 @@ export function FieldSettingsDialog({ field, fields = [], records = [], database
 
         {onHide && (
           <div className="field-hide-row">
-            <button className="field-hide-button" onClick={() => onHide()}>
+            <button className="field-hide-button" onClick={() => void runAction("hide", async () => { await onHide(); }, onClose)}>
               <strong>{t("field.hide")}</strong>
               <em>{t("field.hideHelper")}</em>
             </button>
           </div>
         )}
 
+        {actionError && (
+          <div className="view-menu-action-error field-settings-action-error" role="alert">
+            <span>{actionError}</span>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                const retry = retryRef.current;
+                if (retry) void runAction(retry.action, retry.operation, retry.onSuccess);
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         <div className="dialog-actions">
-          <button onClick={onClose}>{t("common.cancel")}</button>
-          <button disabled={isSaving || !name.trim() || (usesOptions(type) && cleanOptions(options).length === 0)} onClick={save}>
-            {isSaving ? t("common.saving") : t("common.saveField")}
+          <button onClick={closeIfIdle}>{t("common.cancel")}</button>
+          <button disabled={!name.trim() || (usesOptions(type) && cleanOptions(options).length === 0)} onClick={() => void save()}>
+            {pendingAction === "save" ? t("common.saving") : t("common.saveField")}
           </button>
         </div>
+        </fieldset>
       </div>
     </div>
   );

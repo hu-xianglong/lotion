@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "notion-import-command-modal",
+  "theme": "light",
+  "viewport": {
+    "name": "wide",
+    "width": 1728,
+    "height": 1100
+  },
+  "image": {
+    "path": "test/baselines/production-visual/notion-import-command-modal-wide.png",
+    "sha256": "f6a78af5cd66af2fb95fcc95e1bc8ff307f02d19960809f0ea3ff8b68e089e63",
+    "width": 760,
+    "height": 644
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

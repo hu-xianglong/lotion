@@ -498,3 +498,19 @@ function sameRecent(
   }
   return false;
 }
+
+// Workspace normalization and identity helpers are exposed only for tests.
+export const workspaceServiceTestInternals = {
+  createWorkspaceDatabaseSchema,
+  normalizeWorkspaceSchema,
+  createWorkspaceFields,
+  createWorkspaceDefaultView,
+  recordToWorkspaceMeta,
+  pathExists,
+  describeWorkspaceOpenFailure,
+  findLikelyWorkspaceChildren,
+  scoreWorkspaceChild,
+  isNotFoundError,
+  sameFavorite,
+  sameRecent
+};

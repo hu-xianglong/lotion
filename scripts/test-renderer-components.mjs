@@ -1,18 +1,38 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import * as esbuild from "esbuild";
 
 const root = process.cwd();
-const tempDir = await mkdtemp(join(root, ".lotion-renderer-components-"));
-const entryPath = join(tempDir, "renderer-component-entry.tsx");
+const configuredBundleDir = process.env.LOTION_RENDERER_COMPONENT_BUNDLE_DIR?.trim();
+const tempDir = configuredBundleDir
+  ? resolve(configuredBundleDir)
+  : await mkdtemp(join(tmpdir(), "lotion-renderer-components-"));
+if (configuredBundleDir) await mkdir(tempDir, { recursive: true });
+const bundlePath = join(tempDir, "renderer-component-entry.cjs");
+const require = createRequire(import.meta.url);
 
 try {
-  const entrySource = rendererComponentEntry().replaceAll('"./src/', '"../src/');
-  await writeFile(entryPath, entrySource, "utf8");
+  await esbuild.build({
+    stdin: {
+      contents: rendererComponentEntry(),
+      sourcefile: "renderer-component-entry.tsx",
+      resolveDir: root,
+      loader: "tsx"
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    outfile: bundlePath,
+    logLevel: "silent",
+    jsx: "automatic",
+    sourcemap: "inline",
+    sourcesContent: true
+  });
 
   const {
-    dateSortContract,
     renderAdvancedSearchProgressCard,
     renderAdvancedSearchPanelInitial,
     renderAppShellCollapsed,
@@ -25,13 +45,17 @@ try {
     renderGitSyncPanelStatusScenarios,
     renderLLMChatVisualContract,
     renderKanbanProviderVisual,
-    renderDateFieldSettingsDialog,
     renderEditableFieldSettingsDialog,
+    renderInheritedDateFieldSettingsDialog,
+    fieldFormatOverridesContract,
+    fieldSettingsActionContract,
     renderFormulaFieldSettingsDialog,
     renderDatabaseProperties,
     renderDatabaseTableGridEmbedded,
     renderDatabaseTableGridHiddenRows,
     renderDatabaseTableGridStandalone,
+    renderCreateViewDialog,
+    renderPropertyManagerDialog,
     renderDatabaseViewTabsBar,
     renderBackupButton,
     renderEmbeddedDatabaseHeader,
@@ -50,6 +74,7 @@ try {
     renderGlobalSearchPanelContentRecent,
     renderGlobalSearchPanelContentResults,
     renderSearchAiSurface,
+    searchAiSubtitleContract,
     renderCalendarBody,
     renderCoverArea,
     renderDesignSystemLab,
@@ -61,16 +86,21 @@ try {
     renderManagementPluginDetailSettings,
     renderManagementPluginsView,
     renderManagementRecentView,
+    renderManagementGeneralSettingsCenter,
     renderManagementSettingsCenter,
     renderManagementTagView,
+    renderMenuPrimitives,
     renderMissingEmbeddedViewDiagnosticCopy,
+    cleanHeadingTextContract,
     lotionToggleFenceContract,
+    optionMutationContract,
+    rowPropertyInteractionContract,
     renderNotionAuditPanelInitial,
+    notionAuditRunContract,
     renderNotionAuditPassingResult,
     renderNotionAuditResult,
     renderNotionImportDialogPick,
     renderNotionImportPanelPick,
-    renderNotionImportSummary,
     renderNotionImportSettingsWithReport,
     renderDatabaseTemplatePicker,
     renderDefaultFieldProviders,
@@ -80,11 +110,13 @@ try {
     renderSortPopoverContent,
     renderSortPopoverContentDisabled,
     renderSortPopoverContentEmpty,
+    sortMutationContract,
     renderSystemFieldSettingsDialog,
     renderTabStrip,
     renderTitleCell,
     renderUrlCell,
     renderViewSettingsDialog,
+    viewSettingsActionContract,
     renderViewTypeIcons,
     renderWorkspaceSelector,
     renderMarkdownPropertyLinks,
@@ -101,18 +133,42 @@ try {
     renderRowPageProperties,
     renderRowPagePropertiesWithManagement,
     renderRowTemplateDialog,
+    rowTemplateActionContract,
     renderSearchBox,
     renderSidebarPageContextMenu,
     renderSidebarShell,
     renderShortcutSettings,
     renderStartupLoadingScreen,
+    renderStartupPerformancePanel,
     renderSlashMenuContent,
     renderSlashMenuContentZh,
     renderSlashMenuContentEmpty,
     renderSlashMenuContentEmptyZh,
-    rendererUtilityContract,
-    renderWidgetMarkdownFormatting
-  } = await import(pathToFileURL(entryPath).href);
+    renderWidgetMarkdownFormatting,
+    browserPluginSettingsContract,
+    rendererWorkspaceMoveContract,
+    bulkRowActionContract,
+    cellEditQueueContract,
+    coverOffsetMutationContract,
+    pageLayoutMutationContract,
+    pagePropertyMutationContract,
+    pageTitleBlurContract,
+    pageTitleMutationContract,
+    createViewSubmissionContract,
+    columnMenuActionContract,
+    databaseSettingsActionContract,
+    deletedRowsActionContract,
+    editableKeyboardTargetContract,
+    filterMutationContract,
+    groupSettingsSubmissionContract,
+    propertyManagerMutationContract,
+    rowMenuActionContract,
+    rowCreationContract,
+    rowPagePropertyEditContract,
+    viewOrderMutationContract,
+    viewMenuActionContract,
+    viewPersistenceContract
+  } = require(bundlePath);
   testAdvancedSearchProgressCard(renderAdvancedSearchProgressCard());
   testAdvancedSearchPanelInitial(renderAdvancedSearchPanelInitial());
   testGitHubBackupPanelInitial(renderGitHubBackupPanelInitial());
@@ -122,7 +178,7 @@ try {
   testGitSyncPanelDefaultSettings(renderGitSyncPanelDefaultSettings());
   testGitSyncPanelStatusScenarios(renderGitSyncPanelStatusScenarios());
   testLLMChatVisualContract(renderLLMChatVisualContract());
-  testKanbanProviderVisual(renderKanbanProviderVisual());
+  testKanbanProviderVisual(await renderKanbanProviderVisual());
   testAppShellExpanded(renderAppShellExpanded());
   testAppShellCollapsed(renderAppShellCollapsed());
   testRowPageProperties(renderRowPageProperties());
@@ -138,8 +194,21 @@ try {
   testWorkspaceLinkButton(renderWorkspaceLinkButton());
   testMixedMarkdownProperty(renderMixedMarkdownProperty());
   testWorkspaceLinkRoutingContract(workspaceLinkRoutingContract());
+  testEditableKeyboardTargetContract(editableKeyboardTargetContract());
+  testBulkRowActionContract(await bulkRowActionContract());
+  testCellEditQueueContract(await cellEditQueueContract());
+  testCoverOffsetMutationContract(await coverOffsetMutationContract());
+  testPageLayoutMutationContract(await pageLayoutMutationContract());
+  testPagePropertyMutationContract(await pagePropertyMutationContract());
+  testPageTitleBlurContract(await pageTitleBlurContract());
+  testPageTitleMutationContract(await pageTitleMutationContract());
+  testRowCreationContract(await rowCreationContract());
+  testRowPagePropertyEditContract(await rowPagePropertyEditContract());
+  testViewPersistenceContract(viewPersistenceContract());
   testEditableFieldSettingsDialog(renderEditableFieldSettingsDialog());
-  testDateFieldSettingsDialog(renderDateFieldSettingsDialog());
+  testInheritedDateFieldSettingsDialog(renderInheritedDateFieldSettingsDialog());
+  testFieldFormatOverridesContract(fieldFormatOverridesContract());
+  testFieldSettingsActionContract(await fieldSettingsActionContract());
   testFormulaFieldSettingsDialog(renderFormulaFieldSettingsDialog());
   testSystemFieldSettingsDialog(renderSystemFieldSettingsDialog());
   testSelectFieldSettingsDialog(renderSelectFieldSettingsDialog());
@@ -151,19 +220,25 @@ try {
   testSortPopoverContent(renderSortPopoverContent());
   testSortPopoverContentEmpty(renderSortPopoverContentEmpty());
   testSortPopoverContentDisabled(renderSortPopoverContentDisabled());
+  testSortMutationContract(await sortMutationContract());
   testGlobalSearchPanelContentRecent(renderGlobalSearchPanelContentRecent());
   testGlobalSearchPanelContentResults(renderGlobalSearchPanelContentResults());
   testGlobalSearchPanelContentLoading(renderGlobalSearchPanelContentLoading());
   testGlobalSearchPanelContentEmpty(renderGlobalSearchPanelContentEmpty());
   testGlobalSearchPanelContentEnglish(renderGlobalSearchPanelContentEnglish());
   testSearchAiSurface(renderSearchAiSurface());
+  testSearchAiSubtitleContract(searchAiSubtitleContract());
   testViewSettingsDialog(renderViewSettingsDialog());
+  testViewSettingsActionContract(await viewSettingsActionContract());
   testRowTemplateDialog(renderRowTemplateDialog());
+  testRowTemplateActionContract(await rowTemplateActionContract());
   testSlashMenuContent(renderSlashMenuContent());
   testSlashMenuContentZh(renderSlashMenuContentZh());
   testSlashMenuContentEmpty(renderSlashMenuContentEmpty());
   testSlashMenuContentEmptyZh(renderSlashMenuContentEmptyZh());
   testWidgetMarkdownFormatting(renderWidgetMarkdownFormatting());
+  testBrowserPluginSettingsContract(await browserPluginSettingsContract());
+  testRendererWorkspaceMoveContract(await rendererWorkspaceMoveContract());
   testTabStrip(renderTabStrip());
   testBackupButton(renderBackupButton());
   testSearchBox(renderSearchBox());
@@ -171,11 +246,13 @@ try {
   testSidebarPageContextMenu(renderSidebarPageContextMenu());
   testShortcutSettings(renderShortcutSettings());
   testStartupLoadingScreen(renderStartupLoadingScreen());
+  testStartupPerformancePanel(renderStartupPerformancePanel());
   testStandaloneDatabaseHeader(renderStandaloneDatabaseHeader());
   testEmbeddedDatabaseHeader(renderEmbeddedDatabaseHeader());
   testEmbeddedViewRendererCached(renderEmbeddedViewRendererCached());
   testEmbeddedViewRendererLoading(renderEmbeddedViewRendererLoading());
   testDatabaseViewTabsBar(renderDatabaseViewTabsBar());
+  testViewOrderMutationContract(await viewOrderMutationContract());
   testFieldTypeIcons(renderFieldTypeIcons());
   testViewTypeIcons(renderViewTypeIcons());
   testEntityIcons(renderEntityIcons());
@@ -190,16 +267,21 @@ try {
   testManagementPluginsView(renderManagementPluginsView());
   testManagementPluginDetailOverview(renderManagementPluginDetailOverview());
   testManagementPluginDetailSettings(renderManagementPluginDetailSettings());
+  testManagementGeneralSettingsCenter(renderManagementGeneralSettingsCenter());
   testManagementSettingsCenter(renderManagementSettingsCenter());
   testManagementTagView(renderManagementTagView());
+  testMenuPrimitives(renderMenuPrimitives());
   testMissingEmbeddedViewDiagnosticCopy(renderMissingEmbeddedViewDiagnosticCopy());
+  testCleanHeadingTextContract(cleanHeadingTextContract());
   testLotionToggleFenceContract(lotionToggleFenceContract());
+  testOptionMutationContract(await optionMutationContract());
+  testRowPropertyInteractionContract(rowPropertyInteractionContract());
   testNotionAuditPanelInitial(renderNotionAuditPanelInitial());
+  testNotionAuditRunContract(await notionAuditRunContract());
   testNotionAuditResult(renderNotionAuditResult());
   testNotionAuditPassingResult(renderNotionAuditPassingResult());
   testNotionImportDialogPick(renderNotionImportDialogPick());
   testNotionImportPanelPick(renderNotionImportPanelPick());
-  testNotionImportSummary(renderNotionImportSummary());
   testNotionImportSettingsWithReport(renderNotionImportSettingsWithReport());
   testListBody(renderListBody());
   testGalleryBody(renderGalleryBody());
@@ -211,36 +293,20 @@ try {
   testDatabaseTableGridEmbedded(renderDatabaseTableGridEmbedded());
   testDatabaseTableGridStandalone(renderDatabaseTableGridStandalone());
   testDatabaseTableGridHiddenRows(renderDatabaseTableGridHiddenRows());
-  testDateSortContract(dateSortContract());
-  testRendererUtilityContract(rendererUtilityContract());
+  testCreateViewDialog(renderCreateViewDialog());
+  testCreateViewSubmissionContract(await createViewSubmissionContract());
+  testColumnMenuActionContract(await columnMenuActionContract());
+  testPropertyManagerDialog(renderPropertyManagerDialog());
+  testPropertyManagerMutationContract(await propertyManagerMutationContract());
+  testViewMenuActionContract(await viewMenuActionContract());
+  testDatabaseSettingsActionContract(await databaseSettingsActionContract());
+  testDeletedRowsActionContract(await deletedRowsActionContract());
+  testRowMenuActionContract(await rowMenuActionContract());
+  testFilterMutationContract(await filterMutationContract());
+  testGroupSettingsSubmissionContract(await groupSettingsSubmissionContract());
   console.log("Renderer component regression tests passed.");
 } finally {
-  await rm(tempDir, { recursive: true, force: true });
-}
-
-function testDateSortContract(contract) {
-  assert.deepEqual(contract.asc, ["old", "middle", "new", "blank"], "date ascending should compare timestamps across years");
-  assert.deepEqual(contract.desc, ["new", "middle", "old", "blank"], "date descending should compare timestamps across years");
-}
-
-function testRendererUtilityContract(contract) {
-  assert.deepEqual(contract.markdown.map((part) => part.type), ["html", "view", "html", "iframe", "html", "iframe"]);
-  assert.match(contract.markdown[0].html, /<h1>Title<\/h1>/);
-  assert.match(contract.markdown[0].html, /type="checkbox" disabled checked/);
-  assert.match(contract.markdown[0].html, /class="md-image"/);
-  assert.match(contract.markdown[0].html, /class="md-link"/);
-  assert.equal(contract.markdown[1].databaseId, "db_tasks");
-  assert.equal(contract.markdown[1].viewId, "view_default");
-  assert.equal(contract.markdown[3].height, 480);
-  assert.equal(contract.markdown[5].height, 360);
-  assert.deepEqual(contract.templateNames, ["Untitled", "Tasks", "Reading List", "Journal"]);
-  assert.equal(contract.settings.initial, "fallback");
-  assert.deepEqual(contract.settings.saved, { enabled: true });
-  assert.equal(contract.settings.deleted, "removed");
-  assert.deepEqual(contract.settings.invalid, {});
-  assert.deepEqual(contract.settings.array, {});
-  assert.equal(contract.settings.valid, true);
-  assert.equal(contract.settings.copyIsIsolated, true);
+  if (!configuredBundleDir) await rm(tempDir, { recursive: true, force: true });
 }
 
 function testRowPageProperties(html) {
@@ -259,8 +325,8 @@ function testRowPageProperties(html) {
   assert.match(html, /aria-label="Search Status: Done"/, "select property search affordance should be labelled");
   assert.match(html, /aria-label="Search Tags: Focus"/, "first multi-select search affordance should be labelled");
   assert.match(html, /aria-label="Search Tags: Bug"/, "second multi-select search affordance should be labelled");
-  assert.match(html, /row-property-option-search-chip[\s\S]*option-pill[\s\S]*Done/, "select search affordance should render as an option pill");
-  assert.match(html, /row-property-option-search-chip[\s\S]*option-pill[\s\S]*Focus/, "multi-select search affordance should render as an option pill");
+  assert.match(html, /row-property-option-search-chip[\s\S]*row-property-option-search-label[^>]*>Done</, "select search affordance should render a distinct action label");
+  assert.match(html, /row-property-option-search-chip[\s\S]*row-property-option-search-label[^>]*>Focus</, "multi-select search affordance should render a distinct action label");
   assert.match(html, /Formula Total/, "formula field label should render");
   assert.match(html, /readonly-cell[^>]*>42</, "formula field should render as read-only text");
   assert.match(html, /Created time/, "system created time label should render");
@@ -268,6 +334,407 @@ function testRowPageProperties(html) {
 
   assert.doesNotMatch(html, /Hidden Bookkeeping/, "hidden fields should not render");
   assert.doesNotMatch(html, /Visible row title should stay in the page title/, "title field should not render in properties");
+}
+
+function testRowPropertyInteractionContract(contract) {
+  assert.deepEqual(contract, {
+    managed: 1,
+    searched: ["Done"],
+    prevented: 2,
+    stopped: 2
+  }, "row property action callbacks should prevent bubbling and preserve the exact selected option");
+}
+
+function testBrowserPluginSettingsContract(contract) {
+  assert.deepEqual(contract.initial, {
+    enabled: true,
+    missing: "fallback"
+  }, "browser plugin settings should load persisted values and defaults");
+  assert.equal(contract.snapshotIsDefensive, true, "all() should return a defensive top-level snapshot");
+  assert.deepEqual(contract.afterSet, {
+    cache: { enabled: true, model: "gpt-test" },
+    persisted: { enabled: true, model: "gpt-test" },
+    reloadModel: "gpt-test"
+  }, "successful settings writes should align cache, persistence, and reload");
+  assert.deepEqual(contract.undefinedValue, {
+    cacheValue: "fallback",
+    persistedHasKey: false
+  }, "JSON-lossy undefined values should not remain only in memory");
+  assert.deepEqual(contract.failedSet, {
+    rejected: true,
+    cacheValue: "before",
+    persistedValue: "before"
+  }, "failed writes should preserve the prior cache and storage");
+  assert.deepEqual(contract.failedDelete, {
+    rejected: true,
+    cacheValue: "before",
+    persistedValue: "before"
+  }, "failed deletes should preserve the prior cache and storage");
+  assert.equal(contract.cyclicRejected, true, "cyclic settings should reject without changing the cache");
+  assert.equal(contract.toJSONRejected, true, "a functional toJSON setting should reject instead of replacing the object payload");
+  assert.equal(contract.stableAfterSerializationFailures, "before", "serialization failures should preserve prior cached data");
+  assert.deepEqual(contract.afterDelete, {
+    cacheHasModel: false,
+    persistedHasModel: false
+  }, "successful deletes should align cache and storage");
+  assert.deepEqual(contract.invalidStorage, {
+    malformed: {},
+    array: {}
+  }, "malformed and array storage payloads should recover as empty settings");
+  assert.equal(contract.pluginIsolation, true, "plugin settings should use isolated storage keys");
+}
+
+function testRendererWorkspaceMoveContract(contract) {
+  assert.deepEqual(contract.validMove, {
+    id: "pg_child",
+    parentId: "pg_parent",
+    parentKind: "page",
+    path: ["Root", "Parent", "Child"]
+  });
+  assert.deepEqual(contract.clearMove, {
+    id: "pg_child",
+    parentId: null,
+    parentKind: null,
+    path: ["Child"]
+  });
+  assert.match(contract.selfError, /cannot move a page under itself/i);
+  assert.equal(contract.selfUpdateAttempted, false);
+  assert.match(contract.descendantError, /page hierarchy cycle/i);
+}
+
+function testCreateViewDialog(html) {
+  assert.match(html, /role="dialog"/, "create view should render a dialog");
+  assert.match(html, /aria-label="Create view"/, "create view dialog should be labelled");
+  assert.match(html, /value="View 4"/, "create view should choose the next available generated name");
+  assert.match(html, /<option value="table" selected="">Table<\/option>/, "new views should default to table layout");
+  assert.match(html, /checked=""\/> Empty settings/, "new views should default to empty settings");
+  assert.match(html, /Duplicate “Current board”/, "duplicate source should identify the active view");
+  assert.match(html, /aria-busy="false"/, "idle create dialog should expose non-busy state");
+  assert.match(html, />Create view<\/button>/, "idle create dialog should expose its submit action");
+  assert.doesNotMatch(html, /role="alert"/, "idle create dialog should not render a stale error");
+}
+
+function testCreateViewSubmissionContract(contract) {
+  assert.equal(contract.concurrent.createCalls, 1, "two synchronous submissions should call create once");
+  assert.equal(contract.concurrent.firstStatus, "submitted", "the first in-flight submission should finish");
+  assert.equal(contract.concurrent.secondStatus, "ignored", "the second in-flight submission should be ignored");
+  assert.deepEqual(contract.concurrent.saving, [true, false], "single-flight success should report one saving transition");
+  assert.deepEqual(contract.concurrent.errors, [null], "single-flight success should clear stale errors");
+  assert.equal(contract.concurrent.successes, 1, "single-flight success should close once");
+  assert.deepEqual(contract.concurrent.input, {
+    databaseId: "db_contract",
+    name: "Review",
+    type: "list",
+    sourceMode: "empty"
+  }, "single-flight submission should forward its exact create input");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw create failure",
+    saving: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "failed create should normalize errors, stay open, and reset the guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [null],
+    saving: [true, false],
+    successes: 1
+  }, "a failed create should allow a successful retry");
+}
+
+function testColumnMenuActionContract(contract) {
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "column menu dismissal should be blocked while an action is pending");
+  assert.deepEqual(contract.concurrent, {
+    actionCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "column actions should synchronously suppress duplicate submissions and close once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw column action failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "failed column actions should normalize errors, stay open, and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "a failed column action should allow a successful retry");
+}
+
+function testPropertyManagerDialog(html) {
+  assert.match(html, /role="dialog"/, "property manager should render a dialog");
+  assert.match(html, /aria-label="Property manager"/, "property manager should expose its accessible name");
+  assert.match(html, /aria-busy="false"/, "idle property manager should expose non-busy state");
+  assert.match(html, /Current review/, "property manager should identify the active view");
+  assert.match(html, /Name<small>text<\/small>/, "property manager should render the title property");
+  assert.match(html, /Priority<small>select<\/small>/, "property manager should render editable properties");
+  assert.match(html, /Hidden in this view/, "property manager should expose per-view visibility");
+  assert.match(html, /Deleted properties/, "property manager should render recoverable properties");
+  assert.match(html, /Depends on: Formula total/, "deleted properties should explain blocking dependencies");
+  assert.match(html, /title="Restore or remove dependencies first."/, "blocked permanent deletion should explain recovery");
+  assert.doesNotMatch(html, /role="alert"/, "idle property manager should not render a stale mutation error");
+}
+
+function testPropertyManagerMutationContract(contract) {
+  assert.deepEqual(contract.filtering, {
+    byName: ["priority"],
+    byType: ["tags"],
+    blank: ["title", "priority", "tags"]
+  }, "property filtering should match names, types, and blank queries");
+  assert.deepEqual(contract.inputs, {
+    current: { name: "Review score", type: "number", visibility: "current", viewId: "view_current" },
+    all: { name: "Shared note", type: "text", visibility: "all" }
+  }, "property creation should scope current-only fields and omit unrelated view ids");
+  assert.deepEqual(contract.reordering, {
+    moved: ["title", "tags", "priority"],
+    same: null,
+    missing: null
+  }, "property reorder planning should be deterministic and reject no-ops");
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "property manager dismissal should be blocked during a mutation and run once when idle");
+  assert.deepEqual(contract.concurrent, {
+    mutationCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [null]
+  }, "property mutations should synchronously suppress a second in-flight call");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw property failure",
+    pending: [true, false],
+    guardReset: true
+  }, "property mutation failures should normalize errors and reset the guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [null],
+    pending: [true, false],
+    calls: 1
+  }, "property mutation failure should allow a clean retry");
+}
+
+function testViewMenuActionContract(contract) {
+  assert.deepEqual(contract.validation, {
+    blank: "View name cannot be empty.",
+    conflict: "View names must be unique.",
+    current: "",
+    unique: ""
+  }, "view rename validation should reject blank/case-insensitive conflicts and allow current or unique names");
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "view menu dismissal should be blocked while an action is pending");
+  assert.deepEqual(contract.concurrent, {
+    actionCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "view actions should synchronously suppress duplicate submissions and close once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw view action failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "failed view actions should normalize errors, stay open, and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "a failed view action should allow a successful retry");
+}
+
+function testDatabaseSettingsActionContract(contract) {
+  assert.deepEqual(contract.pageOpenModes, {
+    tableDefault: "side_peek",
+    galleryDefault: "center_peek",
+    explicit: "full_page"
+  }, "database settings should normalize page-open modes by view type");
+  assert.deepEqual(contract.navigation, {
+    pending: false,
+    idle: true,
+    calls: 1
+  }, "database settings navigation should be blocked while persistence is pending");
+  assert.deepEqual(contract.concurrent, {
+    actionCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "database settings should synchronously suppress duplicate persistent actions");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw database settings failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "database settings failures should stay recoverable and reset the action guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "database settings should allow a clean retry after persistence failure");
+}
+
+function testGroupSettingsSubmissionContract(contract) {
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "group settings dismissal should be blocked while persistence is pending");
+  assert.deepEqual(contract.concurrent, {
+    saveCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "group settings should synchronously suppress duplicate saves and close once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw grouping failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "failed grouping saves should normalize errors, stay open, and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "a failed grouping save should allow a successful retry");
+}
+
+function testDeletedRowsActionContract(contract) {
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "deleted rows dismissal should be blocked while an action is pending");
+  assert.deepEqual(contract.concurrent, {
+    actionCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""]
+  }, "deleted row actions should synchronously suppress all competing submissions");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw deleted row failure",
+    pending: [true, false],
+    guardReset: true
+  }, "failed deleted row actions should normalize errors and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    calls: 1
+  }, "a failed deleted row action should allow a successful retry");
+}
+
+function testRowMenuActionContract(contract) {
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "row menu dismissal should be blocked while persistence is pending");
+  assert.deepEqual(contract.concurrent, {
+    actionCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "row actions should synchronously suppress duplicate submissions and close once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw row action failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "failed row actions should normalize errors, stay open, and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "a failed row action should allow a successful retry");
+}
+
+function testFilterMutationContract(contract) {
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "filter dismissal should be blocked while persistence is pending");
+  assert.deepEqual(contract.concurrent, {
+    changeCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "filter mutations should synchronously suppress duplicate submissions");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw filter persistence failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "failed filter mutations should normalize errors, retain the popover, and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1,
+    value: "Recovered"
+  }, "a failed filter mutation should allow an explicit successful retry");
+}
+
+function testSortMutationContract(contract) {
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "sort dismissal should be blocked while persistence is pending");
+  assert.deepEqual(contract.concurrent, {
+    changeCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""]
+  }, "sort mutations should synchronously suppress duplicate submissions");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw sort persistence failure",
+    pending: [true, false],
+    guardReset: true
+  }, "failed sort mutations should normalize errors, retain the popover, and reset their guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    direction: "desc"
+  }, "a failed sort mutation should allow an explicit successful retry");
 }
 
 function testRowPagePropertySettingsAffordance(html) {
@@ -368,7 +835,8 @@ function testPageHistoryPanel(html) {
   assert.match(html, /Renderer history backup/, "history version message should render");
   assert.match(html, /class="page-history-version selected"/, "selected version should render selected state");
   assert.match(html, /aria-label="Local Git page history diff preview"/, "history diff preview should be labelled");
-  assert.match(html, /databases\/system\/pages--db_pages\/pages\/History_Page--pg_history\.md/, "preview path should render");
+  assert.match(html, /Page snapshot · History Page/, "preview should render logical page identity");
+  assert.doesNotMatch(html, /databases\/system\/pages--db_pages/, "preview should not expose its storage path");
   assert.match(html, />Restore<\/button>/, "restore action should render");
   assert.match(html, /class="page-history-diff-line removed"/, "removed diff line should render");
   assert.match(html, /class="page-history-diff-line added"/, "added diff line should render");
@@ -384,6 +852,7 @@ function testPageBacklinksPanel(html) {
   assert.match(html, /Workspace \/ Notes/, "page backlink path should omit the repeated title segment");
   assert.match(html, /Markdown · L12/, "markdown backlink context should include line number");
   assert.match(html, /See target page here/, "markdown backlink excerpt should render");
+  assert.doesNotMatch(html, /databases\/system\/pages--db_pages/, "markdown backlink excerpt should hide its link destination");
   assert.match(html, /Task Row/, "row backlink source title should render");
   assert.match(html, /Database row<\/span>/, "row source type should render");
   assert.match(html, /Workspace \/ Tasks/, "row backlink path should render database context");
@@ -443,6 +912,8 @@ function testWorkspaceLinkRoutingContract(result) {
 
 function testEditableFieldSettingsDialog(html) {
   assert.match(html, /role="dialog"[^>]+aria-label="Field settings"/, "field settings dialog should be labelled");
+  assert.match(html, /aria-busy="false"/, "idle field settings should expose its transactional state");
+  assert.match(html, /<fieldset class="field-settings-controls">/, "all field settings controls should share one pending boundary");
   assert.match(html, /<h2>Field settings<\/h2>/, "dialog heading should render");
   assert.match(html, /<p>notes<\/p>/, "field id should render for debugging and management");
   assert.match(html, /value="Notes"/, "editable field name should render");
@@ -454,11 +925,369 @@ function testEditableFieldSettingsDialog(html) {
   assert.doesNotMatch(html, /System field values are managed by Lotion/, "editable fields should not show system helper");
 }
 
-function testDateFieldSettingsDialog(html) {
-  assert.match(html, /System timestamps/, "date field settings should expose system timestamp utilities");
-  assert.match(html, />Copy to Created time<\/button>/, "date fields should copy values to Created time");
-  assert.match(html, />Copy to Last updated time<\/button>/, "date fields should copy values to Last updated time");
-  assert.match(html, /Empty or invalid values keep their existing system timestamp/, "copy action should explain its non-destructive skip behavior");
+function testInheritedDateFieldSettingsDialog(html) {
+  assert.match(
+    html,
+    /<option value="" selected="">Use global default<\/option>/,
+    "date-like fields without explicit formats should retain global-default inheritance"
+  );
+  assert.equal(
+    (html.match(/<option value="" selected="">Use global default<\/option>/g) || []).length,
+    2,
+    "both date and time format controls should expose the inherited state"
+  );
+}
+
+function testFieldFormatOverridesContract(result) {
+  assert.deepEqual(
+    result.inherited,
+    {},
+    "inherited date/time selections should not materialize field overrides"
+  );
+  assert.deepEqual(
+    result.explicit,
+    { dateFormat: "iso", timeFormat: "h24" },
+    "explicit field date/time selections should remain authoritative"
+  );
+  assert.deepEqual(
+    result.nonDate,
+    {},
+    "non-date fields should discard stale date/time selections"
+  );
+}
+
+function testFieldSettingsActionContract(contract) {
+  assert.deepEqual(contract.hydration, {
+    failedSameField: false,
+    idleSameField: true,
+    switchedField: true
+  }, "failed same-field refreshes should retain the draft while idle or switched fields hydrate");
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "field settings dismissal should be blocked only while persistence is pending");
+  assert.equal(contract.concurrent.operationCalls, 1, "same-tick field settings actions should invoke one persistence operation");
+  assert.equal(contract.concurrent.firstStatus, "submitted", "the accepted field settings action should submit");
+  assert.equal(contract.concurrent.secondStatus, "ignored", "a competing same-tick field settings action should be ignored");
+  assert.deepEqual(contract.concurrent.pending, [true, false], "the accepted field settings action should own one pending transition");
+  assert.deepEqual(contract.concurrent.errors, [""], "the accepted field settings action should clear stale errors");
+  assert.equal(contract.concurrent.successes, 1, "the accepted field settings action should complete once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw field settings failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "field settings failures should normalize errors, retain the dialog, and reset the guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "field settings retry should reuse the reset action path and succeed once");
+}
+
+function testViewPersistenceContract(result) {
+  assert.equal(result.restored, "view_alt", "standalone databases should restore a valid last active view");
+  assert.equal(result.explicit, "view_alt", "explicit non-default links should override local preferences");
+  assert.equal(result.embedded, "view_default", "embedded views should honor their requested view");
+  assert.deepEqual(result.patch, { filters: [{ fieldId: "status", operator: "is", value: "Done" }] }, "view mutations should send only changed mutable fields");
+}
+
+function testEditableKeyboardTargetContract(result) {
+  assert.equal(result.nullTarget, false, "missing keyboard targets should not count as editing");
+  assert.equal(result.plainTarget, false, "non-Element event targets should not throw or count as editing");
+  assert.equal(result.editableTarget, true, "targets inside editable controls should count as editing");
+  assert.equal(result.nonEditableTarget, false, "ordinary Element-like targets should not count as editing");
+  assert.match(result.selector, /input[\s\S]*contenteditable/, "editable target detection should cover form and contenteditable controls");
+}
+
+function testBulkRowActionContract(contract) {
+  assert.equal(contract.concurrent.operationCalls, 1, "same-tick bulk actions should invoke one persistence operation");
+  assert.equal(contract.concurrent.firstStatus, "submitted", "the accepted bulk action should submit");
+  assert.equal(contract.concurrent.secondStatus, "ignored", "a competing same-tick bulk action should be ignored");
+  assert.deepEqual(contract.concurrent.pending, [true, false], "the accepted bulk action should own one pending transition");
+  assert.deepEqual(contract.concurrent.errors, [""], "the accepted bulk action should clear stale errors");
+  assert.equal(contract.concurrent.successes, 1, "the accepted bulk action should complete once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw bulk failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "bulk failures should normalize errors, retain the operation, and reset the guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "bulk retry should reuse the reset action path and succeed once");
+  assert.deepEqual(contract.feedback.success, {
+    kind: "success",
+    message: "Rows duplicated."
+  }, "clean batch results should surface success");
+  assert.deepEqual(contract.feedback.partial, {
+    kind: "error",
+    message: "1 row action failed: missing: Row not found."
+  }, "partially committed batch results should report row errors without entering the thrown-failure retry lane");
+}
+
+function testCellEditQueueContract(contract) {
+  assert.deepEqual(contract.serial, {
+    order: ["title:A", "notes:B"],
+    first: "submitted",
+    second: "submitted",
+    duplicate: "ignored",
+    peakQueued: 1,
+    maxConcurrent: 1,
+    final: { status: "idle", queuedCount: 0 }
+  }, "cell edits should serialize writes, deduplicate the active value, and settle idle");
+  assert.deepEqual(contract.recovery, {
+    failure: {
+      status: "error",
+      error: "raw cell failure",
+      queuedCount: 1,
+      failedInput: { databaseId: "db", rowId: "row", fieldId: "title", value: "failed" }
+    },
+    retryAccepted: true,
+    duplicateRetryIgnored: true,
+    first: "submitted",
+    later: "submitted",
+    attempts: ["title:failed", "title:failed", "notes:queued"],
+    final: { status: "idle", queuedCount: 0 }
+  }, "a failed cell edit should pause later edits and Retry should resume the exact queue once");
+  assert.deepEqual(contract.discard, {
+    failed: "discarded",
+    later: "submitted",
+    discardAccepted: true,
+    duplicateDiscardIgnored: true,
+    attempts: ["title:drop", "notes:keep"],
+    final: { status: "idle", queuedCount: 0 }
+  }, "discard should drop only the failed edit and continue later queued work");
+}
+
+function testPagePropertyMutationContract(contract) {
+  assert.deepEqual(contract.concurrent, {
+    first: "submitted",
+    duplicate: "ignored",
+    calls: [{ tags: ["Work"] }],
+    states: [
+      { status: "pending", input: { tags: ["Work"] } },
+      { status: "idle" }
+    ]
+  }, "page properties should synchronously suppress competing commits");
+  assert.deepEqual(contract.recovery, {
+    first: "failed",
+    retry: "submitted",
+    duplicateRetry: "ignored",
+    attempts: [{ date: "2026-08-01" }, { date: "2026-08-01" }],
+    failure: {
+      status: "error",
+      input: { date: "2026-08-01" },
+      error: "raw page property failure"
+    },
+    final: { status: "idle" }
+  }, "page property retry should retain the exact failed input and normalize raw errors");
+  assert.deepEqual(contract.dismiss, {
+    first: "failed",
+    dismissed: true,
+    duplicateDismiss: false,
+    final: { status: "idle" }
+  }, "page property dismissal should clear only unresolved recovery state");
+}
+
+function testPageTitleMutationContract(contract) {
+  assert.deepEqual(contract.attempts, [
+    ["page-a", "Draft A"],
+    ["page-a", "Draft A"],
+    ["page-a", "Discard me"],
+    ["page-old", "Old page pending"],
+    ["page-b", "Current page"]
+  ], "title retries should retain the original entity operation and reset should allow the current entity");
+  assert.deepEqual({
+    first: contract.first,
+    competing: contract.competing,
+    duplicateRetry: contract.duplicateRetry,
+    retry: contract.retry,
+    discarded: contract.discarded,
+    duplicateDiscardIgnored: contract.duplicateDiscardIgnored,
+    staleResult: contract.staleResult,
+    retryAfterReset: contract.retryAfterReset,
+    currentResult: contract.currentResult
+  }, {
+    first: "failed",
+    competing: "ignored",
+    duplicateRetry: "ignored",
+    retry: "submitted",
+    discarded: true,
+    duplicateDiscardIgnored: true,
+    staleResult: "failed",
+    retryAfterReset: "ignored",
+    currentResult: "submitted"
+  }, "title controller should serialize recovery, discard explicitly, and invalidate stale entity failures");
+  assert.deepEqual(contract.states.at(-1), { status: "idle" }, "title controller should finish idle");
+  assert.equal(
+    contract.states.filter((state) => state.status === "error").length,
+    2,
+    "only owned failures should become visible"
+  );
+}
+
+function testPageTitleBlurContract(contract) {
+  assert.deepEqual(contract, {
+    staleReactState: "Recovered page title",
+    domValue: "Discarded page title",
+    submitted: ["Discarded page title"]
+  }, "title blur must submit the current DOM value even when committed React state lags");
+}
+
+function testPageLayoutMutationContract(contract) {
+  assert.deepEqual(contract.attempts, [
+    ["page-a", "fullWidth", true],
+    ["page-a", "fullWidth", true],
+    ["page-a", "smallText", true],
+    ["page-old", "fullWidth", false],
+    ["page-b", "smallText", false]
+  ], "layout retries should retain the exact setting, value, and entity operation");
+  assert.deepEqual({
+    first: contract.first,
+    blockedAfterFailure: contract.blockedAfterFailure,
+    competing: contract.competing,
+    duplicateRetry: contract.duplicateRetry,
+    retry: contract.retry,
+    discarded: contract.discarded,
+    duplicateDiscardIgnored: contract.duplicateDiscardIgnored,
+    staleResult: contract.staleResult,
+    retryAfterReset: contract.retryAfterReset,
+    currentResult: contract.currentResult
+  }, {
+    first: "failed",
+    blockedAfterFailure: true,
+    competing: "ignored",
+    duplicateRetry: "ignored",
+    retry: "submitted",
+    discarded: true,
+    duplicateDiscardIgnored: true,
+    staleResult: "failed",
+    retryAfterReset: "ignored",
+    currentResult: "submitted"
+  }, "layout controller should synchronously serialize recovery, discard explicitly, and invalidate stale entity failures");
+  assert.deepEqual(contract.states.at(-1), { status: "idle" }, "layout controller should finish idle");
+  assert.equal(
+    contract.states.filter((state) => state.status === "error").length,
+    2,
+    "only owned layout failures should become visible"
+  );
+}
+
+function testCoverOffsetMutationContract(contract) {
+  assert.deepEqual(contract.attempts, [
+    ["cover-a", 72],
+    ["cover-a", 72],
+    ["cover-a", 18],
+    ["cover-old", 44],
+    ["cover-b", 33]
+  ], "cover retries should retain the original entity operation and reset should allow the current entity");
+  assert.deepEqual({
+    first: contract.first,
+    competing: contract.competing,
+    duplicateRetry: contract.duplicateRetry,
+    retry: contract.retry,
+    discarded: contract.discarded,
+    duplicateDiscardIgnored: contract.duplicateDiscardIgnored,
+    staleResult: contract.staleResult,
+    retryAfterReset: contract.retryAfterReset,
+    currentResult: contract.currentResult
+  }, {
+    first: "failed",
+    competing: "ignored",
+    duplicateRetry: "ignored",
+    retry: "submitted",
+    discarded: true,
+    duplicateDiscardIgnored: true,
+    staleResult: "failed",
+    retryAfterReset: "ignored",
+    currentResult: "submitted"
+  }, "cover controller should serialize recovery, discard explicitly, and invalidate stale entity failures");
+  assert.deepEqual(contract.states.at(-1), { status: "idle" }, "cover controller should finish idle");
+  assert.equal(
+    contract.states.filter((state) => state.status === "error").length,
+    2,
+    "only owned cover failures should become visible"
+  );
+}
+
+function testRowCreationContract(contract) {
+  assert.deepEqual(contract.concurrent, {
+    operationCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "same-tick row creation should invoke one persistence operation and own one pending transition");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw row creation failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "row creation failures should normalize non-Error values and reset their single-flight guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "row creation retry should succeed exactly once through the reset action path");
+  assert.deepEqual(contract.blocked, {
+    idle: false,
+    pending: true,
+    recovery: true
+  }, "row creation controls should stay blocked during persistence and unresolved recovery");
+}
+
+function testRowPagePropertyEditContract(contract) {
+  assert.deepEqual(contract, {
+    states: [
+      { status: "saving", queuedCount: 0 },
+      { status: "saving", queuedCount: 1 },
+      {
+        status: "error",
+        error: "row property failure",
+        queuedCount: 1,
+        failedInput: { databaseId: "db", rowId: "row", fieldId: "notes", value: "retry me" }
+      },
+      { status: "saving", queuedCount: 1 },
+      { status: "idle", queuedCount: 0 },
+      { status: "saving", queuedCount: 0 },
+      { status: "idle", queuedCount: 0 },
+      { status: "idle", queuedCount: 0 },
+      { status: "saving", queuedCount: 0 },
+      {
+        status: "error",
+        error: "row property failure",
+        queuedCount: 0,
+        failedInput: { databaseId: "db", rowId: "row", fieldId: "notes", value: "discard me" }
+      },
+      { status: "idle", queuedCount: 0 },
+      { status: "idle", queuedCount: 0 }
+    ],
+    attempts: [
+      ["notes", "retry me"],
+      ["notes", "retry me"],
+      ["empty_text", "queued"],
+      ["notes", "discard me"]
+    ],
+    retryAccepted: true,
+    duplicateRetryIgnored: true,
+    discardAccepted: true,
+    duplicateDiscardIgnored: true,
+    discardedCount: 1,
+    first: "submitted",
+    later: "submitted",
+    discarded: "discarded"
+  }, "row-page properties should preserve field wiring across ordered Retry and Discard recovery");
 }
 
 function testFormulaFieldSettingsDialog(html) {
@@ -501,7 +1330,7 @@ function testUrlCell(html) {
 function testTitleCell(html) {
   assert.match(html, /class="title-cell-with-icon"/, "title cells should render the icon/editor/open wrapper");
   assert.match(html, /class="entity-icon entity-icon-emoji"/, "title cells should render row icons");
-  assert.match(html, />🧴</, "title cells without a row icon should inherit the database icon");
+  assert.match(html, />📝</, "title cells should preserve emoji row icons");
   assert.match(html, /value="Visible Title"/, "title cells should render the editable title value");
   assert.match(html, /class="title-cell-open"/, "title cells should expose row-page open affordance");
   assert.match(html, /aria-label="Open"/, "title open affordance should be accessible");
@@ -516,41 +1345,51 @@ function testFormulaCell(html) {
 
 function testFilterPopoverContent(html) {
   assert.match(html, /role="dialog"[^>]+aria-label="Filter"/, "filter popover should expose dialog semantics");
-  assert.match(html, /class="popover filter-popover"/, "filter popover class should render");
+  assert.match(html, /class="popover filter-popover advanced-filter-popover"/, "advanced filter popover class should render");
   assert.match(html, /left:12px/, "filter popover should clamp anchored left position");
   assert.match(html, /top:64px/, "filter popover should preserve anchored top position");
   assert.match(html, /width:min\(480px, calc\(100vw - 24px\)\)/, "filter popover should render viewport-safe width");
-  assert.match(html, /<div class="popover-header">Filter<\/div>/, "filter popover heading should render");
-  assert.equal(count(html, 'class="filter-row"'), 3, "filter popover should render one row per filter");
+  assert.match(html, /class="advanced-filter-header"[\s\S]*<strong>Filter<\/strong>[\s\S]*4 conditions/, "filter popover heading and condition count should render");
+  assert.match(html, /class="filter-chip-list"[^>]+aria-label="Active filters"/, "active filter summaries should render");
+  assert.match(html, /Name contains alpha/, "text filter chip should be human readable");
+  assert.equal(count(html, 'class="filter-row"'), 4, "filter popover should render one row per filter");
   assert.match(html, />Name<\/option>/, "filter field choices should render");
   assert.match(html, />Score<\/option>/, "number field choices should render");
   assert.match(html, />Done<\/option>/, "checkbox field choices should render");
   assert.match(html, />contains<\/option>/, "text operator should render");
-  assert.match(html, />&gt;<\/option>/, "number greater-than operator should render");
-  assert.match(html, /<input type="text"[^>]+value="alpha"/, "text filter value input should render");
-  assert.match(html, /<input type="number"[^>]+value="7"/, "number filter value input should render");
-  assert.match(html, /class="filter-value-static"[^>]*>true<\/span>/, "checkbox filters should render static true value");
-  assert.equal(count(html, 'aria-label="Remove filter"'), 3, "each filter row should expose a remove action");
-  assert.match(html, /class="popover-add"[^>]*>\+ Add filter<\/button>/, "filter popover should expose add action");
+  assert.match(html, />is greater\/after<\/option>/, "number greater-than operator should render");
+  assert.match(html, /<input aria-label="Filter value" type="search"[^>]+value="alpha"/, "text filter value input should render");
+  assert.match(html, /<input aria-label="Filter value" type="number"[^>]+value="7"/, "number filter value input should render");
+  assert.match(html, /<input aria-label="Related entity" type="search"[^>]+value="row_42"/, "entity-reference filters should render a named search editor");
+  assert.equal(count(html, 'aria-label="Filter value"'), 2, "checkbox and entity-reference filters should use their appropriate value controls");
+  assert.equal(count(html, 'aria-label="Remove filter"'), 4, "each filter row should expose a remove action");
+  assert.match(html, /class="popover-add"[^>]*>\+ Add condition<\/button>/, "filter popover should expose condition creation");
+  assert.match(html, /class="popover-add"[^>]*>\+ Add group<\/button>/, "filter popover should expose group creation");
 }
 
 function testFilterPopoverContentEmpty(html) {
-  assert.match(html, /No filters yet/, "empty filter state should render");
-  assert.match(html, /\+ Add filter/, "empty filter state should still expose add action");
+  assert.match(html, /No conditions/, "empty filter count should render");
+  assert.match(html, /Add a condition or an advanced group/, "empty filter guidance should render");
+  assert.match(html, /\+ Add condition/, "empty filter state should expose condition creation");
+  assert.match(html, /\+ Add group/, "empty filter state should expose group creation");
   assert.equal(count(html, 'class="filter-row"'), 0, "empty filter state should not render filter rows");
 }
 
 function testSortPopoverContent(html) {
   assert.match(html, /role="dialog"[^>]+aria-label="Sort"/, "sort popover should expose dialog semantics");
-  assert.match(html, /class="popover sort-popover"/, "sort popover class should render");
+  assert.match(html, /class="popover sort-popover priority-sort-popover"/, "priority sort popover class should render");
   assert.match(html, /left:12px/, "sort popover should clamp anchored left position");
   assert.match(html, /top:80px/, "sort popover should preserve anchored top position");
-  assert.match(html, /<div class="popover-header">Sort<\/div>/, "sort popover heading should render");
-  assert.equal(count(html, 'class="sort-row"'), 2, "sort popover should render one row per sort");
+  assert.match(html, /class="advanced-filter-header"[\s\S]*<strong>Sort<\/strong>[\s\S]*2 rules/, "sort popover heading and rule count should render");
+  assert.match(html, /class="sort-priority-chips"[^>]+aria-label="Sort priority"[\s\S]*1\. Name[\s\S]*2\. Score/, "visible priority chips should reflect rule order");
+  assert.equal(count(html, 'class="sort-rule"'), 2, "sort popover should render one rule per sort");
   assert.match(html, />Name<\/option>/, "sort field choices should render");
   assert.match(html, />Score<\/option>/, "sort number field choice should render");
-  assert.match(html, />Ascending<\/option>/, "ascending direction should render");
-  assert.match(html, />Descending<\/option>/, "descending direction should render");
+  assert.match(html, />A → Z<\/option>/, "text-specific ascending label should render");
+  assert.match(html, />Smallest first<\/option>/, "number-specific ascending label should render");
+  assert.match(html, />Largest first<\/option>/, "number-specific descending label should render");
+  assert.match(html, /aria-label="Reorder Name"/, "rules should expose keyboard and drag reorder handles");
+  assert.match(html, /aria-label="Move Name down"/, "rules should expose explicit move controls");
   assert.equal(count(html, 'aria-label="Remove sort"'), 2, "each sort row should expose a remove action");
   assert.match(html, /class="popover-add"[^>]*>\+ Add sort<\/button>/, "sort popover should expose add action");
 }
@@ -558,7 +1397,7 @@ function testSortPopoverContent(html) {
 function testSortPopoverContentEmpty(html) {
   assert.match(html, /No sorts/, "empty sort state should render");
   assert.match(html, /\+ Add sort/, "empty sort state should still expose add action");
-  assert.equal(count(html, 'class="sort-row"'), 0, "empty sort state should not render sort rows");
+  assert.equal(count(html, 'class="sort-rule"'), 0, "empty sort state should not render sort rules");
 }
 
 function testSortPopoverContentDisabled(html) {
@@ -640,7 +1479,7 @@ function testGlobalSearchPanelContentResults(html) {
   assert.match(html, /Lotion · 内置 · lotion\.toggle-raw-markdown/, "toggle raw markdown command preview should include Lotion source and id");
   assert.match(html, /切换嵌入源码显示/, "toggle embed source command title should render");
   assert.match(html, /Lotion · 内置 · lotion\.toggle-embed-source/, "toggle embed source command preview should include Lotion source and id");
-  assert.match(html, /收藏\/取消收藏当前内容/, "favorite command title should render");
+  assert.match(html, /收藏\/取消收藏当前页面/, "favorite command title should render");
   assert.match(html, /Lotion · 内置 · lotion\.toggle-favorite/, "favorite command preview should include Lotion source and id");
   assert.match(html, /切换当前页面全宽/, "full-width command title should render");
   assert.match(html, /Lotion · 内置 · lotion\.toggle-full-width/, "full-width command preview should include Lotion source and id");
@@ -712,6 +1551,38 @@ function testViewSettingsDialog(html) {
   assert.match(html, />Save view<\/button>/, "save action should render");
 }
 
+function testViewSettingsActionContract(contract) {
+  assert.deepEqual(contract.hydration, {
+    failedSameView: false,
+    idleSameView: true,
+    switchedView: true
+  }, "failed same-view refreshes should retain the draft while idle or switched views hydrate");
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "view settings should block dismissal only while an action is pending");
+  assert.equal(contract.concurrent.operationCalls, 1, "same-tick view settings actions should invoke one persistence operation");
+  assert.equal(contract.concurrent.firstStatus, "submitted", "the first view settings action should submit");
+  assert.equal(contract.concurrent.secondStatus, "ignored", "a competing same-tick action should be ignored");
+  assert.deepEqual(contract.concurrent.pending, [true, false], "the submitted action should own one pending transition");
+  assert.deepEqual(contract.concurrent.errors, [""], "the submitted action should clear stale errors");
+  assert.equal(contract.concurrent.successes, 1, "the submitted action should close once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw view settings failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "view settings failures should normalize errors, retain the dialog, and reset the guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "view settings retry should reuse the reset action path and close once");
+}
+
 function testRowTemplateDialog(html) {
   assert.match(html, /class="row-template-dialog"/, "row template dialog should render");
   assert.match(html, /<h2>Templates<\/h2>/, "template dialog heading should render");
@@ -734,6 +1605,38 @@ function testRowTemplateDialog(html) {
   assert.match(html, /class="danger-button"[^>]*>Delete<\/button>/, "delete action should render for existing templates");
   assert.match(html, />Cancel<\/button>/, "cancel action should render");
   assert.match(html, /class="primary"[^>]*>Save template<\/button>/, "save action should render");
+}
+
+function testRowTemplateActionContract(contract) {
+  assert.deepEqual(contract.hydration, {
+    failedSameTemplate: false,
+    idleSameTemplate: true,
+    switchedTemplate: true
+  }, "failed same-template refreshes should retain the draft while idle or switched templates hydrate");
+  assert.deepEqual(contract.dismissal, {
+    pending: false,
+    idle: true,
+    closeCalls: 1
+  }, "row template dismissal should be blocked only while persistence is pending");
+  assert.equal(contract.concurrent.operationCalls, 1, "same-tick template actions should invoke one persistence operation");
+  assert.equal(contract.concurrent.firstStatus, "submitted", "the accepted template action should submit");
+  assert.equal(contract.concurrent.secondStatus, "ignored", "a competing same-tick template action should be ignored");
+  assert.deepEqual(contract.concurrent.pending, [true, false], "the accepted template action should own one pending transition");
+  assert.deepEqual(contract.concurrent.errors, [""], "the accepted template action should clear stale errors");
+  assert.equal(contract.concurrent.successes, 1, "the accepted template action should complete once");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw template failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "template failures should normalize errors, retain the dialog, and reset the guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "template retry should reuse the reset action path and succeed once");
 }
 
 function testSlashMenuContent(html) {
@@ -788,20 +1691,37 @@ function testWidgetMarkdownFormatting(html) {
 function testTabStrip(html) {
   assert.match(html, /class="tab-strip"/, "tab strip should render");
   assert.equal(count(html, 'draggable="true"'), 5, "tab strip should render all open tabs");
+  assert.equal(count(html, 'draggable="false"'), 1, "startup diagnostics tab should stay pinned to its window");
   assert.match(html, /class="tab active"/, "active tab should be marked");
-  assert.equal(count(html, 'class="tab-icon"'), 3, "entity tabs should render compact entity icons");
+  assert.equal(count(html, 'class="tab-icon"'), 4, "entity and startup tabs should render compact icons");
   assert.match(html, /class="tab-icon"[\s\S]*class="tab-label">Home Page<\/span>/, "page tab should render an icon and page title");
   assert.match(html, /class="tab-icon"[\s\S]*class="tab-label">Daily Habits<\/span>/, "database tab should render an icon and database name");
   assert.match(html, /class="tab-icon"[\s\S]*class="tab-label">Daily Habits\/2026\/06\/12 Review<\/span>/, "row page tab should render an icon, database context, and row title");
   assert.match(html, /<span class="tab-label">所有页面<\/span>/, "management tab should render management label");
   assert.doesNotMatch(html, /class="tab-type"/, "tabs should not render translated type badges");
   assert.match(html, /<span class="tab-label">新标签页<\/span>/, "blank tab should render the new-tab label");
+  assert.match(html, /<span class="tab-label">Startup performance<\/span>/, "startup tab should use the localized diagnostics label");
   assert.doesNotMatch(html, /row_today/, "tab labels should not expose raw row ids");
   assert.equal(count(html, 'class="tab-pop-out"'), 4, "tabs with active items should expose pop-out actions");
   assert.equal(count(html, 'aria-label="Move to new window"'), 4, "pop-out actions should be accessible");
   assert.equal(count(html, 'class="tab-close"'), 5, "multi-tab strip should expose close actions for every tab");
   assert.match(html, /class="tab-add"[^>]+aria-label="New tab"/, "tab strip should expose the new-tab button");
   assert.match(html, /title="页面: Daily Habits\/2026\/06\/12 Review"/, "row-page tab title should include type and label");
+}
+
+function testStartupPerformancePanel(html) {
+  assert.match(html, /data-testid="startup-performance"/, "startup report should render a stable test id");
+  assert.match(html, /data-grade="slow"/, "startup report should expose its performance grade");
+  assert.match(html, /Startup performance/, "startup report should render its title");
+  assert.match(html, /Real workspace/, "startup report should name the measured workspace");
+  assert.match(html, /2\.34s/, "startup report should render total time");
+  assert.match(html, /data-phase="index"/, "startup report should include the index phase");
+  assert.match(html, /data-operation="workspaceIndex"/, "startup report should include persistent index timing");
+  assert.match(html, /43,320 pages/, "startup report should include operation item counts");
+  assert.match(html, /data-operation="workspacePath"/, "startup report should time workspace path resolution");
+  assert.match(html, /SQLite cache hit/, "startup report should show the persistent cache status");
+  assert.match(html, /validated in 10ms/, "startup report should show cache validation timing");
+  assert.match(html, /This report is kept only for this app session/, "startup report should explain session-only retention");
 }
 
 function testBackupButton(html) {
@@ -846,9 +1766,9 @@ function testSidebarShell(html) {
   assert.match(html, /Sidebar/, "sidebar layout settings should render");
   assert.match(html, /Available sidebar tags/, "sidebar tag picker should render");
   assert.match(html, /Sidebar order/, "sidebar tag order controls should render");
-  assert.match(html, /Keyboard shortcuts/, "keyboard shortcut settings should render");
-  assert.match(html, /Open command palette/, "shortcut settings should list command palette shortcut");
-  assert.match(html, />Backup<\/button>/, "backup action should render inside settings");
+  assert.doesNotMatch(html, /Keyboard shortcuts/, "closed quick settings should not load shortcut settings");
+  assert.doesNotMatch(html, /Open command palette/, "closed quick settings should not load shortcut rows");
+  assert.doesNotMatch(html, />Backup<\/button>/, "closed quick settings should not load the backup action");
   assert.match(html, />Files</, "files section should render");
 }
 
@@ -859,7 +1779,7 @@ function testSidebarPageContextMenu(html) {
   assert.equal(count(html, 'role="menuitem"'), 4, "sidebar page context menu should render open, child-create, duplicate, and delete actions");
   assert.match(html, />Open</, "sidebar page context menu should render the open action");
   assert.match(html, />New child page</, "sidebar page context menu should render the child-page creation action");
-  assert.match(html, />Duplicate</, "sidebar page context menu should render the duplicate action");
+  assert.match(html, />Duplicate</, "sidebar page context menu should render the duplicate-page action");
   assert.match(html, />Delete</, "sidebar page context menu should render the delete action");
 }
 
@@ -896,10 +1816,6 @@ function testStandaloneDatabaseHeader(html) {
   assert.match(html, /class="page-header-addition page-add-cover"[\s\S]*Add cover/, "localized cover affordance should render when no cover is set");
   assert.match(html, /class="database-open-window"/, "open-in-new-window affordance should render");
   assert.match(html, /aria-label="Open in new window"/, "open-in-new-window affordance should be labelled");
-  assert.match(html, /class="favorite-toggle on"/, "favorited database should render the active favorite control");
-  assert.match(html, /aria-label="Remove from favorites"/, "database favorite control should use the localized label");
-  assert.match(html, /aria-pressed="true"/, "database favorite control should expose its active state");
-  assert.match(html, /fill="currentColor"/, "active database favorite should use the filled star");
 }
 
 function testEmbeddedDatabaseHeader(html) {
@@ -911,7 +1827,6 @@ function testEmbeddedDatabaseHeader(html) {
   assert.match(html, /aria-label="Refresh"/, "embedded refresh action should be labelled");
   assert.match(html, /aria-label="View settings"/, "embedded settings action should be labelled");
   assert.match(html, /data-testid="embedded-actions"/, "embedded view actions slot should render");
-  assert.doesNotMatch(html, /favorite-toggle/, "embedded database views should not expose a standalone favorite control");
 }
 
 function testEmbeddedViewRendererCached(html) {
@@ -945,6 +1860,14 @@ function testMissingEmbeddedViewDiagnosticCopy(copy) {
   assert.match(copy.searchAriaLabel, /问题列表/, "search action should include the missing view title");
   assert.match(copy.ariaLabel, /Missing imported Notion embedded view: 问题列表/, "diagnostic card should expose clear accessible context");
   assert.doesNotMatch(copy.message, /^Database not found/, "diagnostic should not use the old vague message");
+}
+
+function testCleanHeadingTextContract(contract) {
+  assert.deepEqual(contract, {
+    markdownLink: "Read the guide",
+    importedDoubleBracketLink: "工作反思跳转",
+    formattedHeading: "Bold and code"
+  }, "table-of-contents heading cleanup should hide Markdown formatting, URLs, and imported double brackets");
 }
 
 function testLotionToggleFenceContract(contract) {
@@ -989,15 +1912,69 @@ function testLotionToggleFenceContract(contract) {
   assert.match(contract.tilde.markdown, /Tilde body after code/, "tilde toggle source scan should preserve content after inner backtick code");
 }
 
+function testOptionMutationContract(contract) {
+  assert.deepEqual(contract, {
+    attempts: [["Todo", "Done"], ["Todo", "Done"], ["Todo"]],
+    states: [
+      { status: "pending", names: ["Todo", "Done"] },
+      { status: "error", names: ["Todo", "Done"], error: "raw option failure" },
+      { status: "pending", names: ["Todo", "Done"] },
+      { status: "idle", names: [] },
+      { status: "pending", names: ["Todo"] },
+      { status: "error", names: ["Todo"], error: "raw option failure" },
+      { status: "idle", names: [] }
+    ],
+    first: "failed",
+    competing: "ignored",
+    retry: "submitted",
+    duplicateRetry: "ignored",
+    discardAccepted: true,
+    duplicateDiscardIgnored: true
+  }, "field option schema changes should retain exact failed options and enforce single-flight Retry or Discard");
+}
+
 function testDatabaseViewTabsBar(html) {
   assert.match(html, /role="tablist"/, "view tab bar should expose tablist semantics");
-  assert.match(html, /aria-selected="true"[^>]*class="view-tab active"/, "active view tab should be marked selected");
+  assert.match(html, /aria-selected="true"[^>]*class="view-tab active [^"]+"/, "active view tab should be marked selected");
+  assert.match(html, /role="tab"[^>]*draggable="true"/, "view tabs should expose drag reorder");
   assert.match(html, /All rows/, "default table view should render");
   assert.match(html, /Gallery wall/, "secondary gallery view should render");
   assert.match(html, /🧩/, "plugin/provider icon should render for custom view types");
   assert.match(html, /Kanban board/, "plugin view tab should render");
   assert.match(html, /class="view-tab-add"[^>]*aria-label="New view"/, "new-view affordance should be accessible");
+  assert.match(html, /aria-label="View tab display"/, "view tabs should expose the local label display preference");
   assert.match(html, /data-testid="tabs-actions"/, "non-embedded tab bar should render trailing actions");
+  assert.match(html, /aria-busy="false"/, "idle view tabs should expose their transaction state");
+}
+
+function testViewOrderMutationContract(contract) {
+  assert.deepEqual(contract.concurrent, {
+    operationCalls: 1,
+    firstStatus: "submitted",
+    secondStatus: "ignored",
+    pending: [true, false],
+    errors: [""],
+    successes: 1
+  }, "view reorder should synchronously suppress a second in-flight submission");
+  assert.deepEqual(contract.failure, {
+    status: "failed",
+    error: "raw view reorder failure",
+    pending: [true, false],
+    successes: 0,
+    guardReset: true
+  }, "view reorder should normalize thrown values and release its guard");
+  assert.deepEqual(contract.retry, {
+    status: "submitted",
+    errors: [""],
+    pending: [true, false],
+    successes: 1
+  }, "view reorder should allow a clean retry after atomic failure");
+  assert.deepEqual(contract.blocked, {
+    idle: false,
+    pending: true,
+    recovery: true
+  }, "view controls should stay blocked during persistence and unresolved recovery");
+  assert.equal(contract.typedError, "typed view reorder failure", "view reorder should preserve Error messages");
 }
 
 function testFieldTypeIcons(html) {
@@ -1040,7 +2017,7 @@ function testDefaultFieldProviders(html) {
 }
 
 function testKanbanProviderVisual(result) {
-  const { html, dropOutline, groupPillStyle, cardStyle } = result;
+  const { html, dropOutline, groupPillStyle, cardStyle, openedRowId, rowCreationRecovery } = result;
   assert.match(html, /class="kanban-shell"/, "kanban provider should render the shell");
   assert.match(html, /class="kanban-board"/, "kanban provider should render the board");
   assert.match(html, /class="kanban-col"/, "kanban provider should render columns");
@@ -1051,8 +2028,17 @@ function testKanbanProviderVisual(result) {
   assert.match(groupPillStyle, /color: var\(--accent\)/, "kanban group pill should use the shared accent token");
   assert.match(cardStyle, /border-bottom: 1px solid var\(--rule\)/, "kanban cards should use shared rule token");
   assert.equal(dropOutline, "2px dashed var(--accent)", "kanban drop target should use the shared accent outline");
+  assert.equal(openedRowId, "row_todo", "kanban cards should delegate row opening to the host");
   assert.match(html, /border: 1px solid #a9d4b0/, "kanban option pills should share the default option color palette");
   assert.doesNotMatch(html, /#c25434|#7b7368|#ededeb|#aac1dc|#eef4fb|#315c7e/, "kanban provider should not render legacy UI fallback colors");
+  assert.deepEqual(rowCreationRecovery, {
+    addCalls: 2,
+    duplicateSubmitSuppressed: true,
+    error: "Row creation failed: raw Kanban row failure",
+    addDisabledDuringRecovery: true,
+    retryClearedError: true,
+    initialValues: { status: "Todo" }
+  }, "Kanban row creation should use one atomic initial-value write with visible single-flight recovery");
 }
 
 function testViewTypeIcons(html) {
@@ -1146,7 +2132,7 @@ function testManagementDatabasesView(html) {
   assert.match(html, /Daily Habits/, "second database title should render");
   assert.match(html, /Workspace \/ Daily Habits/, "database path should render");
   assert.match(html, /entity-icon-emoji[^>]*>🗂️</, "database icon should render");
-  assert.match(html, /2026\/06\/12 11:00/, "last opened activity should render for recent databases");
+  assert.match(html, /June 12, 2026 11:00 AM/, "last opened activity should use the global default format");
   assert.match(html, />Never<\/td>/, "never-opened fallback should render");
   assert.match(html, /<td class="manage-table-number">2<\/td>/, "database activity open count should render");
   assert.match(html, /<td class="manage-table-number">0<\/td>/, "database rows without activity should render zero opens");
@@ -1161,7 +2147,7 @@ function testManagementPagesView(html) {
   assert.match(html, /<th>Title<\/th><th>Updated<\/th>/, "pages table headers should render");
   assert.match(html, /Weekly Review/, "page title should render");
   assert.match(html, /Project Plan/, "second page title should render");
-  assert.match(html, /2026\/06\/12 09:30/, "page updated timestamp should use compact format");
+  assert.match(html, /June 12, 2026 9:30 AM/, "page updated timestamp should use the global default format");
   assert.match(html, /entity-icon-emoji[^>]*>📘</, "page icon should render");
   assert.doesNotMatch(html, /pg_weekly/, "known page rows should not fall back to raw ids");
 }
@@ -1177,26 +2163,23 @@ function testManagementRecentView(html) {
   assert.match(html, /2026\/06\/23 Review/, "recent row page title should come from the database bundle");
   assert.match(html, />行的页面<\/td>/, "recent row-page kind should render");
   assert.match(html, /entity-icon-emoji[^>]*>🚜</, "recent row-page icon should render");
-  assert.match(html, /2026\/06\/12 12:15/, "recent timestamp should use compact format");
+  assert.match(html, /June 12, 2026 12:15 PM/, "recent timestamp should use the global default format");
   assert.doesNotMatch(html, /row_daily/, "known row-page recents should not expose raw row ids");
 }
 
 function testManagementFavoritesView(html) {
   assert.match(html, /class="management-view"/, "favorites management shell should render");
   assert.match(html, /<h1>Favorites<\/h1>/, "favorites heading should render");
-  assert.match(html, /class="management-subtitle"[^>]*>3<\/div>/, "favorites count should render");
+  assert.match(html, /class="management-subtitle"[^>]*>2<\/div>/, "favorites count should render");
   assert.match(html, /data-testid="favorites-management-view"/, "favorites table should expose a stable test id");
   assert.match(html, /<th>Item<\/th><th>Kind<\/th><th>Context<\/th>/, "favorites table headers should render");
   assert.match(html, /Project Plan/, "favorite page title should render");
-  assert.match(html, /Daily Habits/, "favorite database title should render");
   assert.match(html, /2026\/06\/23 Review/, "favorite row-page title should resolve from cache");
   assert.match(html, />Page<\/td>/, "favorite page kind should render");
-  assert.match(html, />Database<\/td>/, "favorite database kind should render");
   assert.match(html, />Database row<\/td>/, "favorite row-page kind should render");
   assert.match(html, /Workspace \/ Project Plan/, "favorite page path context should render");
   assert.match(html, /Workspace \/ Daily Habits/, "favorite row-page database path should render");
   assert.match(html, /entity-icon-emoji[^>]*>🧭</, "favorite page icon should render");
-  assert.match(html, /entity-icon-emoji[^>]*>🗃️</, "favorite database icon should render");
   assert.match(html, /entity-icon-emoji[^>]*>🚜</, "favorite row-page icon should render");
   assert.doesNotMatch(html, /row_daily/, "known favorite row pages should not expose raw row ids");
 }
@@ -1215,6 +2198,14 @@ function testManagementTagView(html) {
   assert.match(html, /Workspace \/ Archive \/ Content Projects/, "tagged database path should render");
   assert.doesNotMatch(html, /Project Plan/, "untagged page should be omitted");
   assert.doesNotMatch(html, /Daily Habits/, "untagged database should be omitted");
+}
+
+function testMenuPrimitives(html) {
+  assert.match(html, /role="menuitem"/, "menu item should expose menu semantics");
+  assert.match(html, /View settings/, "menu item label should render");
+  assert.match(html, /Only affects this view/, "menu item description should render");
+  assert.match(html, /System database structure is managed by Lotion/, "disabled reason should render");
+  assert.match(html, /disabled=""/, "disabled menu item should be inert");
 }
 
 function testManagementPluginsView(html) {
@@ -1293,6 +2284,17 @@ function testManagementSettingsCenter(html) {
   assert.doesNotMatch(html, /No plugin settings are registered for this section/, "Search & AI should have registered plugin settings");
 }
 
+function testManagementGeneralSettingsCenter(html) {
+  assert.match(html, /<h2>General<\/h2>/, "general settings deep link should render");
+  assert.match(html, /aria-label="Default date format"/, "global date format menu should be labelled");
+  assert.match(html, /value="month_day_year" selected=""/, "global date format should default to month-day-year");
+  assert.match(html, /aria-label="Default time format"/, "global time format menu should be labelled");
+  assert.match(html, /value="h12" selected=""/, "global time format should default to 12-hour time");
+  for (const value of ["full", "month_day_year", "day_month_year", "year_month_day", "iso", "none", "h12", "h24"]) {
+    assert.match(html, new RegExp(`value="${value}"`), `${value} should be available as a global date/time option`);
+  }
+}
+
 function testNotionAuditPanelInitial(html) {
   assert.match(html, /class="notion-audit-panel"/, "audit panel shell should render");
   assert.match(html, /<h2>Audit imported workspace<\/h2>/, "audit panel heading should render");
@@ -1309,6 +2311,19 @@ function testNotionAuditPanelInitial(html) {
   assert.equal(count(html, 'type="checkbox"'), 2, "audit panel should render the two option checkboxes");
   assert.doesNotMatch(html, /notion-audit-result/, "initial panel should not render stale audit results");
   assert.doesNotMatch(html, /notion-error/, "initial panel should not render stale errors");
+}
+
+function testNotionAuditRunContract(contract) {
+  assert.deepEqual(contract.calls, ["first", "failure", "retry"]);
+  assert.equal(contract.runningDuringFirst, true);
+  assert.equal(contract.competing.status, "ignored");
+  assert.equal(contract.completed.status, "success");
+  assert.equal(contract.completed.result.summary.issues, 0);
+  assert.equal(contract.runningAfterFirst, false);
+  assert.deepEqual(contract.failed, { status: "error", error: "audit unavailable" });
+  assert.equal(contract.retry.status, "success");
+  assert.equal(contract.retry.result.summary.issues, 0);
+  assert.equal(contract.runningAfterRetry, false);
 }
 
 function testNotionAuditResult(html) {
@@ -1361,47 +2376,26 @@ function testNotionImportPanelPick(html) {
   assert.match(html, /class="notion-import-panel embedded"/, "embedded import panel should render plugin-page shell");
   assert.doesNotMatch(html, /dialog-backdrop/, "embedded import panel should not render modal backdrop");
   assert.match(html, /<h2>Import from Notion<\/h2>/, "import panel heading should render");
-  assert.match(html, /Markdown &amp; CSV export/, "import panel should identify the Markdown and CSV export");
-  assert.match(html, /HTML export/, "import panel should identify the separate HTML export");
-  assert.match(html, /matches their stable Notion IDs/, "import panel should explain how separate exports are merged");
   assert.match(html, /<legend>Import settings<\/legend>/, "import settings group should render");
   assert.equal(count(html, 'type="checkbox"'), 3, "import panel should render the default option checkboxes");
   assert.equal(count(html, 'checked=""'), 3, "all import options should be enabled by default");
   assert.match(html, /Do not import blank rows and pages/, "blank-skip option should render");
-  assert.match(html, /What counts as blank\?/, "blank definition disclosure should render");
+  assert.match(html, /Blank definition\./, "blank definition explanation should render");
   assert.match(html, /system fields, row id, row icon, page file/i, "blank definition should explain ignored system fields");
   assert.match(html, /Auto-dedupe duplicate Notion pages/, "dedupe option should render");
   assert.match(html, /Preserve original Notion export for audit/, "original export option should render");
-  assert.equal(count(html, "Choose folder…"), 2, "each source export should have its own folder picker");
-  assert.match(html, /disabled=""[^>]*>Review selected exports<\/button>/, "review should stay disabled until a source is selected");
-}
-
-function testNotionImportSummary(html) {
-  assert.match(html, /Import complete with items to review/, "detailed report status should render");
-  assert.match(html, /Same-name objects \(2 groups\)/, "same-name group count should render");
-  assert.match(html, /Weekly Review/, "same-name page group should render");
-  assert.match(html, /Projects/, "same-name database group should render");
-  assert.match(html, /Names never overwrite another object/, "identity safety rule should render");
-  assert.match(html, /Icon coverage/, "icon coverage disclosure should render");
-  assert.match(html, /Markdown report/, "Markdown report action should render");
-  assert.match(html, /JSON report/, "JSON report action should render");
-  assert.match(html, /Import manifest/, "source-to-target manifest action should render");
+  assert.match(html, /Choose folder…<\/button>/, "choose-folder action should render");
 }
 
 function testNotionImportDialogPick(html) {
   assert.match(html, /class="dialog-backdrop"/, "import dialog should render a modal backdrop");
-  assert.match(html, /class="notion-dialog"[^>]+role="dialog"[^>]+aria-modal="true"/, "import dialog should render an accessible modal shell");
-  assert.match(html, /<h2 id="notion-import-dialog-title">Import from Notion<\/h2>/, "import dialog shell should render its heading");
-  assert.match(html, /aria-label="Close import dialog"/, "import dialog should render an accessible close action");
+  assert.match(html, /class="dialog notion-dialog"/, "import dialog should render the Notion import modal shell");
   assert.match(html, /class="notion-import-panel"/, "import dialog should render the import panel");
   assert.doesNotMatch(html, /class="notion-import-panel embedded"/, "modal import panel should not use embedded plugin-page styling");
-  assert.equal(count(html, "Import from Notion"), 1, "modal import panel should not duplicate the modal shell heading");
-  assert.match(html, /Markdown &amp; CSV export/, "modal should identify the Markdown and CSV export");
-  assert.match(html, /HTML export/, "modal should identify the separate HTML export");
-  assert.match(html, /matches their stable Notion IDs/, "modal should explain how separate exports are merged");
+  assert.doesNotMatch(html, /<h2>Import from Notion<\/h2>/, "modal import panel should not duplicate the modal shell heading");
   assert.match(html, /<legend>Import settings<\/legend>/, "modal import settings should render");
   assert.match(html, /Do not import blank rows and pages/, "modal blank-skip option should render");
-  assert.equal(count(html, "Choose folder…"), 2, "modal should render one folder picker per source export");
+  assert.match(html, /Choose folder…<\/button>/, "modal choose-folder action should render");
 }
 
 function testNotionImportSettingsWithReport(html) {
@@ -1421,7 +2415,6 @@ function testListBody(html) {
   assert.match(html, /Alpha task/, "list view should render record titles");
   assert.match(html, /Untitled/, "list view should fall back to Untitled for blank titles");
   assert.match(html, />🧾</, "list view should render row icons");
-  assert.match(html, />🧴</, "list view rows without an icon should inherit the database icon");
   assert.match(html, /Status/, "visible select property label should render");
   assert.match(html, /Doing/, "visible select property value should render");
   assert.match(html, /Due/, "visible date property label should render");
@@ -1430,6 +2423,8 @@ function testListBody(html) {
   assert.match(html, /Checked/, "boolean properties should use checked text");
   assert.doesNotMatch(html, /Hidden Notes/, "hidden list properties should not render");
   assert.doesNotMatch(html, /Name<\/span><span class="list-view-property-value"/, "title should not duplicate as a property");
+  assert.equal(count(html, 'class="row-context-handle" role="button" tabindex="0"'), 2, "list row action handles should be keyboard focusable");
+  assert.match(html, /aria-label="Row actions Alpha task"/, "list row action handles should name their row");
 }
 
 function testGalleryBody(html) {
@@ -1437,8 +2432,7 @@ function testGalleryBody(html) {
   assert.equal(count(html, 'class="gallery-card"'), 2, "gallery should render one card per record");
   assert.match(html, /Alpha task/, "gallery should render card titles");
   assert.match(html, /Untitled/, "gallery should fall back to Untitled for blank titles");
-  assert.match(html, />🧾</, "gallery should render explicit row icons");
-  assert.match(html, />🧴</, "gallery rows without an icon should inherit the database icon");
+  assert.match(html, />🖼️</, "gallery should render row icons");
   assert.match(html, /src="attachment:\/\/covers\/alpha\.png"/, "gallery should render configured cover images");
   assert.match(html, /object-position:50% 30%/, "gallery should preserve cover offsets");
   assert.match(html, /gallery-card-cover-placeholder/, "gallery should render placeholders for missing covers");
@@ -1446,6 +2440,7 @@ function testGalleryBody(html) {
   assert.match(html, /Doing/, "gallery caption values should render");
   assert.match(html, /Due/, "gallery second caption label should render");
   assert.match(html, /June 12, 2026/, "gallery date captions should use display formatting");
+  assert.equal(count(html, 'class="row-context-handle" role="button" tabindex="0"'), 2, "gallery action handles should be keyboard focusable");
 }
 
 function testGalleryBodyEmpty(html) {
@@ -1463,7 +2458,7 @@ function testCalendarBody(html) {
   assert.equal(count(html, 'class="calendar-weekday"'), 7, "calendar should render weekday headings");
   assert.match(html, /Calendar task/, "calendar should render rows in the current month");
   assert.match(html, />📅</, "calendar row chips should render row icons");
-  assert.match(html, />🧴</, "calendar rows without an icon should inherit the database icon");
+  assert.match(html, /class="row-context-handle" role="button" tabindex="0" aria-label="Row actions Calendar task"/, "calendar row action handles should be keyboard focusable");
   assert.doesNotMatch(html, /Outside month task/, "calendar should omit rows outside the current month");
 }
 
@@ -1519,7 +2514,8 @@ function testDatabaseTableGridStandalone(html) {
   assert.doesNotMatch(html, /class="table-sticky-header"/, "standalone grid should not render an embedded sticky header");
   assert.match(html, /<thead><tr><th>Name<\/th><th>Status<\/th><\/tr><\/thead>/, "standalone grid should render table head inside the scroll table");
   assert.match(html, /data-row-id="row_alpha"/, "standalone grid should render rows");
-  assert.match(html, /class="add-row"/, "standalone grid should render add-row affordance at the end");
+  assert.match(html, /class="add-row disabled"/, "blocked standalone row creation should render a disabled add-row affordance");
+  assert.match(html, /aria-disabled="true"/, "blocked standalone row creation should expose its disabled state");
 }
 
 function testDatabaseTableGridHiddenRows(html) {
@@ -1572,7 +2568,8 @@ function testGitHubBackupPanelInitial(html) {
   assert.match(html, />Refresh<\/button>/, "history refresh action should render");
   assert.match(html, /aria-label="GitHub backup diff preview"/, "diff preview should be labelled");
   assert.match(html, /<h4>Preview restore<\/h4>/, "restore preview heading should render");
-  assert.match(html, /lotion-backups\/pages\/weekly-review\.md/, "preview path should render");
+  assert.match(html, /Page snapshot · Weekly Review/, "restore preview should render logical page identity");
+  assert.doesNotMatch(html, /lotion-backups\/pages\/weekly-review\.md/, "restore preview should not expose its internal storage path");
   assert.match(html, />Restore this version<\/button>/, "restore action should render");
   assert.match(html, /class="github-backup-diff-line removed"/, "removed diff lines should render");
   assert.match(html, /class="github-backup-diff-line added"/, "added diff lines should render");
@@ -1781,6 +2778,18 @@ function testSearchAiSurface(html) {
   assert.match(html, /Command palette/, "Search tab should expose the command palette handoff");
 }
 
+function testSearchAiSubtitleContract(result) {
+  assert.deepEqual(result, {
+    database: "Database · Research / Knowledge Base",
+    row: "Row page · Knowledge Base",
+    rowPage: "Row page · Knowledge Base · Research / Semantic Orchard",
+    databaseBackedPage: "Row page · Knowledge Base",
+    databasePage: "Page · Knowledge Base · Research / Notes",
+    workspacePage: "Page · Research / Home",
+    internalWorkspacePage: "Page · Workspace"
+  });
+}
+
 function rendererComponentEntry() {
   return String.raw`
     import React from "react";
@@ -1792,44 +2801,1493 @@ function rendererComponentEntry() {
     import { OPENAI_LLM_CHAT_VISUAL_CONTRACT } from "./src/builtin-plugins/llm-openai/chat-ui.ts";
     import { AppShell } from "./src/renderer/components/AppShell.tsx";
     import { DesignSystemLab } from "./src/renderer/components/DesignSystemLab.tsx";
-    import { FieldSettingsDialog } from "./src/renderer/features/databases/FieldSettingsDialog.tsx";
+    import {
+      FieldSettingsDialog,
+      dismissFieldSettingsIfIdle,
+      fieldFormatOverrides,
+      runFieldSettingsAction,
+      shouldHydrateFieldSettingsDraft
+    } from "./src/renderer/features/databases/FieldSettingsDialog.tsx";
     import { EntityIcon } from "./src/renderer/components/EntityIcon.tsx";
+    import { MenuItem, MenuSection } from "./src/renderer/components/Menu.tsx";
     import { FieldTypeIcon, ViewTypeIcon } from "./src/renderer/components/FieldTypeIcon.tsx";
-    import { Cell } from "./src/renderer/features/databases/DatabaseTable.tsx";
+    import {
+      Cell,
+      bulkRowsResultFeedback,
+      createCellEditQueue,
+      diffTableView,
+      isEditableKeyboardTarget,
+      preferredActiveViewId,
+      runBulkRowAction,
+      runRowCreation,
+      rowCreationControlsBlocked
+    } from "./src/renderer/features/databases/DatabaseTable.tsx";
     import {
       DatabaseProperties,
       DatabaseViewTabsBar,
       EmbeddedDatabaseHeader,
-      StandaloneDatabaseHeader
+      runViewOrderMutation,
+      StandaloneDatabaseHeader,
+      viewOrderControlsBlocked
     } from "./src/renderer/features/databases/DatabaseChrome.tsx";
     import { DatabaseTableGrid } from "./src/renderer/features/databases/DatabaseTableGrid.tsx";
+    import { CreateViewDialog, runCreateViewSubmission } from "./src/renderer/features/databases/CreateViewDialog.tsx";
+    import {
+      dismissColumnMenuIfIdle,
+      runColumnMenuAction
+    } from "./src/renderer/features/databases/ColumnHeaderMenu.tsx";
+    import {
+      PropertyManagerDialog,
+      dismissPropertyManagerIfIdle,
+      filterPropertyFields,
+      propertyCreateInput,
+      reorderPropertyIds,
+      runPropertyManagerMutation
+    } from "./src/renderer/features/databases/PropertyManagerDialog.tsx";
+    import {
+      dismissViewMenuIfIdle,
+      runViewMenuAction,
+      viewRenameValidation
+    } from "./src/renderer/features/databases/ViewContextMenu.tsx";
+    import {
+      databaseSettingsPageOpenMode,
+      runDatabaseSettingsAction,
+      runDatabaseSettingsNavigationIfIdle
+    } from "./src/renderer/features/databases/DatabaseSettingsMenu.tsx";
     import { CalendarBody } from "./src/renderer/features/databases/CalendarBody.tsx";
     import { DatabaseTemplatePicker } from "./src/renderer/features/databases/DatabaseTemplatePicker.tsx";
-    import { FilterPopoverContent } from "./src/renderer/features/databases/FilterPopover.tsx";
+    import {
+      FilterPopoverContent,
+      dismissFilterPopoverIfIdle,
+      runFilterMutation
+    } from "./src/renderer/features/databases/FilterPopover.tsx";
+    import {
+      SortPopoverContent,
+      dismissSortPopoverIfIdle,
+      runSortMutation
+    } from "./src/renderer/features/databases/SortPopover.tsx";
     import { GalleryBody } from "./src/renderer/features/databases/GalleryBody.tsx";
+    import {
+      dismissGroupSettingsIfIdle,
+      runGroupSettingsSubmission
+    } from "./src/renderer/features/databases/GroupSettingsDialog.tsx";
+    import {
+      dismissDeletedRowsIfIdle,
+      runDeletedRowsAction
+    } from "./src/renderer/features/databases/DeletedRowsDialog.tsx";
+    import {
+      dismissRowMenuIfIdle,
+      runRowMenuAction
+    } from "./src/renderer/features/databases/RowContextMenu.tsx";
     import { ListBody } from "./src/renderer/features/databases/ListBody.tsx";
     import { OptionPill } from "./src/renderer/features/databases/OptionPill.tsx";
-    import { SortPopoverContent } from "./src/renderer/features/databases/SortPopover.tsx";
-    import { ViewSettingsDialog } from "./src/renderer/features/databases/ViewSettingsDialog.tsx";
-    import { RowTemplateDialog } from "./src/renderer/features/databases/RowTemplateDialog.tsx";
+    import {
+      ViewSettingsDialog,
+      dismissViewSettingsIfIdle,
+      runViewSettingsAction,
+      shouldHydrateViewSettingsDraft
+    } from "./src/renderer/features/databases/ViewSettingsDialog.tsx";
+    import {
+      RowTemplateDialog,
+      dismissRowTemplateIfIdle,
+      runRowTemplateAction,
+      shouldHydrateRowTemplateDraft
+    } from "./src/renderer/features/databases/RowTemplateDialog.tsx";
     import { DatabaseCacheValueProvider } from "./src/renderer/context/database-cache.tsx";
     import { SettingsProvider } from "./src/renderer/lib/settings.tsx";
-    import { CoverArea } from "./src/renderer/features/pages/CoverArea.tsx";
+    import { CoverArea, createCoverOffsetMutationController } from "./src/renderer/features/pages/CoverArea.tsx";
     import { EmbeddedViewRenderer } from "./src/renderer/features/pages/EmbeddedViewRenderer.tsx";
+    import { BrowserPluginSettings } from "./src/renderer/plugin-host/browser-settings.ts";
+
+    export function renderCreateViewDialog() {
+      const currentView = {
+        id: "view_board",
+        databaseId: "db_contract",
+        name: "Current board",
+        type: "kanban",
+        visibleFieldIds: ["title"],
+        fieldOrder: ["title"],
+        filters: [],
+        sorts: [],
+        revision: 0
+      };
+      return renderToStaticMarkup(
+        <CreateViewDialog
+          databaseId="db_contract"
+          currentView={currentView}
+          existingNames={["Default", "View 3"]}
+          onClose={() => {}}
+          onCreate={async () => {}}
+        />
+      );
+    }
+
+    export async function createViewSubmissionContract() {
+      const input = {
+        databaseId: "db_contract",
+        name: "Review",
+        type: "list",
+        sourceMode: "empty"
+      };
+      const concurrentGuard = { current: false };
+      const concurrentSaving = [];
+      const concurrentErrors = [];
+      let concurrentSuccesses = 0;
+      let createCalls = 0;
+      let receivedInput;
+      let releaseCreate;
+      const first = runCreateViewSubmission({
+        guard: concurrentGuard,
+        input,
+        onCreate: (nextInput) => {
+          createCalls += 1;
+          receivedInput = nextInput;
+          return new Promise((resolve) => { releaseCreate = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onSavingChange: (value) => concurrentSaving.push(value),
+        onSuccess: () => { concurrentSuccesses += 1; }
+      });
+      const secondStatus = await runCreateViewSubmission({
+        guard: concurrentGuard,
+        input,
+        onCreate: async () => { createCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onSavingChange: (value) => concurrentSaving.push(value),
+        onSuccess: () => { concurrentSuccesses += 1; }
+      });
+      releaseCreate();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failureSaving = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runCreateViewSubmission({
+        guard: retryGuard,
+        input,
+        onCreate: async () => { throw "raw create failure"; },
+        onError: (message) => failureErrors.push(message),
+        onSavingChange: (value) => failureSaving.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        saving: failureSaving,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retrySaving = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runCreateViewSubmission({
+        guard: retryGuard,
+        input,
+        onCreate: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onSavingChange: (value) => retrySaving.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        concurrent: {
+          createCalls,
+          firstStatus,
+          secondStatus,
+          saving: concurrentSaving,
+          errors: concurrentErrors,
+          successes: concurrentSuccesses,
+          input: receivedInput
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          saving: retrySaving,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export function renderPropertyManagerDialog() {
+      const fields = [
+        { id: "title", name: "Name", type: "text", system: true },
+        { id: "priority", name: "Priority", type: "select" },
+        { id: "tags", name: "Tags", type: "multi_select" }
+      ];
+      const activeView = {
+        id: "view_current",
+        databaseId: "db_contract",
+        name: "Current review",
+        type: "table",
+        visibleFieldIds: ["title", "priority"],
+        fieldOrder: ["title", "priority"],
+        filters: [],
+        sorts: [],
+        revision: 0
+      };
+      return renderToStaticMarkup(
+        <PropertyManagerDialog
+          fields={fields}
+          deletedFields={[{
+            field: { id: "legacy", name: "Legacy score", type: "number" },
+            dependencies: ["Formula total"],
+            deletedAt: "2026-07-23T00:00:00.000Z"
+          }]}
+          activeView={activeView}
+          onClose={() => {}}
+          onEdit={() => {}}
+          onAdd={async () => {}}
+          onReorder={async () => {}}
+          onDelete={async () => {}}
+          onRestore={async () => {}}
+          onPermanentlyDelete={async () => {}}
+        />
+      );
+    }
+
+    export async function propertyManagerMutationContract() {
+      const fields = [
+        { id: "title", name: "Name", type: "text" },
+        { id: "priority", name: "Priority", type: "select" },
+        { id: "tags", name: "Tags", type: "multi_select" }
+      ];
+      const filtering = {
+        byName: filterPropertyFields(fields, " PRIORITY ").map((field) => field.id),
+        byType: filterPropertyFields(fields, "multi_select").map((field) => field.id),
+        blank: filterPropertyFields(fields, " ").map((field) => field.id)
+      };
+      const inputs = {
+        current: propertyCreateInput({
+          activeViewId: "view_current",
+          name: "Review score",
+          type: "number",
+          visibility: "current"
+        }),
+        all: propertyCreateInput({
+          activeViewId: "view_current",
+          name: "Shared note",
+          type: "text",
+          visibility: "all"
+        })
+      };
+      const reordering = {
+        moved: reorderPropertyIds(fields, "tags", "priority"),
+        same: reorderPropertyIds(fields, "priority", "priority"),
+        missing: reorderPropertyIds(fields, "missing", "priority")
+      };
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissPropertyManagerIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissPropertyManagerIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let mutationCalls = 0;
+      let releaseMutation;
+      const first = runPropertyManagerMutation({
+        guard: concurrentGuard,
+        mutation: () => {
+          mutationCalls += 1;
+          return new Promise((resolve) => { releaseMutation = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value)
+      });
+      const secondStatus = await runPropertyManagerMutation({
+        guard: concurrentGuard,
+        mutation: async () => { mutationCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value)
+      });
+      releaseMutation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      const failureStatus = await runPropertyManagerMutation({
+        guard: retryGuard,
+        mutation: async () => { throw "raw property failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value)
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retryCalls = 0;
+      const retryStatus = await runPropertyManagerMutation({
+        guard: retryGuard,
+        mutation: async () => { retryCalls += 1; },
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value)
+      });
+
+      return {
+        filtering,
+        inputs,
+        reordering,
+        dismissal,
+        concurrent: {
+          mutationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          calls: retryCalls
+        }
+      };
+    }
+
+    export async function columnMenuActionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissColumnMenuIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissColumnMenuIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let actionCalls = 0;
+      let releaseAction;
+      let successes = 0;
+      const first = runColumnMenuAction({
+        guard: concurrentGuard,
+        action: () => {
+          actionCalls += 1;
+          return new Promise((resolve) => { releaseAction = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runColumnMenuAction({
+        guard: concurrentGuard,
+        action: async () => { actionCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseAction();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runColumnMenuAction({
+        guard: retryGuard,
+        action: async () => { throw "raw column action failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runColumnMenuAction({
+        guard: retryGuard,
+        action: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        dismissal,
+        concurrent: {
+          actionCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function viewMenuActionContract() {
+      const validation = {
+        blank: viewRenameValidation(" ", "Default", ["Default", "Board"]),
+        conflict: viewRenameValidation(" board ", "Default", ["Default", "Board"]),
+        current: viewRenameValidation("Default", "Default", ["Default", "Board"]),
+        unique: viewRenameValidation("Review", "Default", ["Default", "Board"])
+      };
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissViewMenuIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissViewMenuIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let actionCalls = 0;
+      let releaseAction;
+      let successes = 0;
+      const first = runViewMenuAction({
+        guard: concurrentGuard,
+        action: () => {
+          actionCalls += 1;
+          return new Promise((resolve) => { releaseAction = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runViewMenuAction({
+        guard: concurrentGuard,
+        action: async () => { actionCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseAction();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runViewMenuAction({
+        guard: retryGuard,
+        action: async () => { throw "raw view action failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runViewMenuAction({
+        guard: retryGuard,
+        action: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        validation,
+        dismissal,
+        concurrent: {
+          actionCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function databaseSettingsActionContract() {
+      const pageOpenModes = {
+        tableDefault: databaseSettingsPageOpenMode({ type: "table" }),
+        galleryDefault: databaseSettingsPageOpenMode({ type: "gallery" }),
+        explicit: databaseSettingsPageOpenMode({ type: "table", pageOpenMode: "full_page" })
+      };
+      let navigationCalls = 0;
+      const navigation = {
+        pending: runDatabaseSettingsNavigationIfIdle({ current: true }, () => { navigationCalls += 1; }),
+        idle: runDatabaseSettingsNavigationIfIdle({ current: false }, () => { navigationCalls += 1; }),
+        calls: navigationCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let actionCalls = 0;
+      let releaseAction;
+      let successes = 0;
+      const first = runDatabaseSettingsAction({
+        guard: concurrentGuard,
+        action: () => {
+          actionCalls += 1;
+          return new Promise((resolve) => { releaseAction = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runDatabaseSettingsAction({
+        guard: concurrentGuard,
+        action: async () => { actionCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseAction();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runDatabaseSettingsAction({
+        guard: retryGuard,
+        action: async () => { throw "raw database settings failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runDatabaseSettingsAction({
+        guard: retryGuard,
+        action: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        pageOpenModes,
+        navigation,
+        concurrent: {
+          actionCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function groupSettingsSubmissionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissGroupSettingsIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissGroupSettingsIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let saveCalls = 0;
+      let releaseSave;
+      let successes = 0;
+      const first = runGroupSettingsSubmission({
+        guard: concurrentGuard,
+        submit: () => {
+          saveCalls += 1;
+          return new Promise((resolve) => { releaseSave = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runGroupSettingsSubmission({
+        guard: concurrentGuard,
+        submit: async () => { saveCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseSave();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runGroupSettingsSubmission({
+        guard: retryGuard,
+        submit: async () => { throw "raw grouping failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runGroupSettingsSubmission({
+        guard: retryGuard,
+        submit: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        dismissal,
+        concurrent: {
+          saveCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function viewSettingsActionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissViewSettingsIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissViewSettingsIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let operationCalls = 0;
+      let releaseOperation;
+      let successes = 0;
+      const first = runViewSettingsAction({
+        guard: concurrentGuard,
+        operation: () => {
+          operationCalls += 1;
+          return new Promise((resolve) => { releaseOperation = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runViewSettingsAction({
+        guard: concurrentGuard,
+        operation: async () => { operationCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseOperation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runViewSettingsAction({
+        guard: retryGuard,
+        operation: async () => { throw "raw view settings failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runViewSettingsAction({
+        guard: retryGuard,
+        operation: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        hydration: {
+          failedSameView: shouldHydrateViewSettingsDraft("view-a", "view-a", true),
+          idleSameView: shouldHydrateViewSettingsDraft("view-a", "view-a", false),
+          switchedView: shouldHydrateViewSettingsDraft("view-a", "view-b", true)
+        },
+        dismissal,
+        concurrent: {
+          operationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function rowTemplateActionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissRowTemplateIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissRowTemplateIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let operationCalls = 0;
+      let releaseOperation;
+      let successes = 0;
+      const first = runRowTemplateAction({
+        guard: concurrentGuard,
+        operation: () => {
+          operationCalls += 1;
+          return new Promise((resolve) => { releaseOperation = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runRowTemplateAction({
+        guard: concurrentGuard,
+        operation: async () => { operationCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseOperation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runRowTemplateAction({
+        guard: retryGuard,
+        operation: async () => { throw "raw template failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runRowTemplateAction({
+        guard: retryGuard,
+        operation: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        hydration: {
+          failedSameTemplate: shouldHydrateRowTemplateDraft("template-a", "template-a", true),
+          idleSameTemplate: shouldHydrateRowTemplateDraft("template-a", "template-a", false),
+          switchedTemplate: shouldHydrateRowTemplateDraft("template-a", "template-b", true)
+        },
+        dismissal,
+        concurrent: {
+          operationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function deletedRowsActionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissDeletedRowsIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissDeletedRowsIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let actionCalls = 0;
+      let releaseAction;
+      const first = runDeletedRowsAction({
+        guard: concurrentGuard,
+        action: () => {
+          actionCalls += 1;
+          return new Promise((resolve) => { releaseAction = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value)
+      });
+      const secondStatus = await runDeletedRowsAction({
+        guard: concurrentGuard,
+        action: async () => { actionCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value)
+      });
+      releaseAction();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      const failureStatus = await runDeletedRowsAction({
+        guard: retryGuard,
+        action: async () => { throw "raw deleted row failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value)
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retryCalls = 0;
+      const retryStatus = await runDeletedRowsAction({
+        guard: retryGuard,
+        action: async () => { retryCalls += 1; },
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value)
+      });
+
+      return {
+        dismissal,
+        concurrent: {
+          actionCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          calls: retryCalls
+        }
+      };
+    }
+
+    export async function rowMenuActionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissRowMenuIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissRowMenuIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let actionCalls = 0;
+      let releaseAction;
+      let successes = 0;
+      const first = runRowMenuAction({
+        guard: concurrentGuard,
+        action: () => {
+          actionCalls += 1;
+          return new Promise((resolve) => { releaseAction = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runRowMenuAction({
+        guard: concurrentGuard,
+        action: async () => { actionCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseAction();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runRowMenuAction({
+        guard: retryGuard,
+        action: async () => { throw "raw row action failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runRowMenuAction({
+        guard: retryGuard,
+        action: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        dismissal,
+        concurrent: {
+          actionCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
+    }
+
+    export async function filterMutationContract() {
+      const expression = {
+        version: 1,
+        kind: "group",
+        id: "filter-root",
+        conjunction: "and",
+        children: [{
+          version: 1,
+          kind: "condition",
+          id: "filter-condition",
+          fieldId: "title",
+          operator: "contains",
+          value: "Recovered"
+        }]
+      };
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissFilterPopoverIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissFilterPopoverIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let changeCalls = 0;
+      let releaseChange;
+      let successes = 0;
+      const first = runFilterMutation({
+        expression,
+        guard: concurrentGuard,
+        onChange: () => {
+          changeCalls += 1;
+          return new Promise((resolve) => { releaseChange = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runFilterMutation({
+        expression,
+        guard: concurrentGuard,
+        onChange: async () => { changeCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseChange();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runFilterMutation({
+        expression,
+        guard: retryGuard,
+        onChange: async () => { throw "raw filter persistence failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      let retryValue = "";
+      const retryStatus = await runFilterMutation({
+        expression,
+        guard: retryGuard,
+        onChange: async (next) => { retryValue = String(next.children[0]?.value ?? ""); },
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        dismissal,
+        concurrent: {
+          changeCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses,
+          value: retryValue
+        }
+      };
+    }
+
+    export async function sortMutationContract() {
+      const sorts = [{ fieldId: "title", direction: "desc" }];
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissSortPopoverIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissSortPopoverIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let changeCalls = 0;
+      let releaseChange;
+      const first = runSortMutation({
+        sorts,
+        guard: concurrentGuard,
+        onChange: () => {
+          changeCalls += 1;
+          return new Promise((resolve) => { releaseChange = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value)
+      });
+      const secondStatus = await runSortMutation({
+        sorts,
+        guard: concurrentGuard,
+        onChange: async () => { changeCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value)
+      });
+      releaseChange();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      const failureStatus = await runSortMutation({
+        sorts,
+        guard: retryGuard,
+        onChange: async () => { throw "raw sort persistence failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value)
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retryDirection = "";
+      const retryStatus = await runSortMutation({
+        sorts,
+        guard: retryGuard,
+        onChange: async (next) => { retryDirection = next[0]?.direction ?? ""; },
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value)
+      });
+
+      return {
+        dismissal,
+        concurrent: {
+          changeCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          direction: retryDirection
+        }
+      };
+    }
+
+    export async function browserPluginSettingsContract() {
+      const previousWindow = globalThis.window;
+      const storage = new Map();
+      let failWrites = false;
+      globalThis.window = {
+        ...(previousWindow || {}),
+        localStorage: {
+          getItem(key) { return storage.get(key) ?? null; },
+          setItem(key, value) {
+            if (failWrites) throw new Error("simulated localStorage failure");
+            storage.set(key, String(value));
+          },
+          removeItem(key) { storage.delete(key); }
+        }
+      };
+      try {
+        const key = "lotion.plugin.plugin-a.settings";
+        storage.set(key, JSON.stringify({ enabled: true }));
+        const settings = new BrowserPluginSettings("plugin-a");
+        const initial = {
+          enabled: settings.get("enabled"),
+          missing: settings.get("missing", "fallback")
+        };
+        const snapshot = settings.all();
+        snapshot.enabled = false;
+        const snapshotIsDefensive = settings.get("enabled") === true;
+
+        await settings.set("model", "gpt-test");
+        const afterSet = {
+          cache: settings.all(),
+          persisted: JSON.parse(storage.get(key)),
+          reloadModel: new BrowserPluginSettings("plugin-a").get("model")
+        };
+
+        await settings.set("unsupported", undefined);
+        const undefinedValue = {
+          cacheValue: settings.get("unsupported", "fallback"),
+          persistedHasKey: Object.hasOwn(JSON.parse(storage.get(key)), "unsupported")
+        };
+
+        await settings.set("stable", "before");
+        failWrites = true;
+        let failedSetRejected = false;
+        try {
+          await settings.set("stable", "after");
+        } catch {
+          failedSetRejected = true;
+        }
+        const failedSet = {
+          rejected: failedSetRejected,
+          cacheValue: settings.get("stable"),
+          persistedValue: JSON.parse(storage.get(key)).stable
+        };
+        let failedDeleteRejected = false;
+        try {
+          await settings.delete("stable");
+        } catch {
+          failedDeleteRejected = true;
+        }
+        const failedDelete = {
+          rejected: failedDeleteRejected,
+          cacheValue: settings.get("stable"),
+          persistedValue: JSON.parse(storage.get(key)).stable
+        };
+        failWrites = false;
+
+        const cyclic = {};
+        cyclic.self = cyclic;
+        let cyclicRejected = false;
+        try {
+          await settings.set("cyclic", cyclic);
+        } catch {
+          cyclicRejected = true;
+        }
+        let toJSONRejected = false;
+        try {
+          await settings.set("toJSON", () => "replacement");
+        } catch {
+          toJSONRejected = true;
+        }
+        const stableAfterSerializationFailures = settings.get("stable");
+
+        await settings.delete("model");
+        const afterDelete = {
+          cacheHasModel: Object.hasOwn(settings.all(), "model"),
+          persistedHasModel: Object.hasOwn(JSON.parse(storage.get(key)), "model")
+        };
+
+        storage.set("lotion.plugin.malformed.settings", "{broken");
+        storage.set("lotion.plugin.array.settings", "[]");
+        const invalidStorage = {
+          malformed: new BrowserPluginSettings("malformed").all(),
+          array: new BrowserPluginSettings("array").all()
+        };
+        const isolated = new BrowserPluginSettings("plugin-b");
+        await isolated.set("stable", "plugin-b");
+        const pluginIsolation = settings.get("stable") === "before"
+          && isolated.get("stable") === "plugin-b"
+          && storage.has("lotion.plugin.plugin-a.settings")
+          && storage.has("lotion.plugin.plugin-b.settings");
+
+        return {
+          initial,
+          snapshotIsDefensive,
+          afterSet,
+          undefinedValue,
+          failedSet,
+          failedDelete,
+          cyclicRejected,
+          toJSONRejected,
+          stableAfterSerializationFailures,
+          afterDelete,
+          invalidStorage,
+          pluginIsolation
+        };
+      } finally {
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+      }
+    }
+
+    export async function rendererWorkspaceMoveContract() {
+      const previousWindow = globalThis.window;
+      const pages = new Map([
+        ["pg_parent", { meta: { id: "pg_parent", title: "Parent", path: ["Root", "Parent"] }, markdown: "# Parent" }],
+        ["pg_child", { meta: { id: "pg_child", title: "Child", path: ["Root", "Parent", "Child"] }, markdown: "# Child" }]
+      ]);
+      const updates = [];
+      globalThis.window = {
+        ...(previousWindow || {}),
+        lotion: {
+          pages: {
+            get: async (id) => pages.get(id),
+            update: async (id, input) => {
+              updates.push({ id, ...input });
+              if (id === "pg_parent" && input.parentId === "pg_child") {
+                throw new Error("Page move would create a page hierarchy cycle.");
+              }
+              return pages.get(id);
+            }
+          }
+        }
+      };
+      const context = new PluginContextImpl(
+        pluginHost,
+        {
+          id: "renderer-workspace-move-test",
+          name: "Renderer workspace move test",
+          version: "0.1.0",
+          author: "Lotion Tests",
+          permissions: ["workspace.read", "workspace.write"]
+        },
+        new InMemoryPluginSettings()
+      );
+      try {
+        await context.workspace.movePage("pg_child", "pg_parent");
+        const validMove = updates.at(-1);
+        await context.workspace.movePage("pg_child", null);
+        const clearMove = updates.at(-1);
+        const beforeSelf = updates.length;
+        let selfError = "";
+        try {
+          await context.workspace.movePage("pg_child", "pg_child");
+        } catch (error) {
+          selfError = String(error);
+        }
+        let descendantError = "";
+        try {
+          await context.workspace.movePage("pg_parent", "pg_child");
+        } catch (error) {
+          descendantError = String(error);
+        }
+        return {
+          validMove,
+          clearMove,
+          selfError,
+          selfUpdateAttempted: updates.length > beforeSelf + 1,
+          descendantError
+        };
+      } finally {
+        context.disposeAll();
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+      }
+    }
+
+    export function viewPersistenceContract() {
+      const previousWindow = globalThis.window;
+      const values = new Map([["lotion.database.lastActiveView.db_contract", "view_alt"]]);
+      globalThis.window = {
+        ...(previousWindow || {}),
+        localStorage: {
+          getItem(key) { return values.get(key) ?? null; },
+          setItem(key, value) { values.set(key, String(value)); }
+        }
+      };
+      try {
+        const defaultView = { id: "view_default", databaseId: "db_contract", name: "Default", type: "table", visibleFieldIds: ["title"], fieldOrder: ["title"], filters: [], sorts: [], revision: 3 };
+        const alternateView = { ...defaultView, id: "view_alt", name: "Alternate" };
+        const bundle = { schema: { id: "db_contract", defaultViewId: "view_default" }, records: [], views: [defaultView, alternateView] };
+        return {
+          restored: preferredActiveViewId(bundle, defaultView, true),
+          explicit: preferredActiveViewId(bundle, alternateView, true),
+          embedded: preferredActiveViewId(bundle, defaultView, false),
+          patch: diffTableView(defaultView, {
+            ...defaultView,
+            filters: [{ fieldId: "status", operator: "is", value: "Done" }],
+            revision: 99,
+            updatedAt: "2099-01-01T00:00:00.000Z"
+          })
+        };
+      } finally {
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+      }
+    }
+
+    export function editableKeyboardTargetContract() {
+      let selector = "";
+      const editableTarget = isEditableKeyboardTarget({
+        closest(value) {
+          selector = value;
+          return {};
+        }
+      });
+      const nonEditableTarget = isEditableKeyboardTarget({ closest() { return null; } });
+      return {
+        nullTarget: isEditableKeyboardTarget(null),
+        plainTarget: isEditableKeyboardTarget({}),
+        editableTarget,
+        nonEditableTarget,
+        selector
+      };
+    }
     import { PageLayout } from "./src/renderer/features/pages/PageLayout.tsx";
-    import { PageProperties } from "./src/renderer/features/pages/PageProperties.tsx";
-    import { PageBacklinks, PageEditor, PageHistoryPanel } from "./src/renderer/features/pages/PageEditor.tsx";
+    import { createPagePropertyMutationController, PageProperties } from "./src/renderer/features/pages/PageProperties.tsx";
+    import {
+      createPageLayoutMutationController,
+      createPageTitleMutationController,
+      PageBacklinks,
+      PageEditor,
+      PageHistoryPanel,
+      submitPageTitleBlurValue
+    } from "./src/renderer/features/pages/PageEditor.tsx";
     import {
       __testParseToggleBody,
       __testReadLotionToggleSource,
       __testRenderToggleMarkdown,
       __testRenderWidgetMarkdown,
       __testSerializeToggleFence,
+      __testCleanHeadingText,
       missingEmbeddedViewDiagnosticCopy
     } from "./src/renderer/features/pages/markdown-decorations.ts";
     import { MarkdownPropertyLinks, WorkspaceLinkButton } from "./src/renderer/features/pages/PropertyLinks.tsx";
     import { classifyLink, tryNavigateWorkspaceLink } from "./src/renderer/features/pages/workspace-link-routing.ts";
-    import { RowPageProperties } from "./src/renderer/features/pages/RowPageProperties.tsx";
+    import {
+      createRowPagePropertyEditController,
+      PropertyRow,
+      RowPageProperties
+    } from "./src/renderer/features/pages/RowPageProperties.tsx";
     import { SlashMenuContent } from "./src/renderer/features/pages/SlashMenu.tsx";
     import { Sidebar, SidebarPageContextMenuView } from "./src/renderer/components/Sidebar.tsx";
     import { ShortcutSettings } from "./src/renderer/components/ShortcutSettings.tsx";
@@ -1838,112 +4296,27 @@ function rendererComponentEntry() {
     import { BackupButton } from "./src/renderer/features/backup/BackupButton.tsx";
     import { ManagementView, PluginDetail } from "./src/renderer/features/manage/ManagementView.tsx";
     import { SearchBox } from "./src/renderer/features/search/SearchBox.tsx";
-    import { SearchAiSurface } from "./src/renderer/features/search/SearchAiSurface.tsx";
+    import { SearchAiSurface, searchAiHitSubtitle } from "./src/renderer/features/search/SearchAiSurface.tsx";
     import { GlobalSearchPanelContent } from "./src/renderer/features/search/GlobalSearchPanel.tsx";
     import { StartupLoadingScreen } from "./src/renderer/App.tsx";
+    import { StartupPerformancePanel } from "./src/renderer/features/startup/StartupPerformancePanel.tsx";
     import { I18nValueProvider } from "./src/renderer/lib/i18n.ts";
-    import { parseMarkdown } from "./src/renderer/lib/markdown.ts";
-    import { getViewRecords } from "./src/renderer/lib/view-query.ts";
-    import { TEMPLATES } from "./src/renderer/features/databases/templates.ts";
-    import { BrowserPluginSettings } from "./src/renderer/plugin-host/browser-settings.ts";
-    import { AuditResult, NotionAuditPanel } from "./src/builtin-plugins/notion-import/NotionAuditPanel.tsx";
-    import { ImportSummary, NotionImportDialog, NotionImportPanel } from "./src/builtin-plugins/notion-import/NotionImportDialog.tsx";
+    import {
+      AuditResult,
+      createNotionAuditRunController,
+      NotionAuditPanel
+    } from "./src/builtin-plugins/notion-import/NotionAuditPanel.tsx";
+    import { NotionImportDialog, NotionImportPanel } from "./src/builtin-plugins/notion-import/NotionImportDialog.tsx";
     import { NotionImportSettings } from "./src/builtin-plugins/notion-import/index.tsx";
     import { LotionActionsProvider } from "./src/renderer/context/lotion-actions.tsx";
     import { pluginHost } from "./src/renderer/plugin-host/index.ts";
     import { PluginHost, PluginContextImpl, InMemoryPluginSettings } from "./src/shared/plugin-host/index.ts";
     import {
+      createOptionMutationController,
       installDefaultFieldTypes,
       manifest as defaultFieldTypesManifest
     } from "./src/builtin-plugins/field-types-default/index.tsx";
     import { installKanbanView } from "./src/builtin-plugins/view-kanban/index.ts";
-
-    export function dateSortContract() {
-      const bundle = {
-        schema: {
-          id: "db_date_sort",
-          name: "Date sort",
-          fields: [
-            { id: "id", name: "ID", type: "id" },
-            { id: "created_time", name: "Created time", type: "created_time" }
-          ]
-        },
-        records: [
-          { id: "middle", created_time: "December 31, 2025 11:00 PM" },
-          { id: "new", created_time: "January 1, 2026 12:00 AM" },
-          { id: "blank", created_time: "" },
-          { id: "old", created_time: "September 30, 2024 8:00 AM" }
-        ],
-        views: []
-      };
-      const view = {
-        id: "view_date_sort",
-        databaseId: bundle.schema.id,
-        name: "Date sort",
-        type: "table",
-        visibleFieldIds: ["created_time"],
-        fieldOrder: ["created_time"],
-        filters: [],
-        sorts: []
-      };
-      return {
-        asc: getViewRecords(bundle, { ...view, sorts: [{ fieldId: "created_time", direction: "asc" }] }).map((row) => row.id),
-        desc: getViewRecords(bundle, { ...view, sorts: [{ fieldId: "created_time", direction: "desc" }] }).map((row) => row.id)
-      };
-    }
-
-    export function rendererUtilityContract() {
-      const markdown = parseMarkdown([
-        "# Title",
-        "## Subtitle",
-        "### Detail",
-        "- [ ] Pending",
-        "- [x] Done",
-        "- Item",
-        "**Bold** and \`code\` & <unsafe>",
-        "![Alt](image.png \"Image title\") [Link](https://example.com \"Link title\")",
-        "\`\`\`lotion-view",
-        "ignored line",
-        "database: db_tasks",
-        "\`\`\`",
-        "Between blocks",
-        "\`\`\`lotion-iframe",
-        "url: https://example.com/embed",
-        "height: 480",
-        "title: Example embed",
-        "\`\`\`",
-        "\`\`\`lotion-iframe",
-        "url: https://example.com/default-height",
-        "height: invalid",
-        "\`\`\`"
-      ].join("\n"));
-      const templateNames = TEMPLATES.map((template) => template.buildInput().name);
-      const settings = withRendererWindow(() => {
-        const value = new BrowserPluginSettings("coverage");
-        const initial = value.get("missing", "fallback");
-        void value.set("saved", { enabled: true });
-        const saved = value.get("saved");
-        const copy = value.all();
-        copy.saved = { enabled: false };
-        const copyIsIsolated = value.get("saved")?.enabled === true;
-        void value.delete("saved");
-        const deleted = value.get("saved", "removed");
-        return {
-          initial,
-          saved,
-          deleted,
-          copyIsIsolated,
-          invalid: new BrowserPluginSettings("invalid").all(),
-          array: new BrowserPluginSettings("array").all(),
-          valid: new BrowserPluginSettings("valid").get("enabled")
-        };
-      }, [
-        ["lotion.plugin.invalid.settings", "{invalid"],
-        ["lotion.plugin.array.settings", "[]"],
-        ["lotion.plugin.valid.settings", JSON.stringify({ enabled: true })]
-      ]);
-      return { markdown, templateNames, settings };
-    }
 
     export function renderStartupLoadingScreen() {
       return renderToStaticMarkup(
@@ -1963,8 +4336,57 @@ function rendererComponentEntry() {
       );
     }
 
+    export function renderStartupPerformancePanel() {
+      return renderToStaticMarkup(
+        React.createElement(StartupPerformancePanel, {
+          report: {
+            capturedAt: "2026-07-27T18:00:00.000Z",
+            totalMs: 2340,
+            measuredPhaseMs: 2280,
+            overheadMs: 60,
+            phases: [
+              { key: "workspace", label: "Opening workspace", status: "done", ms: 55 },
+              { key: "index", label: "Reading workspace index", status: "done", ms: 2060 },
+              { key: "navigation", label: "Restoring page", status: "done", ms: 120 },
+              { key: "paint", label: "Painting editor", status: "done", ms: 45 }
+            ],
+            indexOperations: [
+              { key: "workspaceIndex", status: "done", ms: 18, count: 43900, countKind: "entries" },
+              { key: "favorites", status: "done", ms: 2, count: 6, countKind: "items" },
+              { key: "recents", status: "done", ms: 3, count: 10, countKind: "items" },
+              { key: "workspacePath", status: "done", ms: 4, count: 2, countKind: "items" }
+            ],
+            workspace: {
+              name: "Real workspace",
+              path: "/Users/test/Lotion",
+              pages: 43320,
+              databases: 12
+            },
+            cache: {
+              status: "hit",
+              reason: "source-signatures-match",
+              path: "workspace-cache/fixture/startup.sqlite",
+              bytes: 524288,
+              validationMs: 10,
+              readMs: 18,
+              buildMs: 0,
+              writeMs: 0
+            }
+          }
+        })
+      );
+    }
+
     export function renderMissingEmbeddedViewDiagnosticCopy() {
       return missingEmbeddedViewDiagnosticCopy("问题列表");
+    }
+
+    export function cleanHeadingTextContract() {
+      return {
+        markdownLink: __testCleanHeadingText("Read [the guide](https://example.com/guide)"),
+        importedDoubleBracketLink: __testCleanHeadingText("工作反思[[跳转]](https://app.notion.com/p/example?pvs=21)"),
+        formattedHeading: __testCleanHeadingText("**Bold** and \`code\` ###")
+      };
     }
 
     export function lotionToggleFenceContract() {
@@ -2416,7 +4838,6 @@ function rendererComponentEntry() {
               record: makeRendererPropertiesRecord(),
               onUpdateField: () => {},
               onUpdateFieldOptions: () => {},
-              onUpdateFieldOptionColor: () => {},
               onSearchPropertyValue: () => {}
             })
           )
@@ -2424,6 +4845,279 @@ function rendererComponentEntry() {
       } finally {
         registration.dispose();
       }
+    }
+
+    export async function optionMutationContract() {
+      const attempts = [];
+      const states = [];
+      let failNext = true;
+      const controller = createOptionMutationController({
+        operation: async (options) => {
+          attempts.push(options.map((option) => option.name));
+          if (failNext) {
+            failNext = false;
+            throw "raw option failure";
+          }
+        },
+        onStateChange: (state) => {
+          states.push({
+            status: state.status,
+            names: "input" in state ? state.input.map((option) => option.name) : [],
+            ...("error" in state ? { error: state.error } : {})
+          });
+        }
+      });
+      const failedInput = [
+        { id: "todo", name: "Todo", color: "gray" },
+        { id: "done", name: "Done", color: "green" }
+      ];
+      const first = await controller.submit(failedInput);
+      const competing = await controller.submit([{ id: "later", name: "Later" }]);
+      const retryPromise = controller.retry();
+      const duplicateRetry = await controller.retry();
+      const retry = await retryPromise;
+
+      failNext = true;
+      await controller.submit([{ id: "todo", name: "Todo", color: "blue" }]);
+      const discardAccepted = controller.discard();
+      const duplicateDiscardIgnored = !controller.discard();
+      return {
+        attempts,
+        states,
+        first,
+        competing,
+        retry,
+        duplicateRetry,
+        discardAccepted,
+        duplicateDiscardIgnored
+      };
+    }
+
+    export async function pageLayoutMutationContract() {
+      const attempts = [];
+      const states = [];
+      let pageACalls = 0;
+      let releaseRetry;
+      const controller = createPageLayoutMutationController({
+        onStateChange: (state) => states.push(state)
+      });
+      const pageAFullWidthOperation = async (value) => {
+        attempts.push(["page-a", "fullWidth", value]);
+        pageACalls += 1;
+        if (pageACalls === 1) throw "raw layout failure";
+        await new Promise((resolve) => { releaseRetry = resolve; });
+      };
+      const pageBSmallTextOperation = async (value) => {
+        attempts.push(["page-b", "smallText", value]);
+      };
+      const first = await controller.submit("fullWidth", true, pageAFullWidthOperation);
+      const blockedAfterFailure = controller.isBlocked();
+      const competing = await controller.submit("smallText", true, pageBSmallTextOperation);
+      const retryPromise = controller.retry();
+      const duplicateRetry = await controller.retry();
+      releaseRetry();
+      const retry = await retryPromise;
+
+      await controller.submit("smallText", true, async (value) => {
+        attempts.push(["page-a", "smallText", value]);
+        throw new Error("discard layout failure");
+      });
+      const discarded = controller.discard();
+      const duplicateDiscardIgnored = !controller.discard();
+
+      let rejectStale;
+      const stalePromise = controller.submit("fullWidth", false, async (value) => {
+        attempts.push(["page-old", "fullWidth", value]);
+        await new Promise((_, reject) => { rejectStale = reject; });
+      });
+      controller.reset();
+      rejectStale(new Error("stale page layout failure"));
+      const staleResult = await stalePromise;
+      const retryAfterReset = await controller.retry();
+      const currentResult = await controller.submit("smallText", false, pageBSmallTextOperation);
+
+      return {
+        attempts,
+        states,
+        first,
+        blockedAfterFailure,
+        competing,
+        duplicateRetry,
+        retry,
+        discarded,
+        duplicateDiscardIgnored,
+        staleResult,
+        retryAfterReset,
+        currentResult
+      };
+    }
+
+    export async function pageTitleMutationContract() {
+      const attempts = [];
+      const states = [];
+      let pageACalls = 0;
+      let releaseRetry;
+      const controller = createPageTitleMutationController({
+        onStateChange: (state) => states.push(state)
+      });
+      const pageAOperation = async (title) => {
+        attempts.push(["page-a", title]);
+        pageACalls += 1;
+        if (pageACalls === 1) throw "raw title failure";
+        await new Promise((resolve) => { releaseRetry = resolve; });
+      };
+      const pageBOperation = async (title) => {
+        attempts.push(["page-b", title]);
+      };
+      const first = await controller.submit("Draft A", pageAOperation);
+      const competing = await controller.submit("Wrong entity", pageBOperation);
+      const retryPromise = controller.retry();
+      const duplicateRetry = await controller.retry();
+      releaseRetry();
+      const retry = await retryPromise;
+
+      await controller.submit("Discard me", async (title) => {
+        attempts.push(["page-a", title]);
+        throw new Error("discard title failure");
+      });
+      const discarded = controller.discard();
+      const duplicateDiscardIgnored = !controller.discard();
+
+      let rejectStale;
+      const stalePromise = controller.submit("Old page pending", async (title) => {
+        attempts.push(["page-old", title]);
+        await new Promise((_, reject) => { rejectStale = reject; });
+      });
+      controller.reset();
+      rejectStale(new Error("stale page failure"));
+      const staleResult = await stalePromise;
+      const retryAfterReset = await controller.retry();
+      const currentResult = await controller.submit("Current page", pageBOperation);
+
+      return {
+        attempts,
+        states,
+        first,
+        competing,
+        duplicateRetry,
+        retry,
+        discarded,
+        duplicateDiscardIgnored,
+        staleResult,
+        retryAfterReset,
+        currentResult
+      };
+    }
+
+    export async function pageTitleBlurContract() {
+      const staleReactState = "Recovered page title";
+      const domValue = "Discarded page title";
+      const submitted = [];
+      submitPageTitleBlurValue(domValue, {
+        async submit(value, operation) {
+          await operation(value);
+          return "submitted";
+        }
+      }, async (value) => {
+        submitted.push(value);
+      });
+      await Promise.resolve();
+      return { staleReactState, domValue, submitted };
+    }
+
+    export async function coverOffsetMutationContract() {
+      const attempts = [];
+      const states = [];
+      let coverACalls = 0;
+      let releaseRetry;
+      const controller = createCoverOffsetMutationController({
+        onStateChange: (state) => states.push(state)
+      });
+      const coverAOperation = async (offset) => {
+        attempts.push(["cover-a", offset]);
+        coverACalls += 1;
+        if (coverACalls === 1) throw "raw cover failure";
+        await new Promise((resolve) => { releaseRetry = resolve; });
+      };
+      const coverBOperation = async (offset) => {
+        attempts.push(["cover-b", offset]);
+      };
+      const first = await controller.submit(72, coverAOperation);
+      const competing = await controller.submit(91, coverBOperation);
+      const retryPromise = controller.retry();
+      const duplicateRetry = await controller.retry();
+      releaseRetry();
+      const retry = await retryPromise;
+
+      await controller.submit(18, async (offset) => {
+        attempts.push(["cover-a", offset]);
+        throw new Error("discard cover failure");
+      });
+      const discarded = controller.discard();
+      const duplicateDiscardIgnored = !controller.discard();
+
+      let rejectStale;
+      const stalePromise = controller.submit(44, async (offset) => {
+        attempts.push(["cover-old", offset]);
+        await new Promise((_, reject) => { rejectStale = reject; });
+      });
+      controller.reset();
+      rejectStale(new Error("stale cover failure"));
+      const staleResult = await stalePromise;
+      const retryAfterReset = await controller.retry();
+      const currentResult = await controller.submit(33, coverBOperation);
+
+      return {
+        attempts,
+        states,
+        first,
+        competing,
+        duplicateRetry,
+        retry,
+        discarded,
+        duplicateDiscardIgnored,
+        staleResult,
+        retryAfterReset,
+        currentResult
+      };
+    }
+
+    export function rowPropertyInteractionContract() {
+      let managed = 0;
+      const searched = [];
+      let prevented = 0;
+      let stopped = 0;
+      const tree = PropertyRow({
+        field: {
+          id: "status",
+          name: "Status",
+          type: "select",
+          options: [{ id: "done", name: "Done", color: "green" }]
+        },
+        value: "Done",
+        record: { id: "row_1", status: "Done" },
+        databaseId: "db_1",
+        onChange: () => {},
+        onOptionsChange: () => {},
+        onManageField: () => { managed += 1; },
+        onSearchPropertyValue: (value) => { searched.push(value); }
+      });
+      const nodes = [];
+      const visit = (node) => {
+        if (!node || typeof node !== "object") return;
+        nodes.push(node);
+        React.Children.forEach(node.props?.children, visit);
+      };
+      visit(tree);
+      const event = {
+        preventDefault: () => { prevented += 1; },
+        stopPropagation: () => { stopped += 1; }
+      };
+      const manageButton = nodes.find((node) => node.props?.className === "row-property-settings");
+      const searchButton = nodes.find((node) => node.props?.className?.includes("row-property-option-search-chip"));
+      manageButton.props.onClick(event);
+      searchButton.props.onClick(event);
+      return { managed, searched, prevented, stopped };
     }
 
     export function renderRowPagePropertiesWithManagement() {
@@ -2436,11 +5130,54 @@ function rendererComponentEntry() {
             record: makeRendererPropertiesRecord(),
             onUpdateField: () => {},
             onUpdateFieldSettings: async () => {},
-            onUpdateFieldOptions: () => {},
-            onUpdateFieldOptionColor: () => {}
+            onUpdateFieldOptions: () => {}
           })
         )
       );
+    }
+
+    export async function rowPagePropertyEditContract() {
+      const states = [];
+      const attempts = [];
+      let discardedCount = 0;
+      let failuresRemaining = 1;
+      const controller = createRowPagePropertyEditController({
+        operation: async (fieldId, value) => {
+          attempts.push([fieldId, value]);
+          if (failuresRemaining > 0) {
+            failuresRemaining -= 1;
+            throw "row property failure";
+          }
+        },
+        onStateChange: (state) => states.push(state),
+        onDiscard: () => { discardedCount += 1; }
+      });
+      const firstPromise = controller.enqueue("db", "row", "notes", "retry me");
+      const laterPromise = controller.enqueue("db", "row", "empty_text", "queued");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const retryAccepted = controller.retry();
+      const duplicateRetryIgnored = !controller.retry();
+      const first = await firstPromise;
+      const later = await laterPromise;
+
+      failuresRemaining = 1;
+      const discardedPromise = controller.enqueue("db", "row", "notes", "discard me");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const discardAccepted = controller.discard();
+      const duplicateDiscardIgnored = !controller.discard();
+      const discarded = await discardedPromise;
+      return {
+        states,
+        attempts,
+        retryAccepted,
+        duplicateRetryIgnored,
+        discardAccepted,
+        duplicateDiscardIgnored,
+        discardedCount,
+        first,
+        later,
+        discarded
+      };
     }
 
     export function renderPagePropertiesWithOriginalHtml() {
@@ -2590,7 +5327,7 @@ function rendererComponentEntry() {
                 path: ["Workspace", "Notes", "Source Page"]
               },
               line: 12,
-              excerpt: "See target page here."
+              excerpt: "See [target page here](databases/system/pages--db_pages/pages/Target--pg_target.md)."
             },
             {
               type: "property",
@@ -2685,8 +5422,7 @@ function rendererComponentEntry() {
                 mixed_markdown: "Before [Design note](attachments/documents/design-note.pdf) after"
               },
               onUpdateField: () => {},
-              onUpdateFieldOptions: () => {},
-              onUpdateFieldOptionColor: () => {}
+              onUpdateFieldOptions: () => {}
             })
           )
         );
@@ -2708,22 +5444,441 @@ function rendererComponentEntry() {
       );
     }
 
-    export function renderDateFieldSettingsDialog() {
+    export function renderInheritedDateFieldSettingsDialog() {
       return renderWithDefaultFieldTypes(
         React.createElement(FieldSettingsDialog, {
-          field: { id: "journal_date", name: "Journal date", type: "date" },
-          records: [{ id: "row_1", journal_date: "2026-07-08" }],
-          onCopyToSystemTime: async () => ({
-            bundle: { schema: {}, records: [], views: [] },
-            copiedRows: 1,
-            unchangedRows: 0,
-            skippedEmptyRows: 0,
-            skippedInvalidRows: 0
-          }),
+          field: { id: "due", name: "Due", type: "date" },
           onClose: () => {},
           onSave: async () => {}
         })
       );
+    }
+
+    export function fieldFormatOverridesContract() {
+      return {
+        inherited: fieldFormatOverrides("date", "", ""),
+        explicit: fieldFormatOverrides("updated_time", "iso", "h24"),
+        nonDate: fieldFormatOverrides("text", "full", "h12")
+      };
+    }
+
+    export async function bulkRowActionContract() {
+      const result = { bundle: {}, errors: [], createdRowIds: [] };
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let operationCalls = 0;
+      let releaseOperation;
+      let successes = 0;
+      const first = runBulkRowAction({
+        guard: concurrentGuard,
+        operation: () => {
+          operationCalls += 1;
+          return new Promise((resolve) => { releaseOperation = () => resolve(result); });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runBulkRowAction({
+        guard: concurrentGuard,
+        operation: async () => { operationCalls += 1; return result; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseOperation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runBulkRowAction({
+        guard: retryGuard,
+        operation: async () => { throw "raw bulk failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runBulkRowAction({
+        guard: retryGuard,
+        operation: async () => result,
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        concurrent: {
+          operationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        },
+        feedback: {
+          success: bulkRowsResultFeedback(result, "Rows duplicated."),
+          partial: bulkRowsResultFeedback({
+            ...result,
+            errors: [{ rowId: "missing", message: "Row not found." }]
+          }, "Rows duplicated.")
+        }
+      };
+    }
+
+    export async function cellEditQueueContract() {
+      const flush = () => new Promise((resolve) => setImmediate(resolve));
+      const serialStates = [];
+      const serialOrder = [];
+      let active = 0;
+      let maxConcurrent = 0;
+      const releases = [];
+      const serialQueue = createCellEditQueue({
+        operation: (input) => {
+          active += 1;
+          maxConcurrent = Math.max(maxConcurrent, active);
+          serialOrder.push(input.fieldId + ":" + input.value);
+          return new Promise((resolve) => {
+            releases.push(() => {
+              active -= 1;
+              resolve();
+            });
+          });
+        },
+        onStateChange: (state) => serialStates.push(state)
+      });
+      const firstPromise = serialQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "title", value: "A" });
+      const duplicate = await serialQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "title", value: "A" });
+      const secondPromise = serialQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "notes", value: "B" });
+      const peakQueued = Math.max(...serialStates.map((state) => state.queuedCount));
+      releases.shift()();
+      await flush();
+      releases.shift()();
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+      await flush();
+
+      const recoveryStates = [];
+      const recoveryAttempts = [];
+      let shouldFail = true;
+      const recoveryQueue = createCellEditQueue({
+        operation: async (input) => {
+          recoveryAttempts.push(input.fieldId + ":" + input.value);
+          if (shouldFail) {
+            shouldFail = false;
+            throw "raw cell failure";
+          }
+        },
+        onStateChange: (state) => recoveryStates.push(state)
+      });
+      const failedPromise = recoveryQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "title", value: "failed" });
+      await flush();
+      const laterPromise = recoveryQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "notes", value: "queued" });
+      const failure = recoveryQueue.getSnapshot();
+      const retryAccepted = recoveryQueue.retry();
+      const duplicateRetryIgnored = recoveryQueue.retry() === false;
+      const [recoveredFirst, recoveredLater] = await Promise.all([failedPromise, laterPromise]);
+      await flush();
+
+      const discardAttempts = [];
+      let discardFailure = true;
+      const discardQueue = createCellEditQueue({
+        operation: async (input) => {
+          discardAttempts.push(input.fieldId + ":" + input.value);
+          if (discardFailure) {
+            discardFailure = false;
+            throw new Error("discard this edit");
+          }
+        },
+        onStateChange: () => {}
+      });
+      const discardedPromise = discardQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "title", value: "drop" });
+      await flush();
+      const keptPromise = discardQueue.enqueue({ databaseId: "db", rowId: "row", fieldId: "notes", value: "keep" });
+      const discardAccepted = discardQueue.discard();
+      const duplicateDiscardIgnored = discardQueue.discard() === false;
+      const [discarded, kept] = await Promise.all([discardedPromise, keptPromise]);
+      await flush();
+
+      return {
+        serial: {
+          order: serialOrder,
+          first,
+          second,
+          duplicate,
+          peakQueued,
+          maxConcurrent,
+          final: serialQueue.getSnapshot()
+        },
+        recovery: {
+          failure,
+          retryAccepted,
+          duplicateRetryIgnored,
+          first: recoveredFirst,
+          later: recoveredLater,
+          attempts: recoveryAttempts,
+          final: recoveryQueue.getSnapshot()
+        },
+        discard: {
+          failed: discarded,
+          later: kept,
+          discardAccepted,
+          duplicateDiscardIgnored,
+          attempts: discardAttempts,
+          final: discardQueue.getSnapshot()
+        }
+      };
+    }
+
+    export async function pagePropertyMutationContract() {
+      const concurrentStates = [];
+      const concurrentCalls = [];
+      let release;
+      const concurrent = createPagePropertyMutationController(
+        async (input) => {
+          concurrentCalls.push(input);
+          await new Promise((resolve) => { release = resolve; });
+        },
+        (state) => concurrentStates.push(state)
+      );
+      const firstPromise = concurrent.submit({ tags: ["Work"] });
+      const duplicate = await concurrent.submit({ url: "https://ignored.example" });
+      release();
+      const first = await firstPromise;
+
+      const recoveryStates = [];
+      const attempts = [];
+      let fail = true;
+      const recovery = createPagePropertyMutationController(
+        async (input) => {
+          attempts.push(input);
+          if (fail) {
+            fail = false;
+            throw "raw page property failure";
+          }
+        },
+        (state) => recoveryStates.push(state)
+      );
+      const failed = await recovery.submit({ date: "2026-08-01" });
+      const failure = recoveryStates.at(-1);
+      const retryPromise = recovery.retry();
+      const duplicateRetry = await recovery.retry();
+      const retry = await retryPromise;
+
+      const dismissStates = [];
+      const dismiss = createPagePropertyMutationController(
+        async () => { throw new Error("dismiss page property failure"); },
+        (state) => dismissStates.push(state)
+      );
+      const dismissFirst = await dismiss.submit({ url: "https://draft.example" });
+      const dismissed = dismiss.dismiss();
+      const duplicateDismiss = dismiss.dismiss();
+
+      return {
+        concurrent: { first, duplicate, calls: concurrentCalls, states: concurrentStates },
+        recovery: {
+          first: failed,
+          retry,
+          duplicateRetry,
+          attempts,
+          failure,
+          final: recoveryStates.at(-1)
+        },
+        dismiss: {
+          first: dismissFirst,
+          dismissed,
+          duplicateDismiss,
+          final: dismissStates.at(-1)
+        }
+      };
+    }
+
+    export async function rowCreationContract() {
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let operationCalls = 0;
+      let releaseOperation;
+      let successes = 0;
+      const first = runRowCreation({
+        guard: concurrentGuard,
+        operation: () => {
+          operationCalls += 1;
+          return new Promise((resolve) => { releaseOperation = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runRowCreation({
+        guard: concurrentGuard,
+        operation: async () => { operationCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseOperation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runRowCreation({
+        guard: retryGuard,
+        operation: async () => { throw "raw row creation failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runRowCreation({
+        guard: retryGuard,
+        operation: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+      return {
+        concurrent: {
+          operationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        },
+        blocked: {
+          idle: rowCreationControlsBlocked(false, ""),
+          pending: rowCreationControlsBlocked(true, ""),
+          recovery: rowCreationControlsBlocked(false, "failed")
+        }
+      };
+    }
+
+    export async function fieldSettingsActionContract() {
+      let closeCalls = 0;
+      const dismissal = {
+        pending: dismissFieldSettingsIfIdle({ current: true }, () => { closeCalls += 1; }),
+        idle: dismissFieldSettingsIfIdle({ current: false }, () => { closeCalls += 1; }),
+        closeCalls
+      };
+
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let operationCalls = 0;
+      let releaseOperation;
+      let successes = 0;
+      const first = runFieldSettingsAction({
+        guard: concurrentGuard,
+        operation: () => {
+          operationCalls += 1;
+          return new Promise((resolve) => { releaseOperation = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runFieldSettingsAction({
+        guard: concurrentGuard,
+        operation: async () => { operationCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseOperation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runFieldSettingsAction({
+        guard: retryGuard,
+        operation: async () => { throw "raw field settings failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+      const failure = {
+        status: failureStatus,
+        error: failureErrors.at(-1),
+        pending: failurePending,
+        successes: failureSuccesses,
+        guardReset: retryGuard.current === false
+      };
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runFieldSettingsAction({
+        guard: retryGuard,
+        operation: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+
+      return {
+        hydration: {
+          failedSameField: shouldHydrateFieldSettingsDraft("field-a", "field-a", true),
+          idleSameField: shouldHydrateFieldSettingsDraft("field-a", "field-a", false),
+          switchedField: shouldHydrateFieldSettingsDraft("field-a", "field-b", true)
+        },
+        dismissal,
+        concurrent: {
+          operationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure,
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        }
+      };
     }
 
     export function renderFormulaFieldSettingsDialog() {
@@ -2784,7 +5939,6 @@ function rendererComponentEntry() {
           record: { id: "row_url", title: "URL Row" },
           databaseId: "db_cells",
           onChange: () => {},
-          onOptionColorChange: () => {},
           onOptionsChange: () => {}
         })
       );
@@ -2796,11 +5950,9 @@ function rendererComponentEntry() {
           field: { id: "title", name: "Name", type: "text" },
           value: "Visible Title",
           wrap: false,
-          record: { id: "row_title", title: "Visible Title" },
+          record: { id: "row_title", title: "Visible Title", row_icon: "emoji:📝" },
           databaseId: "db_cells",
-          databaseIcon: "emoji:🧴",
           onChange: () => {},
-          onOptionColorChange: () => {},
           onOptionsChange: () => {},
           onOpenRowPage: () => {}
         })
@@ -2816,7 +5968,6 @@ function rendererComponentEntry() {
           record: { id: "row_formula", title: "Formula Row" },
           databaseId: "db_cells",
           onChange: () => {},
-          onOptionColorChange: () => {},
           onOptionsChange: () => {}
         })
       );
@@ -2833,11 +5984,12 @@ function rendererComponentEntry() {
             filters: [
               { fieldId: "title", operator: "contains", value: "alpha" },
               { fieldId: "score", operator: "gt", value: 7 },
-              { fieldId: "done", operator: "checked", value: true }
+              { fieldId: "done", operator: "checked", value: true },
+              { fieldId: "relation", operator: "contains", value: "row_42" }
             ]
           },
           anchor: { left: 6, top: 64 },
-          onChange: () => {}
+          onChange: async () => {}
         })
       );
     }
@@ -2848,7 +6000,7 @@ function rendererComponentEntry() {
           fields: makePopoverFields(),
           view: { id: "view_filter_empty", name: "No filters", type: "table", filters: [] },
           anchor: { left: 20, top: 72 },
-          onChange: () => {}
+          onChange: async () => {}
         })
       );
     }
@@ -2867,7 +6019,7 @@ function rendererComponentEntry() {
             ]
           },
           anchor: { left: 6, top: 80 },
-          onChange: () => {}
+          onChange: async () => {}
         })
       );
     }
@@ -2878,7 +6030,7 @@ function rendererComponentEntry() {
           fields: makePopoverFields(),
           view: { id: "view_sort_empty", name: "No sorts", type: "table", sorts: [] },
           anchor: { left: 20, top: 88 },
-          onChange: () => {}
+          onChange: async () => {}
         })
       );
     }
@@ -2898,7 +6050,7 @@ function rendererComponentEntry() {
             ]
           },
           anchor: { left: 20, top: 96 },
-          onChange: () => {}
+          onChange: async () => {}
         })
       );
     }
@@ -3065,6 +6217,88 @@ function rendererComponentEntry() {
             )
           )
       );
+    }
+
+    export function searchAiSubtitleContract() {
+      return {
+        database: searchAiHitSubtitle({
+          kind: "database",
+          databaseId: "db_kb",
+          databaseName: "Knowledge Base",
+          entityPath: "Research / Knowledge Base",
+          path: "databases/user/Knowledge_Base--db_kb/schema.json",
+          line: 1,
+          text: "",
+          ranges: []
+        }),
+        row: searchAiHitSubtitle({
+          kind: "row",
+          databaseId: "db_kb",
+          databaseName: "Knowledge Base",
+          rowId: "row_orchard",
+          rowTitle: "Semantic Orchard",
+          pageFile: null,
+          path: "databases/user/Knowledge_Base--db_kb/data.csv",
+          line: 2,
+          text: "",
+          ranges: []
+        }),
+        rowPage: searchAiHitSubtitle({
+          kind: "rowPage",
+          databaseId: "db_kb",
+          databaseName: "Knowledge Base",
+          rowTitle: "Semantic Orchard",
+          pageFile: "Semantic_Orchard--row_orchard.md",
+          entityPath: "Research / Semantic Orchard",
+          path: "databases/user/Knowledge_Base--db_kb/pages/Semantic_Orchard--row_orchard.md",
+          line: 1,
+          text: "",
+          ranges: []
+        }),
+        databaseBackedPage: searchAiHitSubtitle({
+          kind: "page",
+          pageId: "row_orchard",
+          title: "Semantic Orchard",
+          databaseId: "db_kb",
+          databaseName: "Knowledge Base",
+          path: "databases/user/Knowledge_Base--db_kb/data.csv",
+          line: 2,
+          text: "",
+          ranges: []
+        }),
+        databasePage: searchAiHitSubtitle({
+          kind: "page",
+          pageId: "pg_notes",
+          title: "Notes",
+          databaseId: "db_kb",
+          databaseName: "Knowledge Base",
+          entityPath: "Research / Notes",
+          path: "attachments/notes.txt",
+          line: 1,
+          text: "",
+          ranges: []
+        }),
+        workspacePage: searchAiHitSubtitle({
+          kind: "page",
+          pageId: "pg_home",
+          title: "Home",
+          entityPath: "Research / Home",
+          path: "databases/system/pages--db_pages/pages/Home--pg_home.md",
+          line: 1,
+          text: "",
+          ranges: []
+        }),
+        internalWorkspacePage: searchAiHitSubtitle({
+          kind: "page",
+          pageId: "pg_home",
+          title: "Home",
+          entityPath: "databases/system/pages--db_pages/pages/Home--pg_home.md",
+          path: "databases/system/pages--db_pages/pages/Home--pg_home.md",
+          line: 1,
+          text: "",
+          ranges: []
+        })
+      };
     }
 
     export function renderViewSettingsDialog() {
@@ -3250,7 +6484,8 @@ function rendererComponentEntry() {
               { id: "tab_database", item: { type: "database", id: "db_daily" } },
               { id: "tab_row", item: { type: "row_page", databaseId: "db_daily", rowId: "row_today", title: "Fallback row title" } },
               { id: "tab_manage", item: { type: "manage", kind: "pages" } },
-              { id: "tab_blank" }
+              { id: "tab_blank" },
+              { id: "tab_startup", item: { type: "startup", returnTabId: "tab_row" } }
             ],
             activeIndex: 2,
             state: makeTabStripState(),
@@ -3313,7 +6548,6 @@ function rendererComponentEntry() {
             top: 24,
             onOpen: () => {},
             onCreateChild: () => {},
-            onDuplicate: () => {},
             onDelete: () => {}
           })
         )
@@ -3340,9 +6574,7 @@ function rendererComponentEntry() {
           onPickCover: () => {},
           onClearCover: () => {},
           onCommitCoverOffset: () => {},
-          onOpenInNewWindow: () => {},
-          favorited: true,
-          onToggleFavorite: () => {}
+          onOpenInNewWindow: () => {}
         })
       );
     }
@@ -3410,9 +6642,100 @@ function rendererComponentEntry() {
           viewActions: React.createElement("div", { "data-testid": "tabs-actions" }, "Table toolbar"),
           getProvider: (type) => type === "kanban_plus" ? pluginProvider : undefined,
           onSelectView: () => {},
-          onCreateView: () => {}
+          onCreateView: () => {},
+          onReorderViews: async () => {},
+          onOpenViewMenu: () => {}
         })
       );
+    }
+
+    export async function viewOrderMutationContract() {
+      const concurrentGuard = { current: false };
+      const concurrentPending = [];
+      const concurrentErrors = [];
+      let operationCalls = 0;
+      let releaseOperation;
+      let successes = 0;
+      const first = runViewOrderMutation({
+        guard: concurrentGuard,
+        operation: () => {
+          operationCalls += 1;
+          return new Promise((resolve) => { releaseOperation = resolve; });
+        },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      const secondStatus = await runViewOrderMutation({
+        guard: concurrentGuard,
+        operation: async () => { operationCalls += 1; },
+        onError: (message) => concurrentErrors.push(message),
+        onPendingChange: (value) => concurrentPending.push(value),
+        onSuccess: () => { successes += 1; }
+      });
+      releaseOperation();
+      const firstStatus = await first;
+
+      const retryGuard = { current: false };
+      const failurePending = [];
+      const failureErrors = [];
+      let failureSuccesses = 0;
+      const failureStatus = await runViewOrderMutation({
+        guard: retryGuard,
+        operation: async () => { throw "raw view reorder failure"; },
+        onError: (message) => failureErrors.push(message),
+        onPendingChange: (value) => failurePending.push(value),
+        onSuccess: () => { failureSuccesses += 1; }
+      });
+
+      const retryPending = [];
+      const retryErrors = [];
+      let retrySuccesses = 0;
+      const retryStatus = await runViewOrderMutation({
+        guard: retryGuard,
+        operation: async () => {},
+        onError: (message) => retryErrors.push(message),
+        onPendingChange: (value) => retryPending.push(value),
+        onSuccess: () => { retrySuccesses += 1; }
+      });
+      let typedError = "";
+      await runViewOrderMutation({
+        guard: { current: false },
+        operation: async () => { throw new Error("typed view reorder failure"); },
+        onError: (message) => { typedError = message; },
+        onPendingChange: () => {},
+        onSuccess: () => {}
+      });
+
+      return {
+        concurrent: {
+          operationCalls,
+          firstStatus,
+          secondStatus,
+          pending: concurrentPending,
+          errors: concurrentErrors,
+          successes
+        },
+        failure: {
+          status: failureStatus,
+          error: failureErrors.at(-1),
+          pending: failurePending,
+          successes: failureSuccesses,
+          guardReset: retryGuard.current === false
+        },
+        retry: {
+          status: retryStatus,
+          errors: retryErrors,
+          pending: retryPending,
+          successes: retrySuccesses
+        },
+        blocked: {
+          idle: viewOrderControlsBlocked(false, false),
+          pending: viewOrderControlsBlocked(true, false),
+          recovery: viewOrderControlsBlocked(false, true)
+        },
+        typedError
+      };
     }
 
     export function renderFieldTypeIcons() {
@@ -3436,7 +6759,7 @@ function rendererComponentEntry() {
       );
     }
 
-    export function renderKanbanProviderVisual() {
+    export async function renderKanbanProviderVisual() {
       let provider;
       const registration = installKanbanView({
         views: {
@@ -3489,16 +6812,27 @@ function rendererComponentEntry() {
             { id: "row_done", title: "Tokenize plugin UI", status: "Done", owner: "Grace", tags: "Done" }
           ]
         };
+        let openedRowId = "";
+        let addCalls = 0;
+        const addInputs = [];
+        const workspace = {
+          addRow: async (_databaseId, initialValues) => {
+            addCalls += 1;
+            addInputs.push(initialValues);
+            if (addCalls === 1) throw "raw Kanban row failure";
+            return bundle;
+          },
+          updateCell: async () => bundle
+        };
         provider.render({
           bundle,
           view: { id: "view_kanban", type: "kanban", name: "Kanban", config: { groupBy: "status" } },
           container,
-          workspace: {
-            addRow: async () => bundle,
-            updateCell: async () => bundle
-          }
+          openRow: (rowId) => { openedRowId = rowId; },
+          workspace
         });
         const firstColumn = container.querySelector(".kanban-col");
+        container.querySelector(".kanban-card")?.listeners.click?.[0]?.({});
         const dragover = firstColumn?.listeners.dragover?.[0];
         if (dragover) {
           dragover({
@@ -3506,11 +6840,32 @@ function rendererComponentEntry() {
             dataTransfer: { dropEffect: "" }
           });
         }
+        const addButton = firstColumn?.querySelector(".kanban-add-card");
+        addButton?.listeners.click?.[0]?.({});
+        addButton?.listeners.click?.[0]?.({});
+        await Promise.resolve();
+        await Promise.resolve();
+        const feedback = firstColumn?.querySelector(".kanban-add-card-error");
+        const error = feedback?.children[0]?.textContent ?? "";
+        const duplicateSubmitSuppressed = addCalls === 1;
+        const addDisabledDuringRecovery = addButton?.disabled === true;
+        feedback?.children[1]?.listeners.click?.[0]?.({});
+        await Promise.resolve();
+        await Promise.resolve();
         return {
           html: container.toHtml(),
           dropOutline: firstColumn?.style.outline ?? "",
           groupPillStyle: container.querySelector(".kanban-groupbar")?.children[1]?.style.cssText ?? "",
-          cardStyle: container.querySelector(".kanban-card")?.style.cssText ?? ""
+          cardStyle: container.querySelector(".kanban-card")?.style.cssText ?? "",
+          openedRowId,
+          rowCreationRecovery: {
+            addCalls,
+            duplicateSubmitSuppressed,
+            error,
+            addDisabledDuringRecovery,
+            retryClearedError: feedback?.hidden === true,
+            initialValues: addInputs[0]
+          }
         };
       } finally {
         registration.dispose();
@@ -3728,6 +7083,26 @@ function rendererComponentEntry() {
       );
     }
 
+    export function renderMenuPrimitives() {
+      return renderToStaticMarkup(
+        React.createElement(
+          MenuSection,
+          { label: "Choose scope" },
+          React.createElement(MenuItem, {
+            label: "View settings",
+            description: "Only affects this view",
+            submenu: true,
+            onSelect: () => {}
+          }),
+          React.createElement(MenuItem, {
+            label: "Edit properties",
+            disabledReason: "System database structure is managed by Lotion.",
+            onSelect: () => {}
+          })
+        )
+      );
+    }
+
     export function renderManagementPluginsView() {
       const context = installRendererTestPlugin();
       try {
@@ -3809,8 +7184,67 @@ function rendererComponentEntry() {
       }
     }
 
+    export function renderManagementGeneralSettingsCenter() {
+      return renderToStaticMarkup(
+        React.createElement(
+          SettingsProvider,
+          null,
+          React.createElement(
+            LotionActionsProvider,
+            { value: makeNoopActions() },
+            React.createElement(ManagementView, {
+              kind: "settings",
+              pages: makeManagementPages(),
+              databases: makeManagementDatabases(),
+              recents: makeManagementRecents(),
+              settingsOpenRequest: { section: "general", requestId: 2 }
+            })
+          )
+        )
+      );
+    }
+
     export function renderNotionAuditPanelInitial() {
       return renderToStaticMarkup(React.createElement(NotionAuditPanel));
+    }
+
+    export async function notionAuditRunContract() {
+      const controller = createNotionAuditRunController();
+      const calls = [];
+      let resolveFirst;
+      const firstResult = makeNotionPassingAuditResult();
+      const first = controller.run(() => {
+        calls.push("first");
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      });
+      const runningDuringFirst = controller.isRunning();
+      const competing = await controller.run(async () => {
+        calls.push("competing");
+        return makeNotionAuditResult();
+      });
+      resolveFirst(firstResult);
+      const completed = await first;
+      const runningAfterFirst = controller.isRunning();
+      const failed = await controller.run(async () => {
+        calls.push("failure");
+        throw "audit unavailable";
+      });
+      const retry = await controller.run(async () => {
+        calls.push("retry");
+        return firstResult;
+      });
+      return {
+        calls,
+        runningDuringFirst,
+        competing,
+        completed,
+        runningAfterFirst,
+        failed,
+        retry,
+        runningAfterRetry: controller.isRunning()
+      };
     }
 
     export function renderNotionAuditResult() {
@@ -3839,64 +7273,6 @@ function rendererComponentEntry() {
       return renderToStaticMarkup(React.createElement(NotionImportDialog, { onClose: () => {} }));
     }
 
-    export function renderNotionImportSummary() {
-      return renderToStaticMarkup(
-        React.createElement(ImportSummary, {
-          summary: {
-            workspaceRoot: "/tmp/lotion-import",
-            reportPageId: "pg_report",
-            scan: {
-              sources: ["/tmp/markdown", "/tmp/html"],
-              databasesRaw: 2,
-              databasesKept: 2,
-              databases: [{ title: "Projects", rows: 4, userFields: 3 }],
-              topLevelPages: 3,
-              attachments: 6
-            },
-            report: {
-              status: "complete_with_warnings",
-              generatedAt: "2026-07-20T18:38:01.000Z",
-              durationMs: 42600,
-              counts: { sources: 2, pages: 3, databases: 2, rows: 4, attachments: 6, warnings: 1, reviewItems: 2 },
-              nameConflicts: {
-                pageGroups: 1,
-                databaseGroups: 1,
-                crossTypeGroups: 0,
-                groups: [
-                  {
-                    name: "Weekly Review",
-                    kinds: ["page"],
-                    entries: [
-                      { id: "pg_1", notionId: "a", name: "Weekly Review", kind: "page", source: "/tmp/a.html", target: "pages/a.md" },
-                      { id: "pg_2", notionId: "b", name: "Weekly Review", kind: "page", source: "/tmp/b.html", target: "pages/b.md" }
-                    ]
-                  },
-                  {
-                    name: "Projects",
-                    kinds: ["database"],
-                    entries: [
-                      { id: "db_1", notionId: "c", name: "Projects", kind: "database", source: "/tmp/c.csv", target: "databases/c" },
-                      { id: "db_2", notionId: "d", name: "Projects", kind: "database", source: "/tmp/d.csv", target: "databases/d" }
-                    ]
-                  }
-                ]
-              },
-              icons: { pagesWithIcon: 2, pagesWithoutIcon: 1, databasesWithIcon: 1, databasesWithoutIcon: 1, rowsWithIcon: 3, rowsWithoutIcon: 1 },
-              performance: { prepareTargetMs: 10, resolveSourcesMs: 20, indexSourcesMs: 300, selectDatabasesMs: 40, planAndParseMs: 2000, writeWorkspaceMs: 1000, totalMs: 3370 },
-              warnings: ["2 intentionally skipped or redirected items are available in Import review."],
-              artifacts: {
-                directory: "/tmp/lotion-import/reports/import-1",
-                markdown: "/tmp/lotion-import/reports/import-1/report.md",
-                json: "/tmp/lotion-import/reports/import-1/report.json",
-                warningsCsv: "/tmp/lotion-import/reports/import-1/warnings.csv",
-                manifest: "/tmp/lotion-import/reports/import-1/manifest.json"
-              }
-            }
-          }
-        })
-      );
-    }
-
     export function renderNotionImportSettingsWithReport() {
       return withRendererWindow(() =>
         renderToStaticMarkup(
@@ -3917,7 +7293,6 @@ function rendererComponentEntry() {
         React.createElement(ListBody, {
           fields: makeAlternateViewFields(),
           records: makeAlternateViewRecords(),
-          databaseIcon: "emoji:🧴",
           onOpenRow: () => {}
         })
       );
@@ -3929,7 +7304,6 @@ function rendererComponentEntry() {
           fields: makeAlternateViewVisibleFields(),
           records: makeAlternateViewRecords(),
           view: { id: "view_gallery", name: "Gallery", type: "gallery", coverFieldId: "cover_url" },
-          databaseIcon: "emoji:🧴",
           onOpenRow: () => {}
         })
       );
@@ -3961,11 +7335,6 @@ function rendererComponentEntry() {
           id: "row_outside",
           title: "Outside month task",
           due: outsideMonthDate.toISOString().slice(0, 10)
-        },
-        {
-          id: "row_inherited_icon",
-          title: "Inherited icon task",
-          due: currentMonthDate.toISOString().slice(0, 10)
         }
       ];
       return renderToStaticMarkup(
@@ -3973,7 +7342,6 @@ function rendererComponentEntry() {
           fields: makeAlternateViewFields(),
           records,
           view: { id: "view_calendar", name: "Calendar", type: "calendar", dateFieldId: "due" },
-          databaseIcon: "emoji:🧴",
           onOpenRow: () => {}
         })
       );
@@ -4005,7 +7373,7 @@ function rendererComponentEntry() {
     }
 
     export function renderDatabaseTableGridStandalone() {
-      return renderToStaticMarkup(makeDatabaseTableGridElement({ embedded: false, hiddenEmbeddedRows: false }));
+      return renderToStaticMarkup(makeDatabaseTableGridElement({ embedded: false, hiddenEmbeddedRows: false, addRowDisabled: true }));
     }
 
     export function renderDatabaseTableGridHiddenRows() {
@@ -4248,7 +7616,8 @@ function rendererComponentEntry() {
         { id: "title", name: "Name", type: "text" },
         { id: "score", name: "Score", type: "number" },
         { id: "done", name: "Done", type: "checkbox" },
-        { id: "due", name: "Due", type: "date" }
+        { id: "due", name: "Due", type: "date" },
+        { id: "relation", name: "Related", type: "entity_ref" }
       ];
     }
 
@@ -4563,7 +7932,7 @@ function rendererComponentEntry() {
           commandHit: {
             command: {
               id: "lotion.toggle-favorite",
-              title: "收藏/取消收藏当前内容",
+              title: "收藏/取消收藏当前页面",
               category: "Lotion",
               run() {}
             },
@@ -4802,7 +8171,6 @@ function rendererComponentEntry() {
     function makeManagementFavorites() {
       return [
         { type: "page", id: "pg_plan" },
-        { type: "database", id: "db_daily" },
         { type: "row_page", databaseId: "db_daily", rowId: "row_daily" }
       ];
     }
@@ -4869,7 +8237,6 @@ function rendererComponentEntry() {
         databases,
         favorites: [
           { type: "page", id: "pg_plan" },
-          { type: "database", id: "db_daily" },
           { type: "row_page", databaseId: "db_daily", rowId: "row_daily" }
         ],
         recents: makeManagementRecents(),
@@ -4988,12 +8355,16 @@ function rendererComponentEntry() {
         createView: resolveBundle,
         duplicateView: resolveBundle,
         updateView: resolveBundle,
+        patchView: async () => ({ ok: true, bundle: emptyBundle, view: emptyBundle.views[0] }),
+        mutateView: resolveBundle,
+        getViewMutationState: () => ({ status: "idle" }),
         deleteView: resolveBundle,
         setDefaultView: resolveBundle,
         openRowPage: async () => ({}),
         openRowPageByFile: async () => ({}),
         updateRowPage: async () => ({}),
-        setRowPageFullWidth: async () => ({})
+        setRowPageFullWidth: async () => ({}),
+        setRowPageSmallText: async () => ({})
       };
     }
 
@@ -5415,6 +8786,7 @@ function rendererComponentEntry() {
         {
           id: "row_beta",
           title: "",
+          row_icon: "emoji:🖼️",
           status: "Done",
           due: "2026-06-13",
           done: false,
@@ -5424,7 +8796,7 @@ function rendererComponentEntry() {
       ];
     }
 
-    function makeDatabaseTableGridElement({ embedded, hiddenEmbeddedRows }) {
+    function makeDatabaseTableGridElement({ embedded, hiddenEmbeddedRows, addRowDisabled = false }) {
       const fields = makeAlternateViewVisibleFields().slice(0, 2);
       const records = makeAlternateViewRecords();
       return React.createElement(DatabaseTableGrid, {
@@ -5442,6 +8814,7 @@ function rendererComponentEntry() {
         tableScrollRef: React.createRef(),
         rowNodesRef: { current: new Map() },
         onAddRow: () => {},
+        addRowDisabled,
         renderColGroup: () => React.createElement(
           "colgroup",
           null,
@@ -5472,7 +8845,6 @@ function rendererComponentEntry() {
         openRowPage() {},
         openRowPageByFile() {},
         createPage() {},
-        duplicatePage() {},
         createDatabase() {},
         async deletePage() {},
         async toggleFavoriteCurrent() {},

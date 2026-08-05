@@ -4,7 +4,6 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 
-import { startRendererCoverage } from "./lib/renderer-coverage.mjs";
 import { currentNonSmokeWorkspacePath } from "./smoke-workspace-utils.mjs";
 
 export const DEFAULT_UI_VIEWPORTS = [
@@ -26,9 +25,6 @@ export async function withLotionUIHarness(name, run, options = {}) {
   let previousWorkspacePath = "";
   let devProcess;
   let runResult = null;
-  let rendererCoverage = null;
-  let rendererCoverageFile = "";
-  let rendererCoverageWritten = false;
 
   try {
     await mkdir(artifactRoot, { recursive: true });
@@ -64,8 +60,6 @@ export async function withLotionUIHarness(name, run, options = {}) {
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 15_000 });
     previousWorkspacePath = await currentNonSmokeWorkspacePath(page);
-    rendererCoverageFile = rendererCoveragePath(name, options);
-    if (rendererCoverageFile) rendererCoverage = await startRendererCoverage(page);
 
     const context = {
       artifactRoot,
@@ -93,10 +87,6 @@ export async function withLotionUIHarness(name, run, options = {}) {
     };
 
     runResult = await run(context);
-    if (rendererCoverage) {
-      await rendererCoverage.writeTo(rendererCoverageFile);
-      rendererCoverageWritten = true;
-    }
     if (options.failOnConsoleErrors !== false) {
       const consoleIssues = consoleIssuesFromEvents(consoleEvents, consoleMessages);
       if (consoleIssues.length > 0) {
@@ -116,10 +106,6 @@ export async function withLotionUIHarness(name, run, options = {}) {
     });
     return runResult;
   } catch (error) {
-    if (rendererCoverage && !rendererCoverageWritten) {
-      await rendererCoverage.writeTo(rendererCoverageFile).catch(() => undefined);
-      rendererCoverageWritten = true;
-    }
     if (page) {
       await captureFailureArtifacts({
         artifactRoot,
@@ -130,19 +116,21 @@ export async function withLotionUIHarness(name, run, options = {}) {
         name,
         page
       }).catch(() => undefined);
-      await writeHarnessResultArtifact({
-        artifactRoot,
-        cdpUrl,
-        consoleEvents,
-        consoleMessages,
-        devLog,
-        error,
-        name,
-        page,
-        result: runResult,
-        status: "failed"
-      }).catch(() => undefined);
+    } else {
+      await writeStartupFailureArtifacts({ artifactRoot, devLog, error, name }).catch(() => undefined);
     }
+    await writeHarnessResultArtifact({
+      artifactRoot,
+      cdpUrl,
+      consoleEvents,
+      consoleMessages,
+      devLog,
+      error,
+      name,
+      page,
+      result: runResult,
+      status: "failed"
+    }).catch(() => undefined);
     throw error;
   } finally {
     if (page && previousWorkspacePath) {
@@ -159,14 +147,6 @@ export async function withLotionUIHarness(name, run, options = {}) {
     await browser?.close().catch(() => undefined);
     await stopDevProcess(devProcess);
   }
-}
-
-function rendererCoveragePath(name, options) {
-  if (options.collectRendererCoverage === false) return "";
-  const explicitFile = (process.env.LOTION_RENDERER_COVERAGE_FILE || "").trim();
-  if (explicitFile) return explicitFile;
-  const outputDir = (process.env.LOTION_RENDERER_COVERAGE_DIR || "").trim();
-  return outputDir ? join(outputDir, `${safeName(name)}-${process.pid}.json`) : "";
 }
 
 export function selectedViewports() {
@@ -198,9 +178,26 @@ export async function forEachViewport(page, viewports, run) {
 }
 
 export async function openWorkspaceAndReload(page, root) {
-  await page.evaluate((workspacePath) => window.lotion.workspace.open(workspacePath), root);
+  const previousTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+  const openedManifest = await page.evaluate((workspacePath) => {
+    window.localStorage.removeItem("lotion.tabs");
+    window.localStorage.removeItem("lotion.nextWindowInit");
+    return window.lotion.workspace.open(workspacePath);
+  }, root);
   await reloadRendererPage(page);
-  await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 15_000 });
+  await page.waitForFunction(async ({ expectedSpaceId, expectedWorkspaceName, staleTimeOrigin }) => {
+    if (performance.timeOrigin === staleTimeOrigin || !window.lotion?.workspace) return false;
+    const manifest = await window.lotion.workspace.getManifest().catch(() => null);
+    return Boolean(
+      manifest
+      && (!expectedSpaceId || manifest.spaceId === expectedSpaceId)
+      && (!expectedWorkspaceName || manifest.name === expectedWorkspaceName)
+    );
+  }, {
+    expectedSpaceId: openedManifest?.spaceId || "",
+    expectedWorkspaceName: openedManifest?.name || "",
+    staleTimeOrigin: previousTimeOrigin
+  }, { timeout: 15_000 });
 }
 
 export async function reloadRendererPage(page) {
@@ -220,6 +217,27 @@ export async function setLotionLocale(page, locale) {
     locale,
     { timeout: 8_000 }
   );
+}
+
+export async function withPreservedLocalStorageValue(page, key, run) {
+  const previousValue = await page.evaluate(
+    (storageKey) => window.localStorage.getItem(storageKey),
+    key
+  );
+  let restored = false;
+  const restore = async () => {
+    if (restored) return;
+    await page.evaluate(({ storageKey, value }) => {
+      if (value === null) window.localStorage.removeItem(storageKey);
+      else window.localStorage.setItem(storageKey, value);
+    }, { storageKey: key, value: previousValue });
+    restored = true;
+  };
+  try {
+    return await run(previousValue, restore);
+  } finally {
+    await restore();
+  }
 }
 
 function isIgnorableReloadNavigationError(error) {
@@ -421,7 +439,16 @@ export async function assertFocusWithin(locator, label = "focused region") {
   return state;
 }
 
-export async function captureElementSnapshot({ artifactRoot, locator, metadata = {}, name, page, viewport }) {
+export async function captureElementSnapshot({
+  artifactRoot,
+  deterministicTypography = true,
+  locator,
+  metadata = {},
+  name,
+  page,
+  viewport,
+  waitForStable = true
+}) {
   if (!artifactRoot) throw new Error("captureElementSnapshot requires artifactRoot");
   if (!locator) throw new Error("captureElementSnapshot requires locator");
   const snapshotRoot = join(artifactRoot, "snapshots");
@@ -431,11 +458,63 @@ export async function captureElementSnapshot({ artifactRoot, locator, metadata =
 
   await mkdir(snapshotRoot, { recursive: true });
   await locator.waitFor({ state: "visible", timeout: 5_000 });
-  const rect = await readRect(locator);
-  if (rect.width <= 0 || rect.height <= 0) {
-    throw new Error(`Cannot capture ${snapshotName}; invalid element geometry: ${JSON.stringify(rect)}`);
+  const snapshotAttribute = "data-ui-harness-deterministic-snapshot";
+  const previousSnapshotAttribute = deterministicTypography
+    ? await locator.getAttribute(snapshotAttribute)
+    : null;
+  if (deterministicTypography) {
+    await locator.evaluate((node, attribute) => node.setAttribute(attribute, "true"), snapshotAttribute);
+    await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.setAttribute("data-ui-harness-deterministic-snapshot-style", "true");
+      style.textContent = `
+        [data-ui-harness-deterministic-snapshot],
+        [data-ui-harness-deterministic-snapshot] *,
+        [data-ui-harness-deterministic-snapshot] *::before,
+        [data-ui-harness-deterministic-snapshot] *::after {
+          -webkit-font-smoothing: antialiased !important;
+          font-feature-settings: normal !important;
+          font-kerning: none !important;
+          font-optical-sizing: none !important;
+          font-variant-ligatures: none !important;
+          text-rendering: geometricPrecision !important;
+        }
+      `;
+      document.head.appendChild(style);
+    });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
-  await locator.screenshot({ path: imagePath });
+  let rect;
+  try {
+    rect = await readRect(locator);
+    if (rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`Cannot capture ${snapshotName}; invalid element geometry: ${JSON.stringify(rect)}`);
+    }
+    if (waitForStable) {
+      await locator.screenshot({ path: imagePath });
+    } else {
+      await page.screenshot({
+        animations: "disabled",
+        clip: {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        },
+        path: imagePath
+      });
+    }
+  } finally {
+    if (deterministicTypography) {
+      await locator.evaluate((node, payload) => {
+        if (payload.previous === null) node.removeAttribute(payload.attribute);
+        else node.setAttribute(payload.attribute, payload.previous);
+      }, { attribute: snapshotAttribute, previous: previousSnapshotAttribute });
+      await page.evaluate(() => {
+        for (const style of document.querySelectorAll("[data-ui-harness-deterministic-snapshot-style]")) style.remove();
+      });
+    }
+  }
   const currentViewport = typeof page?.viewportSize === "function" ? page.viewportSize() : null;
   const url = typeof page?.url === "function" ? page.url() : "";
   await writeFile(metadataPath, `${JSON.stringify({
@@ -664,26 +743,36 @@ async function ensureAppLifecycle(cdpUrl, devLog, options = {}) {
   if (process.env.LOTION_UI_HARNESS_NO_AUTOSTART === "1") {
     throw new Error(`Cannot reach Lotion CDP at ${cdpUrl}. Start npm run dev or unset LOTION_UI_HARNESS_NO_AUTOSTART.`);
   }
-  const child = spawn("npm", ["run", "dev"], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      LOTION_CDP_PORT: String(options.cdpPort ?? cdpPortFromUrl(cdpUrl) ?? 9222),
-      LOTION_DEV_SKIP_STRAY_KILL: options.explicitCdpUrl ? process.env.LOTION_DEV_SKIP_STRAY_KILL : "1",
-      LOTION_ELECTRON_USER_DATA_DIR: options.artifactRoot
-        ? join(options.artifactRoot, "electron-user-data")
-        : process.env.LOTION_ELECTRON_USER_DATA_DIR,
-      LOTION_VITE_PORT: String(options.vitePort ?? process.env.LOTION_VITE_PORT ?? 5173)
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  child.stdout?.on("data", (chunk) => devLog.push(chunk.toString()));
-  child.stderr?.on("data", (chunk) => devLog.push(chunk.toString()));
-  child.on("exit", (code, signal) => {
-    devLog.push(`[dev exit] code=${code ?? ""} signal=${signal ?? ""}`);
-  });
-  await waitForCdp(cdpUrl, 60_000);
-  return child;
+  const attempts = 2;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const child = spawn("npm", ["run", "dev"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        LOTION_CDP_PORT: String(options.cdpPort ?? cdpPortFromUrl(cdpUrl) ?? 9222),
+        LOTION_DEV_SKIP_STRAY_KILL: options.explicitCdpUrl ? process.env.LOTION_DEV_SKIP_STRAY_KILL : "1",
+        LOTION_ELECTRON_USER_DATA_DIR: options.artifactRoot
+          ? join(options.artifactRoot, "electron-user-data")
+          : process.env.LOTION_ELECTRON_USER_DATA_DIR,
+        LOTION_VITE_PORT: String(options.vitePort ?? process.env.LOTION_VITE_PORT ?? 5173)
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    child.stdout?.on("data", (chunk) => devLog.push(chunk.toString()));
+    child.stderr?.on("data", (chunk) => devLog.push(chunk.toString()));
+    child.on("exit", (code, signal) => {
+      devLog.push(`[dev exit] attempt=${attempt} code=${code ?? ""} signal=${signal ?? ""}`);
+    });
+    try {
+      await waitForCdp(cdpUrl, 60_000);
+      return child;
+    } catch (error) {
+      devLog.push(`[cdp startup] attempt=${attempt}/${attempts} failed: ${String(error?.message || error)}`);
+      await stopDevProcess(child);
+      if (attempt === attempts) throw error;
+    }
+  }
+  throw new Error(`Could not start Lotion CDP at ${cdpUrl}.`);
 }
 
 async function allocateUiHarnessPorts() {
@@ -704,6 +793,13 @@ async function getFreePort() {
         return;
       }
       const { port } = address;
+      // Chromium treats 65535 as the "pick a random debugging port" sentinel,
+      // so the URL selected by the harness would no longer match the actual CDP
+      // listener. Let the kernel choose again instead.
+      if (port === 65_535) {
+        server.close(() => getFreePort().then(resolve, reject));
+        return;
+      }
       server.close(() => resolve(port));
     });
   });
@@ -829,7 +925,11 @@ function buildHarnessResultManifest({ artifactRoot, cdpUrl, consoleEvents, conso
       message: error.message || String(error),
       stack: error.stack || ""
     } : null,
-    failureArtifacts: error ? failureArtifactPaths(artifactRoot) : null
+    failureArtifacts: error
+      ? page
+        ? failureArtifactPaths(artifactRoot)
+        : startupFailureArtifactPaths(artifactRoot)
+      : null
   };
 }
 
@@ -894,6 +994,9 @@ function summarizeHarnessResult(result) {
   if (result.artifactContract && typeof result.artifactContract === "object") {
     summary.artifactContract = summarizeArtifactContract(result.artifactContract);
   }
+  if (isRealWorkspaceResult(result)) {
+    summary.realWorkspaceEvidence = summarizeRealWorkspaceEvidence(result);
+  }
   if (Array.isArray(result.results)) {
     summary.results = result.results.slice(0, 40).map((entry) => ({
       name: entry?.name,
@@ -911,15 +1014,91 @@ function summarizeHarnessResult(result) {
 function summarizeArtifactContract(contract) {
   return {
     status: contract.status,
+    ...(typeof contract.reproduceCommand === "string" ? { reproduceCommand: contract.reproduceCommand } : {}),
+    ...(typeof contract.workspaceName === "string" ? { workspaceName: contract.workspaceName } : {}),
+    ...(contract.sourceFingerprint && typeof contract.sourceFingerprint === "object"
+      ? { sourceFingerprint: summarizeWorkspaceFingerprint(contract.sourceFingerprint) }
+      : {}),
+    ...(typeof contract.sourceUnchanged === "boolean" ? { sourceUnchanged: contract.sourceUnchanged } : {}),
+    ...(typeof contract.staleToggleTargetMissing === "boolean" ? { staleToggleTargetMissing: contract.staleToggleTargetMissing } : {}),
+    ...(typeof contract.seededToggleProvenance === "string" ? { seededToggleProvenance: contract.seededToggleProvenance } : {}),
     expectedViewportNames: Array.isArray(contract.expectedViewportNames) ? contract.expectedViewportNames : [],
     observedViewportNames: Array.isArray(contract.observedViewportNames) ? contract.observedViewportNames : [],
     snapshotCount: typeof contract.snapshotCount === "number"
       ? contract.snapshotCount
       : Array.isArray(contract.snapshots) ? contract.snapshots.length : 0,
+    ...(typeof contract.perceptualBaselineCount === "number" ? { perceptualBaselineCount: contract.perceptualBaselineCount } : {}),
     ...(typeof contract.diagnosticCount === "number" ? { diagnosticCount: contract.diagnosticCount } : {}),
+    ...(typeof contract.renderThresholdMs === "number" ? { renderThresholdMs: contract.renderThresholdMs } : {}),
+    ...(typeof contract.maxRenderMs === "number" ? { maxRenderMs: contract.maxRenderMs } : {}),
+    ...(Array.isArray(contract.renderTimings)
+      ? {
+        renderTimings: contract.renderTimings.slice(0, 40).map((entry) => ({
+          viewport: entry?.viewport,
+          embeddedViews: entry?.embeddedViews,
+          rowsPerDatabase: entry?.rowsPerDatabase,
+          renderMs: entry?.renderMs
+        }))
+      }
+      : {}),
     snapshots: Array.isArray(contract.snapshots)
       ? contract.snapshots.slice(0, 12).map(summarizeArtifactSnapshot)
       : []
+  };
+}
+
+function isRealWorkspaceResult(result) {
+  return result?.sourceFingerprint?.kind === "lotion-real-workspace-fingerprint";
+}
+
+function summarizeRealWorkspaceEvidence(result) {
+  return {
+    sourceIdentity: {
+      workspaceName: result.sourceIdentity?.workspaceName,
+      directoryName: result.sourceIdentity?.directoryName
+    },
+    sourceFingerprint: summarizeWorkspaceFingerprint(result.sourceFingerprint),
+    cloneFingerprint: summarizeWorkspaceFingerprint(result.cloneFingerprint),
+    isolation: {
+      mode: result.isolation?.mode,
+      symlinksAllowed: result.isolation?.symlinksAllowed === true,
+      byteIdenticalAtClone: result.isolation?.byteIdenticalAtClone === true
+    },
+    sourceSafety: {
+      unchanged: result.sourceSafety?.unchanged === true,
+      before: summarizeWorkspaceFingerprint(result.sourceSafety?.before),
+      after: summarizeWorkspaceFingerprint(result.sourceSafety?.after)
+    },
+    viewports: Array.isArray(result.viewports) ? result.viewports.map((entry) => ({
+      viewport: entry?.viewport,
+      workspaceName: entry?.workspaceName,
+      activeWorkspaceWasClone: entry?.activeWorkspaceWasClone === true,
+      homeOpenMs: entry?.homeOpenMs,
+      databaseOpenMs: entry?.databaseOpenMs,
+      databaseState: {
+        rowCountText: entry?.databaseState?.rowCountText,
+        renderedRowCount: entry?.databaseState?.renderedRowCount,
+        firstRenderedRowId: entry?.databaseState?.firstRenderedRowId,
+        virtualSpacerCount: entry?.databaseState?.virtualSpacerCount,
+        virtualized: entry?.databaseState?.virtualized === true,
+        tableScrollHeight: entry?.databaseState?.tableScrollHeight,
+        tableClientHeight: entry?.databaseState?.tableClientHeight,
+        tableScrollTop: entry?.databaseState?.tableScrollTop,
+        documentHorizontalOverflowPx: entry?.databaseState?.documentHorizontalOverflowPx
+      }
+    })) : []
+  };
+}
+
+function summarizeWorkspaceFingerprint(fingerprint) {
+  if (!fingerprint || typeof fingerprint !== "object") return null;
+  return {
+    kind: fingerprint.kind,
+    workspaceName: fingerprint.workspaceName,
+    fileCount: fingerprint.fileCount,
+    directoryCount: fingerprint.directoryCount,
+    totalBytes: fingerprint.totalBytes,
+    sha256: fingerprint.sha256
   };
 }
 
@@ -937,10 +1116,13 @@ function summarizeArtifactSnapshot(snapshot) {
     "detailCount",
     "expectedTocItems",
     "headerActionCount",
+    "historyCount",
+    "diffLineCount",
     "historyItems",
     "issueRows",
     "loadMoreShown",
     "messageCount",
+    "openMs",
     "openedCount",
     "pathButtons",
     "phaseCount",
@@ -954,11 +1136,14 @@ function summarizeArtifactSnapshot(snapshot) {
     "surfaceCount",
     "viewportWidth",
     "visibleRowCount",
-    "tokenCount"
+    "tokenCount",
+    "toggleCount",
+    "loadedImageCount",
+    "documentHorizontalOverflowPx"
   ]) {
     if (typeof snapshot[key] === "number") summary[key] = snapshot[key];
   }
-  for (const key of ["phase", "activeTabText", "failText", "headerTitle", "rowCountText", "selectedSource"]) {
+  for (const key of ["phase", "activeTabText", "failText", "headerTitle", "rowCountText", "selectedSource", "previewLabel", "provenance", "title", "toggleSummary"]) {
     if (typeof snapshot[key] === "string" && snapshot[key]) summary[key] = snapshot[key];
   }
   if (snapshot.summary && typeof snapshot.summary === "object") {
@@ -967,13 +1152,41 @@ function summarizeArtifactSnapshot(snapshot) {
   if (snapshot.issueKinds && typeof snapshot.issueKinds === "object") {
     summary.issueKinds = sanitizeSummaryRecord(snapshot.issueKinds);
   }
+  if (snapshot.overlay && typeof snapshot.overlay === "object") {
+    summary.overlay = summarizeNotionImportOverlay(snapshot.overlay);
+  }
+  if (typeof snapshot.collapsed === "boolean") summary.collapsed = snapshot.collapsed;
+  if (typeof snapshot.reexpanded === "boolean") summary.reexpanded = snapshot.reexpanded;
   if (Array.isArray(snapshot.phases)) summary.phases = snapshot.phases;
   if (Array.isArray(snapshot.visibleTabs)) summary.visibleTabs = snapshot.visibleTabs;
   if (snapshot.previews && typeof snapshot.previews === "object") {
     summary.previews = snapshot.previews;
   }
   if (typeof snapshot.sourceHidden === "boolean") summary.sourceHidden = snapshot.sourceHidden;
+  if (snapshot.perceptualBaseline && typeof snapshot.perceptualBaseline === "object") {
+    summary.perceptualBaseline = summarizePerceptualBaseline(snapshot.perceptualBaseline);
+  }
   return summary;
+}
+
+function summarizePerceptualBaseline(baseline) {
+  return {
+    kind: baseline.kind,
+    status: baseline.status,
+    policyPath: baseline.policyPath,
+    actualPath: baseline.actualPath,
+    expectedPath: baseline.expectedPath,
+    diffPath: baseline.diffPath,
+    metadataPath: baseline.metadataPath,
+    dimensionsMatch: baseline.dimensionsMatch === true,
+    diffPixels: baseline.diffPixels,
+    diffRatio: baseline.diffRatio,
+    maxDiffPixels: baseline.maxDiffPixels,
+    maxDiffRatio: baseline.maxDiffRatio,
+    threshold: baseline.threshold,
+    includeAA: baseline.includeAA === true,
+    policy: baseline.policy && typeof baseline.policy === "object" ? baseline.policy : null
+  };
 }
 
 function sanitizeSummaryRecord(record) {
@@ -982,6 +1195,17 @@ function sanitizeSummaryRecord(record) {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       result[key] = value;
     }
+  }
+  return result;
+}
+
+function summarizeNotionImportOverlay(overlay) {
+  const result = {};
+  for (const key of ["ariaModal", "modalRole", "title"]) {
+    if (typeof overlay[key] === "string") result[key] = overlay[key];
+  }
+  for (const key of ["backdropCoversViewport", "centerInsideModal", "modalContainsPageTitle", "visible"]) {
+    if (typeof overlay[key] === "boolean") result[key] = overlay[key];
   }
   return result;
 }
@@ -1059,6 +1283,28 @@ function failureArtifactPaths(artifactRoot) {
     metadata: join(artifactRoot, "metadata.json"),
     readme: join(artifactRoot, "README.md")
   };
+}
+
+function startupFailureArtifactPaths(artifactRoot) {
+  return {
+    devLog: join(artifactRoot, "dev.log"),
+    error: join(artifactRoot, "error.txt"),
+    readme: join(artifactRoot, "README.md")
+  };
+}
+
+async function writeStartupFailureArtifacts({ artifactRoot, devLog, error, name }) {
+  const paths = startupFailureArtifactPaths(artifactRoot);
+  await writeFile(paths.devLog, devLog.join(""), "utf8");
+  await writeFile(paths.error, `${error?.stack || error?.message || String(error)}\n`, "utf8");
+  await writeFile(paths.readme, [
+    `# ${name} startup failure`,
+    "",
+    `- Error: ${error?.message || String(error)}`,
+    `- Dev log: ${paths.devLog}`,
+    `- Error stack: ${paths.error}`,
+    ""
+  ].join("\n"), "utf8");
 }
 
 async function stopDevProcess(child) {

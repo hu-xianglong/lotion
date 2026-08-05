@@ -9,8 +9,10 @@ export const DEFAULT_PRODUCTION_VISUAL_SCRIPTS = [
   "scripts/smoke-markdown-preview-ui.mjs",
   "scripts/smoke-embedded-view-ui.mjs",
   "scripts/smoke-database-created-views-ui.mjs",
+  "scripts/smoke-database-interaction-ui.mjs",
   "scripts/smoke-row-page-property-visual-ui.mjs",
   "scripts/smoke-page-secondary-ui.mjs",
+  "scripts/smoke-github-backup-ui.mjs",
   "scripts/smoke-notion-import-ui.mjs",
   "scripts/smoke-settings-center-ui.mjs",
   "scripts/smoke-plugin-manager-ui.mjs",
@@ -24,6 +26,75 @@ export const DEFAULT_PRODUCTION_VISUAL_FILTER = DEFAULT_PRODUCTION_VISUAL_SCRIPT
 
 export const DEFAULT_PRODUCTION_VISUAL_VIEWPORTS = "desktop,compact,wide:1728x1100";
 export const DEFAULT_PRODUCTION_VISUAL_VIEWPORT_NAMES = ["desktop", "compact", "wide"];
+
+export function uiSuiteHarnessConnection(scriptPath, sharedCdpUrl) {
+  const isolated = String(scriptPath).endsWith("smoke-search-ui.mjs");
+  return isolated
+    ? {
+      mode: "isolated",
+      env: {
+        LOTION_CDP_URL: "",
+        LOTION_UI_HARNESS_NO_AUTOSTART: "0"
+      }
+    }
+    : {
+      mode: "shared",
+      env: {
+        LOTION_CDP_URL: sharedCdpUrl,
+        LOTION_UI_HARNESS_NO_AUTOSTART: "1"
+      }
+    };
+}
+
+export const DEFAULT_PRODUCTION_PERCEPTUAL_BASELINES = [{
+  scriptPath: "scripts/smoke-design-system-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-white-theme-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-search-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-page-secondary-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-github-backup-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-notion-import-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-markdown-preview-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-row-page-property-visual-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-settings-center-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-plugin-manager-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-llm-chat-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-advanced-search-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-search-ai-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-embedded-view-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-database-created-views-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}, {
+  scriptPath: "scripts/smoke-database-interaction-ui.mjs",
+  viewportNames: ["desktop", "compact", "wide"]
+}];
 
 export function productionVisualViewportNamesFromSelection(selection = DEFAULT_PRODUCTION_VISUAL_VIEWPORTS) {
   const raw = String(selection || "").trim();
@@ -86,9 +157,11 @@ export function buildUiSuiteArtifactIndex(summary, {
 export function assertProductionVisualGateContract(index, {
   requiredSuiteScripts = DEFAULT_PRODUCTION_VISUAL_SCRIPTS,
   requiredViewportNames = DEFAULT_PRODUCTION_VISUAL_VIEWPORT_NAMES,
+  requiredPerceptualBaselines = DEFAULT_PRODUCTION_PERCEPTUAL_BASELINES,
   minImageBytesPerRequiredSnapshot = 512,
-  minSnapshotsPerRequiredSuite = 2
+  minSnapshotsPerRequiredSuite
 } = {}) {
+  const requiredSnapshotCount = minSnapshotsPerRequiredSuite ?? requiredViewportNames.length;
   const base = assertUiSuiteArtifactIndexContract(index, { requiredViewportNames });
   if (base.consoleErrorCount !== 0) {
     throw new Error(`Production visual gate found console errors: ${base.consoleErrorCount}`);
@@ -106,14 +179,21 @@ export function assertProductionVisualGateContract(index, {
     }
     assertProductionSuiteEvidence(suite, {
       minImageBytesPerRequiredSnapshot,
-      minSnapshotsPerRequiredSuite,
-      requiredViewportNames
+      minSnapshotsPerRequiredSuite: requiredSnapshotCount,
+      requiredViewportNames,
+      requiredPerceptualBaselineViewportNames: requiredPerceptualBaselines
+        .filter((entry) => normalizeScriptPath(entry.scriptPath) === script)
+        .flatMap((entry) => entry.viewportNames || [])
+        .filter((viewportName) => requiredViewportNames.includes(viewportName))
     });
     requiredSuites.push({
       name: suite.name,
       scriptPath: suite.scriptPath,
       snapshotCount: suite.artifactContract.snapshotCount,
       viewports: suite.observedViewportNames,
+      perceptualBaselines: suite.artifactContract.snapshots
+        .filter((snapshot) => snapshot.perceptualBaseline?.status === "passed")
+        .map((snapshot) => ({ viewport: snapshot.viewport, ...snapshot.perceptualBaseline })),
       reproduceCommand: suite.reproduceCommand,
       representativeSnapshotPaths: suite.artifactContract.representativeSnapshotPaths
     });
@@ -125,6 +205,7 @@ export function assertProductionVisualGateContract(index, {
     requiredViewportNames,
     snapshotCount: base.snapshotCount,
     imageBytesTotal: base.imageBytesTotal,
+    perceptualBaselineCount: requiredSuites.reduce((count, suite) => count + suite.perceptualBaselines.length, 0),
     suites: requiredSuites
   };
 }
@@ -163,7 +244,8 @@ export function assertUiSuiteArtifactIndexContract(index, {
 function assertProductionSuiteEvidence(suite, {
   minImageBytesPerRequiredSnapshot,
   minSnapshotsPerRequiredSuite,
-  requiredViewportNames
+  requiredViewportNames,
+  requiredPerceptualBaselineViewportNames
 }) {
   if (!suite.artifactContract) {
     throw new Error(`Production visual gate suite ${suite.name} is missing artifact contract evidence.`);
@@ -183,12 +265,33 @@ function assertProductionSuiteEvidence(suite, {
       throw new Error(`Production visual gate suite ${suite.name} has undersized ${viewportName} screenshot evidence: ${snapshot.imageBytes}`);
     }
     assertProductionSnapshotMetrics(snapshot, suite.name, viewportName);
+    if (requiredPerceptualBaselineViewportNames.includes(viewportName)) {
+      assertProductionPerceptualBaseline(snapshot.perceptualBaseline, suite.name, viewportName);
+    }
   }
   if (!suite.artifactContract.detailText) {
     throw new Error(`Production visual gate suite ${suite.name} has no readable artifact detail text.`);
   }
   if (!/^LOTION_UI_SUITE_FILTER=.+ npm run smoke:ui$/.test(suite.reproduceCommand)) {
     throw new Error(`Production visual gate suite ${suite.name} has no focused reproduce command: ${suite.reproduceCommand}`);
+  }
+}
+
+function assertProductionPerceptualBaseline(baseline, suiteName, viewportName) {
+  if (!baseline) {
+    throw new Error(`Production visual gate suite ${suiteName} lacks a committed perceptual baseline for ${viewportName}.`);
+  }
+  if (baseline.kind !== "lotion-png-visual-diff" || baseline.status !== "passed") {
+    throw new Error(`Production visual gate suite ${suiteName} has a failed perceptual baseline for ${viewportName}: ${JSON.stringify({ kind: baseline.kind, status: baseline.status })}`);
+  }
+  for (const key of ["policyPath", "actualPath", "expectedPath", "diffPath", "metadataPath"]) {
+    if (!baseline[key]) throw new Error(`Production visual gate suite ${suiteName} perceptual baseline is missing ${key} for ${viewportName}.`);
+  }
+  if (!baseline.dimensionsMatch || numeric(baseline.diffPixels) > numeric(baseline.maxDiffPixels) || numeric(baseline.diffRatio) > numeric(baseline.maxDiffRatio)) {
+    throw new Error(`Production visual gate suite ${suiteName} perceptual baseline exceeds tolerance for ${viewportName}: ${JSON.stringify(baseline)}`);
+  }
+  if (typeof baseline.policy?.theme !== "string" || baseline.policy.theme.trim() === "") {
+    throw new Error(`Production visual gate suite ${suiteName} perceptual baseline is missing theme evidence for ${viewportName}.`);
   }
 }
 
@@ -213,7 +316,10 @@ export async function writeUiSuiteArtifactIndex({ artifactRoot, summary }) {
   if (!artifactRoot) throw new Error("writeUiSuiteArtifactIndex requires artifactRoot");
   await mkdir(artifactRoot, { recursive: true });
   const index = buildUiSuiteArtifactIndex(summary);
-  const contract = assertUiSuiteArtifactIndexContract(index);
+  const selectedViewportNames = index.environment?.selectedViewportNames;
+  const contract = assertUiSuiteArtifactIndexContract(index, Array.isArray(selectedViewportNames) && selectedViewportNames.length > 0
+    ? { requiredViewportNames: selectedViewportNames }
+    : undefined);
   const jsonPath = join(artifactRoot, "ui-suite-artifacts.json");
   const markdownPath = join(artifactRoot, "ui-suite-artifacts.md");
   await writeFile(jsonPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
@@ -280,6 +386,7 @@ function suiteEntry(entry) {
     elapsedMs: typeof entry?.elapsedMs === "number" ? entry.elapsedMs : 0,
     reproduceCommand: String(entry?.reproduceCommand || manifest.reproduceCommand || ""),
     scriptPath: String(entry?.scriptPath || manifest.scriptPath || ""),
+    harnessMode: entry?.harnessMode === "isolated" ? "isolated" : "shared",
     manifestPath: String(manifest.path || ""),
     artifactRoot: String(manifest.artifactRoot || ""),
     observedViewportNames,
@@ -361,6 +468,7 @@ function artifactContractEntry(contract) {
     imagePath: String(snapshot?.imagePath || ""),
     metadataPath: String(snapshot?.metadataPath || ""),
     imageBytes: numeric(snapshot?.imageBytes),
+    perceptualBaseline: perceptualBaselineEntry(snapshot?.perceptualBaseline),
     details: snapshotDetails(snapshot)
   }));
   return {
@@ -368,11 +476,33 @@ function artifactContractEntry(contract) {
     expectedViewportNames: uniqueStrings(contract.expectedViewportNames),
     observedViewportNames: uniqueStrings(contract.observedViewportNames),
     snapshotCount: typeof contract.snapshotCount === "number" ? contract.snapshotCount : snapshots.length,
+    perceptualBaselineCount: mappedSnapshots.filter((snapshot) => snapshot.perceptualBaseline?.status === "passed").length,
     imageBytesTotal,
     detailText: summarizeSnapshotDetails(snapshots),
     representativeSnapshotPaths: uniqueStrings(mappedSnapshots.map((snapshot) => snapshot.imagePath)).slice(0, 3),
     screenshotViewportNames: uniqueStrings(mappedSnapshots.map((snapshot) => snapshot.viewport)),
     snapshots: mappedSnapshots
+  };
+}
+
+function perceptualBaselineEntry(baseline) {
+  if (!baseline || typeof baseline !== "object") return null;
+  return {
+    kind: String(baseline.kind || ""),
+    status: String(baseline.status || ""),
+    policyPath: String(baseline.policyPath || ""),
+    actualPath: String(baseline.actualPath || ""),
+    expectedPath: String(baseline.expectedPath || ""),
+    diffPath: String(baseline.diffPath || ""),
+    metadataPath: String(baseline.metadataPath || ""),
+    dimensionsMatch: baseline.dimensionsMatch === true,
+    diffPixels: numeric(baseline.diffPixels),
+    diffRatio: numeric(baseline.diffRatio),
+    maxDiffPixels: numeric(baseline.maxDiffPixels),
+    maxDiffRatio: numeric(baseline.maxDiffRatio),
+    threshold: numeric(baseline.threshold),
+    includeAA: baseline.includeAA === true,
+    policy: sanitizeDetailValue(baseline.policy) || null
   };
 }
 
@@ -491,6 +621,10 @@ function formatArtifactLinks(suite) {
   if (snapshotPaths.length > 0) {
     parts.push(`screenshots=${snapshotPaths.map((snapshotPath) => `\`${snapshotPath}\``).join(", ")}`);
   }
+  const perceptual = suite.artifactContract?.snapshots
+    ?.map((snapshot) => snapshot.perceptualBaseline)
+    .find((baseline) => baseline?.status === "passed");
+  if (perceptual) parts.push(`expected=\`${perceptual.expectedPath}\`; diff=\`${perceptual.diffPath}\`; diff metadata=\`${perceptual.metadataPath}\``);
   if (suite.failureArtifacts?.readme) parts.push(`failure=\`${suite.failureArtifacts.readme}\``);
   if (suite.failureArtifacts?.screenshot) parts.push(`failure screenshot=\`${suite.failureArtifacts.screenshot}\``);
   return parts.join("; ");
@@ -549,7 +683,7 @@ function snapshotDetails(snapshot) {
   if (!snapshot || typeof snapshot !== "object") return {};
   const details = {};
   for (const [key, value] of Object.entries(snapshot)) {
-    if (["imageBytes", "imagePath", "metadataPath", "viewport"].includes(key)) continue;
+    if (["imageBytes", "imagePath", "metadataPath", "perceptualBaseline", "viewport"].includes(key)) continue;
     const sanitized = sanitizeDetailValue(value);
     if (sanitized !== undefined) details[key] = sanitized;
   }
@@ -599,6 +733,8 @@ function summarizeSnapshotDetails(snapshots) {
       "searchAiPluginHosts",
       "messageCount",
       "historyItems",
+      "historyCount",
+      "diffLineCount",
       "rowCountText",
       "activeTabText",
       "visibleTabs",
@@ -610,6 +746,7 @@ function summarizeSnapshotDetails(snapshots) {
     ]) {
       if (details[key] !== undefined) summary.push(`${key}=${details[key]}`);
     }
+    if (details.previewLabel) summary.push(`previewLabel=${truncateOneLine(details.previewLabel, 80)}`);
     if (details.selectedSource) summary.push(`selectedSource=${truncateOneLine(details.selectedSource, 80)}`);
     if (details.summary && typeof details.summary === "object") {
       for (const key of ["Source CSVs", "Source HTMLs", "Imported mappings", "Issues", "Warnings"]) {

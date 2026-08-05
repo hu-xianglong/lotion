@@ -564,3 +564,18 @@ function makeCommitSha(seed: string): string {
   }
   return `mock-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
+
+// Serialization and URL helpers are exposed only for runtime regression
+// coverage; adapters remain the supported production API.
+export const gitHubBackupTestInternals = {
+  rowTitle,
+  stableJson,
+  sortJson,
+  parseRepository,
+  contentsUrl,
+  githubApiUrl,
+  parseGitHubResponse,
+  encodeBase64,
+  decodeBase64,
+  makeCommitSha
+};

@@ -2,14 +2,8 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  assertNoHarnessConsoleErrors,
-  readHarnessResultArtifactsSince,
-  selectedViewports,
-  setLotionLocale,
-  withLotionUIHarness
-} from "./ui-harness.mjs";
-import { writeUiSuiteArtifactIndex } from "./lib/ui-suite-artifacts.mjs";
+import { assertNoHarnessConsoleErrors, readHarnessResultArtifactsSince, selectedViewports, withLotionUIHarness } from "./ui-harness.mjs";
+import { uiSuiteHarnessConnection, writeUiSuiteArtifactIndex } from "./lib/ui-suite-artifacts.mjs";
 import { smokeTempWorkspaceNeedles } from "./smoke-workspace-utils.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -45,7 +39,21 @@ const suite = [
   ["Design system UI", "smoke-design-system-ui.mjs"],
   ["Image lightbox UI", "smoke-image-lightbox-ui.mjs"],
   ["Database created views UI", "smoke-database-created-views-ui.mjs"],
-  ["Copy system time UI", "smoke-copy-system-time-ui.mjs"],
+  ["Database interaction UI", "smoke-database-interaction-ui.mjs"],
+  ["Database settings menu UI", "smoke-database-settings-menu-ui.mjs"],
+  ["Database property manager UI", "smoke-database-property-manager-ui.mjs"],
+  ["Database property restore UI", "smoke-database-property-restore-ui.mjs"],
+  ["Database column menu UI", "smoke-database-column-menu-ui.mjs"],
+  ["Database filter expression UI", "smoke-database-filter-expression-ui.mjs"],
+  ["Database sort priority UI", "smoke-database-sort-priority-ui.mjs"],
+  ["Database row menu UI", "smoke-database-row-menu-ui.mjs"],
+  ["Database bulk selection UI", "smoke-database-bulk-selection-ui.mjs"],
+  ["Database grouping UI", "smoke-database-grouping-ui.mjs"],
+  ["Database page open UI", "smoke-database-page-open-ui.mjs"],
+  ["Database lock UI", "smoke-database-lock-ui.mjs"],
+  ["Database accessibility UI", "smoke-database-accessibility-ui.mjs"],
+  ["Database multi-view UI", "smoke-database-multi-view-ui.mjs"],
+  ["Database view menu UI", "smoke-database-view-menu-ui.mjs"],
   ["Window pop-out UI", "smoke-window-popout-ui.mjs"],
   ["Database template UI", "smoke-database-template-ui.mjs"]
 ];
@@ -72,15 +80,13 @@ const summary = await withLotionUIHarness("ui-suite", async ({ artifactRoot, cdp
   const results = [];
   for (const [name, script] of selectedSuite) {
     const started = Date.now();
-    await resetSharedHarnessState(page);
     console.log(`\n[smoke:ui] ${name}`);
+    const harnessConnection = uiSuiteHarnessConnection(script, cdpUrl);
     const result = spawnSync(process.execPath, [join(scriptDir, script)], {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        LOTION_CDP_URL: cdpUrl,
-        LOTION_RENDERER_COVERAGE_FILE: "",
-        LOTION_UI_HARNESS_NO_AUTOSTART: "1"
+        ...harnessConnection.env
       },
       encoding: "utf8",
       stdio: "inherit"
@@ -93,6 +99,7 @@ const summary = await withLotionUIHarness("ui-suite", async ({ artifactRoot, cdp
     results.push({
       name,
       elapsedMs,
+      harnessMode: harnessConnection.mode,
       reproduceCommand: `LOTION_UI_SUITE_FILTER=${script} npm run smoke:ui`,
       scriptPath: relative(process.cwd(), join(scriptDir, script)),
       status: result.status ?? 1,
@@ -111,7 +118,7 @@ const summary = await withLotionUIHarness("ui-suite", async ({ artifactRoot, cdp
   };
   summary.artifactIndex = await writeUiSuiteArtifactIndex({ artifactRoot, summary });
   return summary;
-}, { collectRendererCoverage: false });
+});
 
 console.log("\n[smoke:ui] passed");
 console.log(JSON.stringify(summary, null, 2));
@@ -126,31 +133,6 @@ function uniqueSuiteEntries(entries) {
     selected.push(entry);
   }
   return selected;
-}
-
-async function resetSharedHarnessState(page) {
-  let lastError;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => undefined);
-      await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 8_000 });
-      await setLotionLocale(page, "en");
-      await page.evaluate(() => window.localStorage.removeItem("lotion.debug.startupPhaseDelayMs"));
-      return;
-    } catch (error) {
-      lastError = error;
-      if (!isNavigationRace(error) || attempt === 4) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-  }
-  throw lastError;
-}
-
-function isNavigationRace(error) {
-  const message = String(error?.message || error || "");
-  return message.includes("Execution context was destroyed") ||
-    message.includes("most likely because of a navigation") ||
-    message.includes("ERR_NETWORK_CHANGED");
 }
 
 async function cleanupTempRecents(page) {

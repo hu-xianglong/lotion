@@ -8,6 +8,7 @@ import type {
   NotionAuditResult,
   NotionAuditSummary
 } from "../../shared/types.js";
+import { isValidDateValue, normalizeDateValue } from "../../shared/date-values.js";
 import { fileService } from "./file-service.js";
 
 interface AuditOptions {
@@ -926,7 +927,7 @@ class NotionAuditRunner {
       for (const field of dateFields) {
         const value = normalizeValue(row.record[field.id] ?? "");
         if (isBlank(value)) continue;
-        if (!canonicalDate(value)) {
+        if (!isValidDateValue(value)) {
           this.issue(
             "invalid_date_cell",
             imported.rel,
@@ -1275,11 +1276,7 @@ function isValidUrlCell(value: string): boolean {
 }
 
 function canonicalDate(value: string): string {
-  const simple = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(value);
-  if (simple) return `${simple[1]}-${simple[2].padStart(2, "0")}-${simple[3].padStart(2, "0")}`;
-  const parsed = Date.parse(value);
-  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
-  return "";
+  return normalizeDateValue(value);
 }
 
 function canonicalCheckbox(value: string): string {
@@ -1616,3 +1613,63 @@ function quote(value: string): string {
   const normalized = normalizeValue(value);
   return JSON.stringify(normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized);
 }
+
+// Pure audit normalization helpers are exposed only as an internal test
+// contract. The audit runner remains the production entry point.
+export const notionAuditTestInternals = {
+  formatKindSummary,
+  formatKindMarkdown,
+  formatItemsMarkdown,
+  sanitizeMarkdownCell,
+  normalizeAuditInput,
+  listFiles,
+  isSourceFileCandidate,
+  matchesSourceFilter,
+  uniqueCount,
+  htmlBodyText,
+  htmlNotionHash,
+  firstUsefulSnippet,
+  compatibleValue,
+  canonicalNumber,
+  isValidUrlCell,
+  canonicalDate,
+  canonicalCheckbox,
+  isCanonicalCheckboxCell,
+  normalizeValue,
+  normalizeText,
+  canonicalDisplayValue,
+  sameOptionSet,
+  optionSet,
+  optionCellValues,
+  canonicalOptionName,
+  decodeHtml,
+  parseCsv,
+  scoreCsvCandidate,
+  notionFileHash,
+  extractNotionHash,
+  sourceDatabasePath,
+  notionRelativePath,
+  logicalPath,
+  notionPathSegment,
+  stripNotionHash,
+  normalizePathSegments,
+  schemaPathSegments,
+  sameStringArray,
+  contentDigest,
+  sourceRowFingerprint,
+  importedRowFingerprint,
+  fingerprintValue,
+  titleMatchKey,
+  nextUnusedIndex,
+  normalizeNotionHash,
+  isAccountedImportReviewRecord,
+  parseEntityRefAuditValue,
+  extractHtmlResourceRefs,
+  decodeHtmlAttribute,
+  safeDecodeUri,
+  uniqueStrings,
+  pushMap,
+  uniqueBy,
+  isBlank,
+  quote
+};

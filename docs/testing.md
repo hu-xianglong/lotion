@@ -285,6 +285,31 @@ console errors, focused reproduce commands, and a machine-readable production
 gate result linked from the UI suite artifact index. This is narrower than the full
 `test:ui-regression` suite, but stricter about visual artifact completeness for
 the selected surfaces.
+It also runs `npm run test:renderer-coverage` before Electron. That gate uses
+V8 coverage plus the renderer component bundle source map to report all
+`src/renderer/**` source files, including files with zero executed lines. The
+machine-readable report is written to
+`artifacts/coverage/renderer/renderer-coverage-gate.json`, grouped by shared UI,
+database, page/editor, search, plugin-host, and renderer state surfaces. The
+gate canonicalizes macOS `/Users` and `/private/Users` source-map aliases,
+requires the canonical paths to equal the current TypeScript/TSX source
+inventory, and rejects incompatible non-zero aliases. Its artifacts record raw
+entry, canonical file, covered file, and alias counts so coverage identity is
+reviewable rather than inferred from a percentage.
+The
+current absolute floors are 30% lines/statements, 20% functions, and 55%
+branches. In addition, every run compares all four percentages with the
+committed verified baseline in `test/baselines/renderer-coverage.json` and
+fails on any decrease, even when the loose absolute floor still passes. The
+JSON/Markdown artifacts include the baseline path, verified source task,
+current values, and percentage-point deltas. Baseline updates must point to a
+new verified task and must not be used to accept an unexplained regression.
+These gates are not a claim that the longer-term 80% target has been reached.
+Override the absolute floors only for a deliberate
+diagnostic run with `LOTION_RENDERER_COVERAGE_LINES`,
+`LOTION_RENDERER_COVERAGE_STATEMENTS`,
+`LOTION_RENDERER_COVERAGE_FUNCTIONS`, or
+`LOTION_RENDERER_COVERAGE_BRANCHES`.
 For a focused debug pass, set `LOTION_UI_VIEWPORTS=desktop` or a named custom
 viewport such as `LOTION_UI_VIEWPORTS=review:1280x900`; the production visual
 contract will require the selected viewport names while the default release gate
@@ -319,7 +344,10 @@ npm run smoke:advanced-search-ui
 npm run smoke:url-field-ui
 npm run smoke:white-theme-ui
 npm run smoke:design-system-ui
+npm run smoke:real-demo-workspace-ui
+npm run smoke:real-notion-import-ui
 npm run smoke:image-lightbox-ui
+npm run test:renderer-coverage
 ```
 
 ### Shared UI Harness
@@ -358,6 +386,27 @@ surface through the shared Electron harness, covers desktop and compact
 viewports, checks focus and horizontal overflow, validates tokenized white
 surfaces, and writes review screenshots under `artifacts/ui-smoke/`.
 
+Run `npm run smoke:real-demo-workspace-ui` for the isolated real Lotion Demo
+Space quality pass. It fingerprints the complete source, rejects symlinks,
+creates a copy-on-write temporary clone, and only opens that clone in Electron.
+The runner verifies Home plus the real 500K-row database on desktop and compact,
+including latency, bounded rendered rows, virtual spacers, horizontal overflow,
+console errors, and four screenshots. Its `harness-result.json` stores redacted
+source/clone fingerprints, pre/post source equality, per-viewport stress
+metrics, and the reproduce command. Set `LOTION_REAL_WORKSPACE_PATH` only when
+testing an equivalent workspace at a non-default location; the path itself is
+never persisted in the result summary.
+
+Run `npm run smoke:real-notion-import-ui` for the isolated real Notion Import
+quality pass. It applies the same complete fingerprint, symlink rejection, and
+copy-on-write clone boundary, then checks the native Chinese vision-check row,
+an exact importer-regression toggle/media page seeded only in the disposable
+clone, and the real Notion Import modal on desktop and compact. The artifact
+contract records the stale source-page absence, seed provenance, toggle
+collapse/re-expand and loaded-image evidence, modal ownership, six screenshots,
+zero-overflow measurements, and pre/post source equality without persisting the
+source path.
+
 `withLotionUIHarness` fails by default when renderer `console.error` or
 `pageerror` events are observed. Use `failOnConsoleErrors: false` only for a
 diagnostic smoke that intentionally exercises this path, and record the reason
@@ -367,9 +416,139 @@ emits a renderer console error and verifies the failed manifest plus
 
 For visual-regression slices, use `captureElementSnapshot` with
 `assertElementSnapshotBaseline` so screenshots are paired with a CI-readable
-manifest check for viewport, geometry range, and required metadata. Pixel-level
-diffing can be layered on later; the manifest gate should catch obvious layout
-drift without requiring manual screenshot inspection.
+manifest check for viewport, geometry range, and required metadata. For a
+stable, intentionally reviewed surface, also call `assertPngVisualBaseline`
+from `scripts/lib/visual-diff.mjs` with the actual screenshot, committed
+expected baseline, diff path, pixel threshold, and allowed diff ratio. It
+writes a PNG diff plus machine-readable JSON for both passing and failing
+comparisons; failures retain paths to actual, expected, diff, and metadata
+artifacts. Run `npm run test:visual-diff` when changing this policy. The
+production visual command runs these contract tests before launching Electron.
+
+The Design System desktop, compact, and wide surfaces are committed production
+baselines. Their reviewed 912x908, 744x1991, and 912x908 PNGs plus
+checksum-backed policies live under `test/baselines/production-visual/`. The
+real Design System smoke compares all three element screenshots at a strict
+zero-pixel tolerance and
+records policy, actual, expected, diff, and diff-metadata paths in the child
+manifest, aggregate UI index, production visual gate, and release summary.
+Default production runs fail if any required evidence is absent or any
+committed PNG checksum changes. Custom diagnostic viewports retain structural
+contracts until separately reviewed stable baselines are accepted.
+
+The White Theme suite also commits the deterministic main-page phase at
+desktop, compact, and wide. Search, database, and LLM plugin phases remain
+separate structural/theme screenshots. Before the page capture, the runner
+blurs asynchronous editor focus, resets hidden programmatic scroll containers,
+and waits for the collapsed floating TOC transition to settle; the artifact
+contract records the zero scroll offsets and collapsed TOC state. The three
+`white-theme-page-*.json` policies use strict zero perceptual-diff thresholds
+and are required by the default production and release evidence.
+
+The unified Settings Center commits its final Plugins state for desktop,
+compact, and wide. The runner waits for the active-tab CSS transition to
+finish, removes transient focus, verifies all seven plugin rows are fully
+inside the captured center, and records zero nav/pane scroll offsets. It also
+proves the Search & AI `Advanced` tab was visible and enabled before opening
+its settings deep link. The three `settings-center-*.json` policies are strict
+zero-diff production requirements.
+
+The Plugin Manager also commits its complete final list surface at desktop,
+compact, and wide. Before capture, the runner resets the owning management
+scroller, proves all seven plugin rows, all fourteen provider icons, the
+summary, and the last extension-point section are inside the manager, then
+temporarily exposes the full overflow surface. This avoids a stable but invalid
+scroll-container screenshot where the tab strip hid the title/summary and most
+providers while leaving a blank tail. The original inline styles are restored
+after capture. The three `plugin-manager-*.json` policies require strict zero
+diffs in child, production, and release evidence.
+
+The LLM Chat suite commits its completed conversation/write-preview phase at
+desktop, compact, and wide. The runner records transcript client/scroll
+geometry plus each message's bounds and requires both the user and assistant
+messages to be fully visible. On short viewports the assistant uses a wider,
+height-aware layout so history, controls, one-line quick actions/activity,
+the full two-line write preview, status, and composer do not collapse the
+transcript. Snapshot capture also removes transient hover/focus, waits for
+animations and two paint frames, and uses integer-aligned header metrics.
+The three `llm-chat-conversation-*.json` policies require strict zero
+perceptual diffs in child, production, and release evidence.
+
+The Advanced Search suite commits its populated stale-result phase at desktop,
+compact, and wide. The runner records the results viewport's client, scroll,
+and offset geometry plus every result card's bounds and full-visibility state.
+Its responsive control grid stays two-column while the 860px modal fits,
+preventing the compact 1040x820 layout from pushing both results below the
+modal boundary. Snapshot capture removes transient pointer/focus state and
+waits for animations and two paint frames. The three
+`advanced-search-stale-results-*.json` policies require strict zero perceptual
+diffs in child, production, and release evidence.
+
+The unified Search & AI suite commits its populated LLM Chat handoff state at
+desktop, compact, and wide. Search-result and selected-source subtitles use
+logical page/database/row identity and never render workspace storage paths,
+CSV/Markdown filenames, or embedded entity IDs. The runner records the active
+primary tab, both tab bounds, selected-source title/subtitle/overflow geometry,
+and any visible storage-identity matches. Snapshot capture removes transient
+pointer/focus state and waits for animations and two paint frames. The three
+`search-ai-chat-handoff-*.json` policies require strict zero perceptual diffs
+in child, production, and release evidence.
+
+The global-search suite commits its populated 10,000-result state at desktop,
+compact, and wide. The filter strip wraps rather than horizontally clipping
+the trailing sort control. The runner records the panel, filter strip, all six
+filters, sort label/select, results viewport, and visible-row bounds; it rejects
+filter/sort overlap, controls outside their owning surface, or horizontal
+filter overflow. Snapshot capture removes transient pointer/focus state and
+waits for animations and two paint frames. The three
+`global-search-results-*.json` policies require strict zero perceptual diffs in
+child, production, and release evidence.
+
+The Page Secondary suite commits a selected local Git restore-preview at
+desktop, compact, and wide, while retaining the supplemental laptop viewport
+as structural coverage. Each fixture is a real temporary Git repository with
+two deterministic page revisions. The smoke selects the older revision,
+captures the logical `Page snapshot · …` label, added/removed diff lines and
+Restore action, accepts the confirmation, then proves the restored Markdown
+persisted and the success message survived the history refresh. Backlink
+excerpts render Markdown labels without internal destinations. The artifact
+contract records status/version/preview/Restore geometry, expansion,
+visibility, opacity, overflow, and storage-leak matches. The three
+`page-history-restore-preview-*.json` policies require strict zero perceptual
+diffs in child, production, and release evidence.
+
+The GitHub Backup suite commits the complete local-mock restore-preview modal
+at desktop, compact, and wide. Each run creates two backups, replaces transient
+commit time/SHA display with deterministic fixture evidence, selects the older
+version, and captures the connection form, backed-up status, two-version
+history, logical `Page snapshot · …` identity, diff, and Restore action. The
+runtime contract separately proves the modal stays inside the viewport, the
+backdrop owns the viewport, the modal body owns vertical scrolling, and the
+selected preview controls are visible before restore. It then accepts the
+confirmation, verifies persisted Markdown and preview clearing, and exercises
+the GitHub API not-configured state. The three
+`github-backup-restore-preview-*.json` policies require strict zero perceptual
+diffs in child, production, and release evidence.
+
+The Notion Import audit suite commits the empty-import command modal at desktop,
+compact, and wide while preserving its passing and blocking audit scenarios.
+The modal contract records title, Close, all three checked import options, both
+source selectors, Cancel, and the initially disabled Scan exports action. It
+requires positive geometry for every control, containment in its owning
+surface, dialog/backdrop isolation, viewport containment, modal-body vertical
+scroll ownership, visible/opaque content, and no horizontal overflow. The three
+`notion-import-command-modal-*.json` policies require strict zero perceptual
+diffs in child, production, and release evidence.
+
+The Markdown Preview suite commits the imported-highlight selected-source state
+at desktop, compact, and wide. Before capture, the runner proves the exact DOM
+selection and raw Markdown source are present, the selected line/highlight/Edit
+source button have positive geometry inside the editor and scroller, neither
+the selection nor highlight overlaps Edit source, and document/editor
+horizontal overflow is absent. It also keeps the hover-only button visible and
+hides only the owning scroller's transient scrollbar during capture. The three
+`markdown-preview-selected-source-*.json` policies require strict zero
+perceptual diffs in child, aggregate production, and release evidence.
 
 Run `npm run smoke:row-page-property-visual-ui` for the focused row-page
 property visual lab. It creates a deterministic workspace with Original Notion
@@ -377,7 +556,20 @@ HTML/CSV source links, date fields, empty values, entity refs, select/tag
 pills, number/text fields, and checkboxes. The smoke captures desktop and
 compact screenshots plus DOM geometry metadata so source-link affordances,
 value-column alignment, focus behavior, and no-overflow regressions can be
-reviewed from CI artifacts.
+reviewed from CI artifacts. Production runs also include wide.
+
+The complete row-property capture resets the row-page and details scroll
+owners, temporarily exposes the full details overflow surface, forces a repaint,
+and restores the original scroll/style state after capture. This prevents a
+compact false positive where the 52vh details viewport clipped the first rows
+and the transparent screenshot showed the page title instead. The persisted
+contract requires panel/content/properties ownership, all twelve row and
+label/value geometries, important source/input/option/search/entity control
+geometries, visibility/opacity, non-overlap, and zero horizontal overflow.
+Selected values remain colored pills; their per-value search actions are
+separate muted `⌕ + value` controls with verified click and keyboard behavior.
+The three `row-page-property-panel-*.json` policies are strict zero-diff
+production and release requirements.
 
 The row-page property visual smoke also writes a machine-readable artifact
 contract into `harness-result.json`. The contract checks that every configured
@@ -385,7 +577,8 @@ viewport produced a non-empty screenshot and metadata for source links, date
 rows, empty values, entity refs, row count, source-open captures, focus
 summaries, and value-column alignment. Run
 `node --test test/ui-harness-artifacts.test.mjs` when changing this contract or
-the shared screenshot helpers.
+the shared screenshot helpers. Set `LOTION_ROW_PROPERTY_SKIP_BASELINE=1` only
+while intentionally preparing a reviewed replacement baseline.
 
 The aggregate `npm run smoke:ui` runner also checks that each selected child
 smoke emits a passed `harness-result.json` with all required viewport presets
@@ -472,6 +665,22 @@ covers, or embedded blocks:
 
 When changing `lotion-view`, page rendering, database cache, or view host code:
 
+- Run `npm run smoke:embedded-view-ui`. The default production lane exercises
+  1/3/10 embedded views with 500 rows per database, verifies render latency,
+  default `Name`/`Notes`/`Score` order, Open/Refresh/Settings semantics and
+  scoped settings traversal, persisted 20/50/100 pagination, and the visible
+  `Load 50 more` affordance.
+- Its representative screenshot is a deterministic complete-table capture:
+  title/subtitle, view tabs, sticky column header, rows 0-7, summary, and the
+  real `100 of 500 rows` footer are required to be visible, opaque, owned by
+  their expected containers, non-overlapping, and inside the viewport.
+  Virtualized spacer rows and rows after the first eight are hidden only during
+  capture; runtime pagination and performance assertions still use the full
+  dataset.
+- Desktop, compact, and wide `embedded-view-table-*.png` baselines are
+  checksum-backed and require zero differing pixels in the default production
+  gate. Set `LOTION_EMBEDDED_VIEW_SKIP_BASELINE=1` only while intentionally
+  preparing and manually reviewing replacement baselines.
 - Open `Home` and verify multiple embedded table views render.
 - Open `Database Lab` and verify embedded editable tables still work.
 - Open `Status Board` for stress-style embedded views.
@@ -486,6 +695,34 @@ When changing `lotion-view`, page rendering, database cache, or view host code:
 When changing database storage, field editors, CSV parsing, formulas, row pages,
 or schema handling:
 
+- Run `node scripts/smoke-database-created-views-ui.mjs` when changing generated
+  views or view persistence. It verifies that `Created date asc` and
+  `Created date desc` are created exactly once, keyboard/click switching
+  produces the expected row order, the active descending view survives reload,
+  serialized filter/resize mutations converge across surfaces, and injected
+  write failures roll back.
+- After failure verification, the smoke explicitly clears the test filter and
+  reloads before visual capture. The complete-surface contract requires the
+  database title/subtitle, properties, all three view tabs, active descending
+  state, toolbar actions, table header, newest/middle/oldest rows, summaries,
+  and `3 of 3 rows` footer to remain visible, opaque, correctly owned,
+  non-overlapping, clean of popovers/errors, and inside the viewport.
+- Reviewed `database-created-views-{desktop,compact,wide}.png` baselines are
+  checksum-backed and permit zero differing pixels. Use
+  `LOTION_DATABASE_CREATED_VIEWS_SKIP_BASELINE=1` only while intentionally
+  preparing and reviewing a replacement.
+- Run `node scripts/smoke-database-interaction-ui.mjs` for the integrated
+  settings/filter/sort lane. It waits for the database service and a standalone
+  `Tasks` table before interacting, verifies direct-tab and compact
+  overflow-menu view switching, persistence/reload and stale-revision conflict
+  behavior, and records first-paint/menu/save/switch timings.
+- All three settings/filter/sort screenshots wait until their surface
+  animations have finished. Their contracts require the surface, phase-specific
+  controls, owning standalone table, and active `Default` tab to be visible,
+  opaque, correctly owned, non-overlapping, and within the viewport. The
+  Settings scope screenshot is the representative committed baseline for each
+  viewport; use `LOTION_DATABASE_INTERACTION_SKIP_BASELINE=1` only during
+  intentional baseline review.
 - Open `Field Type Lab` and edit each supported field type.
 - Add a row, edit a cell, and delete a non-critical row in `Tasks`.
 - Rename a non-system column and confirm `schema.json` changes while CSV
@@ -598,6 +835,25 @@ Look specifically for:
 - Tables or plugin views collapsing to zero height in embedded contexts.
 - Layout shifting while hovering, editing, or switching views.
 - Empty states, loading states, and error states that still fit the UI.
+
+### Production Visual Gates
+
+- Run `npm run test:production-visual` for the portable deterministic
+  PR/release visual gate. It does not require private local workspaces.
+- Run `npm run test:production-visual:nightly` for the full local deep gate.
+  It requires the named `Lotion Demo Space` and `Notion Import` workspaces,
+  runs both through isolated byte-identical clones, and fails instead of
+  silently skipping when either prerequisite is unavailable.
+- Override the default real-workspace locations with
+  `LOTION_REAL_DEMO_WORKSPACE_PATH` and
+  `LOTION_REAL_NOTION_WORKSPACE_PATH` when needed.
+- Review the generated
+  `artifacts/ui-smoke/production-visual-nightly-*/production-visual-nightly.md`
+  matrix for fixture/workspace, theme, viewport, screenshot, baseline mode,
+  status, and reproduce-command evidence.
+- Portable deterministic surfaces use committed perceptual baselines. Private
+  real-workspace screenshots use structural contracts and source-safety
+  fingerprints; they are not committed as portable baselines.
 
 ## Handoff Checklist
 

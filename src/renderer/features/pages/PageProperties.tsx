@@ -1,12 +1,63 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PageMeta } from "../../../shared/types";
 import { useI18n } from "../../lib/i18n";
 import { WorkspaceLinkButton } from "./PropertyLinks";
 
 interface PagePropertiesProps {
   meta: PageMeta;
-  onChange: (input: { tags?: string[]; date?: string; url?: string }) => void;
+  onChange: (input: PagePropertyInput) => Promise<void> | void;
   onSearchTag?: (tag: string) => void;
+}
+
+export type PagePropertyInput = { tags?: string[]; date?: string; url?: string };
+export type PagePropertyMutationState =
+  | { status: "idle" }
+  | { status: "pending"; input: PagePropertyInput }
+  | { status: "error"; input: PagePropertyInput; error: string };
+
+export function createPagePropertyMutationController(
+  operation: (input: PagePropertyInput) => Promise<void>,
+  onState: (state: PagePropertyMutationState) => void
+) {
+  let active = false;
+  let failedInput: PagePropertyInput | null = null;
+
+  const submit = async (input: PagePropertyInput): Promise<"submitted" | "failed" | "ignored"> => {
+    if (active || failedInput) return "ignored";
+    active = true;
+    onState({ status: "pending", input });
+    try {
+      await operation(input);
+      onState({ status: "idle" });
+      return "submitted";
+    } catch (error) {
+      failedInput = input;
+      onState({ status: "error", input, error: normalizePagePropertyError(error) });
+      return "failed";
+    } finally {
+      active = false;
+    }
+  };
+
+  return {
+    submit,
+    retry: async (): Promise<"submitted" | "failed" | "ignored"> => {
+      if (active || !failedInput) return "ignored";
+      const input = failedInput;
+      failedInput = null;
+      return submit(input);
+    },
+    dismiss: (): boolean => {
+      if (active || !failedInput) return false;
+      failedInput = null;
+      onState({ status: "idle" });
+      return true;
+    }
+  };
+}
+
+function normalizePagePropertyError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -25,6 +76,17 @@ export function PageProperties({ meta, onChange, onSearchTag }: PagePropertiesPr
   const [tagsText, setTagsText] = useState((meta.tags ?? []).join(", "));
   const [date, setDate] = useState(meta.date ?? "");
   const [url, setUrl] = useState(meta.url ?? "");
+  const [mutation, setMutation] = useState<PagePropertyMutationState>({ status: "idle" });
+  const operationRef = useRef(onChange);
+  operationRef.current = onChange;
+  const controllerRef = useRef<ReturnType<typeof createPagePropertyMutationController> | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createPagePropertyMutationController(
+      async (input) => operationRef.current(input),
+      setMutation
+    );
+  }
+  const blocked = mutation.status !== "idle";
 
   // Re-sync from props when navigating between pages — otherwise the
   // input keeps the previous page's text.
@@ -41,15 +103,15 @@ export function PageProperties({ meta, onChange, onSearchTag }: PagePropertiesPr
       .filter(Boolean);
     const previous = (meta.tags ?? []).join(",");
     if (previous === tags.join(",")) return;
-    onChange({ tags });
+    void controllerRef.current?.submit({ tags });
   }
   function commitDate() {
     if ((meta.date ?? "") === date) return;
-    onChange({ date });
+    void controllerRef.current?.submit({ date });
   }
   function commitUrl() {
     if ((meta.url ?? "") === url) return;
-    onChange({ url });
+    void controllerRef.current?.submit({ url });
   }
 
   return (
@@ -64,6 +126,7 @@ export function PageProperties({ meta, onChange, onSearchTag }: PagePropertiesPr
             className="page-property-input"
             value={tagsText}
             placeholder={t("cell.empty")}
+            disabled={blocked}
             onChange={(e) => setTagsText(e.target.value)}
             onBlur={commitTags}
             onKeyDown={(e) => {
@@ -78,6 +141,7 @@ export function PageProperties({ meta, onChange, onSearchTag }: PagePropertiesPr
           className="page-property-input"
           value={date}
           placeholder={t("cell.empty")}
+          disabled={blocked}
           onChange={(e) => setDate(e.target.value)}
           onBlur={commitDate}
           onKeyDown={(e) => {
@@ -92,8 +156,22 @@ export function PageProperties({ meta, onChange, onSearchTag }: PagePropertiesPr
           placeholder={t("cell.empty")}
           onChange={setUrl}
           onCommit={commitUrl}
+          disabled={blocked}
         />
       </PropertyField>
+
+      {mutation.status === "error" ? (
+        <div className="database-mutation-toast page-property-feedback error" role="alert" aria-live="assertive">
+          <span>Page properties failed to save: {mutation.error}</span>
+          <button type="button" onClick={() => { void controllerRef.current?.retry(); }}>Retry</button>
+          <button type="button" onClick={() => {
+            if (!controllerRef.current?.dismiss()) return;
+            setTagsText((meta.tags ?? []).join(", "));
+            setDate(meta.date ?? "");
+            setUrl(meta.url ?? "");
+          }}>Discard changes</button>
+        </div>
+      ) : null}
 
       {meta.originalNotionHtml ? (
         <PropertyField label="Original Notion HTML" icon={<LinkIcon />}>
@@ -142,7 +220,7 @@ function PageTagSearchChips({ tags, onSearchTag }: { tags: string[]; onSearchTag
           }}
         >
           <span className="row-property-option-search-glyph" aria-hidden="true">⌕</span>
-          <span className="option-pill muted">{tag}</span>
+          <span className="row-property-option-search-label">{tag}</span>
         </button>
       ))}
     </span>
@@ -153,12 +231,14 @@ function PageUrlProperty({
   value,
   placeholder,
   onChange,
-  onCommit
+  onCommit,
+  disabled = false
 }: {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
   onCommit: () => void;
+  disabled?: boolean;
 }) {
   const raw = value.trim();
   const href = normalizeUrlForOpen(raw);
@@ -184,6 +264,7 @@ function PageUrlProperty({
         type="url"
         value={value}
         placeholder="https://"
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         onBlur={onCommit}
         onKeyDown={(event) => {
@@ -193,7 +274,7 @@ function PageUrlProperty({
       <button
         type="button"
         className="url-cell-open"
-        disabled={!href}
+        disabled={disabled || !href}
         title={href || placeholder || "Open URL"}
         aria-label="Open URL"
         onMouseDown={(event) => event.preventDefault()}

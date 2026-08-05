@@ -644,3 +644,16 @@ function gitEnvironment(settings: GitSyncSettings): NodeJS.ProcessEnv | undefine
 function quoteSshCommandArg(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
+
+// Pure Git parsing and validation helpers are exposed only as an internal
+// test contract. GitService remains the production API.
+export const gitServiceTestInternals = {
+  parseGitHistory,
+  diffGitPageHistoryLines,
+  normalizeWorkspaceRelativeGitPath,
+  normalizeGitObjectName,
+  parsePorcelainStatus,
+  parseBranchLine,
+  gitEnvironment,
+  quoteSshCommandArg
+};

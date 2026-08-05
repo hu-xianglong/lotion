@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { AppConfigService } from "./services/app-config-service.js";
 import { AttachmentService } from "./services/attachment-service.js";
 import { DatabaseService } from "./services/database-service.js";
@@ -7,10 +8,10 @@ import { NotionImportService } from "./services/notion-import-service.js";
 import type { NotionImportOptions, NotionImportProgressCallback } from "./services/notion-import-service.js";
 import { runNotionAudit } from "./services/notion-audit-service.js";
 import { PageService } from "./services/page-service.js";
+import { PagesDatabaseService } from "./services/pages-database-service.js";
 import { RowPagesService } from "./services/row-pages-service.js";
 import { SearchService } from "./services/search-service.js";
 import { WorkspaceService } from "./services/workspace-service.js";
-import { fileService } from "./services/file-service.js";
 import type {
   AddFieldInput,
   CopyFieldToSystemTimeInput,
@@ -31,10 +32,12 @@ import type {
   FavoriteItem,
   NotionAuditInput,
   NotionAuditResult,
+  PatchViewInput,
+  PatchViewResult,
+  ReorderViewsInput,
   PageDocument,
   PageMeta,
   PagesTree,
-  PagesTreeDatabaseFolder,
   RecentItem,
   RecentItemInput,
   RowPageDocument,
@@ -43,6 +46,7 @@ import type {
   SetRowPageFullWidthInput,
   SetRowPageSmallTextInput,
   SpaceManifest,
+  StartupWorkspaceIndex,
   TableView,
   UpdateCellInput,
   UpdateDatabaseMetaInput,
@@ -60,10 +64,14 @@ import {
 import type { LotionApiMetricsApi } from "../shared/customer-api-contract.js";
 import type { SearchQueryOptions, SearchResult } from "./services/search-service.js";
 import type { NotionImportResult, NotionScanResult } from "./services/notion-import-service.js";
+import { StartupIndexCacheService } from "./services/startup-index-cache-service.js";
 
 export const LOTION_CUSTOMER_API_VERSION = "1.0";
 
-export type LotionCustomerApiConfig = Pick<AppConfigService, "load" | "save" | "touch" | "forget">;
+export type LotionCustomerApiConfig = (
+  Pick<AppConfigService, "load" | "save" | "touch" | "forget">
+  & Partial<Pick<AppConfigService, "localCacheRoot">>
+);
 
 export interface LotionCustomerApiOptions {
   workspace?: WorkspaceService;
@@ -77,6 +85,8 @@ export interface LotionCustomerApi {
     open(path: string): Promise<SpaceManifest>;
     getManifest(): Promise<SpaceManifest>;
     getPagesTree(): Promise<PagesTree>;
+    getStartupIndex(): Promise<StartupWorkspaceIndex>;
+    listRowPageFiles(databaseId: string): Promise<string[]>;
     reorderPages(ids: string[]): Promise<SpaceManifest>;
     reorderDatabases(ids: string[]): Promise<SpaceManifest>;
     listFavorites(): Promise<FavoriteItem[]>;
@@ -115,6 +125,8 @@ export interface LotionCustomerApi {
     create(input: CreateViewInput): Promise<DatabaseBundle>;
     duplicate(input: DuplicateViewInput): Promise<DatabaseBundle>;
     update(input: UpdateViewInput): Promise<DatabaseBundle>;
+    patch(input: PatchViewInput): Promise<PatchViewResult>;
+    reorder(input: ReorderViewsInput): Promise<DatabaseBundle>;
     delete(input: DeleteViewInput): Promise<DatabaseBundle>;
     setDefault(input: SetDefaultViewInput): Promise<DatabaseBundle>;
   };
@@ -139,7 +151,7 @@ export interface LotionCustomerApi {
     backlinks(id: string): Promise<EntityBacklink[]>;
   };
   notion: {
-    scan(sourcePaths: string | string[]): Promise<NotionScanResult>;
+    scan(folderPaths: string | string[]): Promise<NotionScanResult>;
     runImport(payload: {
       sourcePath?: string;
       sourcePaths?: string[];
@@ -154,11 +166,22 @@ export interface LotionCustomerApi {
 }
 
 export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}): LotionCustomerApi {
-  const appConfig = (options.appConfig ?? noopAppConfig()) as AppConfigService;
+  const suppliedConfig = options.appConfig ?? noopAppConfig();
+  const appConfig = suppliedConfig as AppConfigService;
+  const localCacheRoot = suppliedConfig.localCacheRoot?.()
+    ?? join(tmpdir(), "lotion-customer-api-cache", String(process.pid));
   const workspace = options.workspace ?? new WorkspaceService(appConfig);
-  const pages = new PageService(workspace);
-  const databases = new DatabaseService(workspace);
-  const rowPages = new RowPagesService(workspace, databases);
+  const pageRecords = new PagesDatabaseService(workspace);
+  const pages = new PageService(workspace, pageRecords);
+  const databases = new DatabaseService(workspace, pageRecords);
+  const startupIndex = new StartupIndexCacheService(
+    workspace,
+    pages,
+    databases,
+    pageRecords,
+    localCacheRoot
+  );
+  const rowPages = new RowPagesService(workspace, databases, pageRecords);
   databases.setRowPagesService(rowPages);
   const attachments = new AttachmentService(workspace);
   const search = new SearchService(workspace);
@@ -172,7 +195,9 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
       createAt: (root, input) => workspace.createAt(root, input),
       open: (path) => workspace.open(path),
       getManifest: () => workspace.getManifest(),
-      getPagesTree: () => getPagesTree(workspace, pages, databases),
+      getPagesTree: () => getPagesTree(pages, databases, pageRecords),
+      getStartupIndex: () => startupIndex.load(),
+      listRowPageFiles: (databaseId) => startupIndex.listRowPageFiles(databaseId),
       reorderPages: (ids) => workspace.reorderPages(ids),
       reorderDatabases: (ids) => workspace.reorderDatabases(ids),
       listFavorites: () => workspace.listFavorites(),
@@ -211,6 +236,8 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
       create: (input) => databases.createView(input),
       duplicate: (input) => databases.duplicateView(input),
       update: (input) => databases.updateView(input.databaseId, input.view),
+      patch: (input) => databases.patchView(input),
+      reorder: (input) => databases.reorderViews(input),
       delete: (input) => databases.deleteView(input),
       setDefault: (input) => databases.setDefaultView(input)
     },
@@ -235,7 +262,7 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
       backlinks: (id) => entities.backlinks(id)
     },
     notion: {
-      scan: (sourcePaths) => notion.scan(sourcePaths),
+      scan: (folderPaths) => notion.scan(folderPaths),
       runImport: (payload) => notion.runImport(
         payload.sourcePaths?.length ? payload.sourcePaths : payload.sourcePath ?? "",
         payload.targetPath,
@@ -262,27 +289,23 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
 }
 
 async function getPagesTree(
-  workspace: WorkspaceService,
   pages: PageService,
-  databases: DatabaseService
+  databases: DatabaseService,
+  pageRecords: PagesDatabaseService
 ): Promise<PagesTree> {
   const [topLevelPages, summaries] = await Promise.all([pages.list(), databases.list()]);
-  const folders = await Promise.all(summaries.map(async (summary): Promise<PagesTreeDatabaseFolder> => {
-    let fileNames: string[] = [];
-    try {
-      const dir = workspace.requirePaths().rowPagesDir(summary.id);
-      const entries = await fileService.readDir(dir);
-      fileNames = entries.filter((entry) => entry.endsWith(".md")).sort();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    return { databaseId: summary.id, name: summary.name, fileNames };
+  const filesByDatabase = await pageRecords.listRowPageFilesByDatabase(summaries.map((summary) => summary.id));
+  const folders = summaries.map((summary) => ({
+    databaseId: summary.id,
+    name: summary.name,
+    fileNames: filesByDatabase.get(summary.id) ?? []
   }));
   return { topLevelPages, databases: folders };
 }
 
 function noopAppConfig(): AppConfigService {
   return {
+    localCacheRoot: () => join(tmpdir(), "lotion-customer-api-cache", String(process.pid)),
     load: async () => ({ active: null, recents: [], gitSyncByWorkspace: {} }),
     save: async () => undefined,
     touch: async () => undefined,

@@ -18,6 +18,7 @@ import {
   writeCsv,
   writeJson
 } from "./ui-harness.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import { assertWhiteThemeArtifactContract } from "./lib/white-theme-artifacts.mjs";
 
 const EXPECTED = {
@@ -28,7 +29,8 @@ const EXPECTED = {
   shell: "#f3f4f0",
   rule: "#e6e8e2",
   ruleStrong: "#d3d8cf",
-  accent: "#5067a5"
+  accent: "#5067a5",
+  themeAccent: "#2f557f"
 };
 
 const result = await withLotionUIHarness("white-theme-ui", async ({ artifactRoot, cdpUrl, openWorkspace, page }) => {
@@ -41,15 +43,37 @@ const result = await withLotionUIHarness("white-theme-ui", async ({ artifactRoot
     await openPage(page, fixture.pageId);
     await waitForWhiteThemePage(page, fixture.pageTitle);
 
-    const pageState = await assertPageTheme(page, viewport.name);
-    const pageSnapshot = await captureElementSnapshot({
-      artifactRoot,
-      locator: page.locator(".app-shell").first(),
-      metadata: { phase: "page", pageState },
-      name: `white-theme-page-${viewport.name}`,
-      page,
-      viewport
-    });
+    const scrollState = await stabilizeWhiteThemePage(page);
+    const pageState = {
+      ...await assertPageTheme(page, viewport.name),
+      scrollState
+    };
+    await prepareWhiteThemePageSnapshot(page);
+    let pageSnapshot;
+    try {
+      pageSnapshot = await captureElementSnapshot({
+        artifactRoot,
+        locator: page.locator(".app-shell").first(),
+        metadata: { phase: "page", pageState },
+        name: `white-theme-page-${viewport.name}`,
+        page,
+        viewport
+      });
+    } finally {
+      await restoreWhiteThemePageSnapshot(page);
+    }
+    const pageBaselinePolicy = {
+      compact: "test/baselines/production-visual/white-theme-page-compact.json",
+      desktop: "test/baselines/production-visual/white-theme-page-desktop.json",
+      wide: "test/baselines/production-visual/white-theme-page-wide.json"
+    }[viewport.name];
+    const pagePerceptualBaseline = pageBaselinePolicy && process.env.LOTION_WHITE_THEME_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: pageSnapshot.imagePath,
+        artifactRoot,
+        policyPath: pageBaselinePolicy
+      })
+      : null;
 
     const searchState = await assertSearchTheme(page, viewport.name);
     const searchSnapshot = await captureElementSnapshot({
@@ -88,7 +112,7 @@ const result = await withLotionUIHarness("white-theme-ui", async ({ artifactRoot
     await page.waitForSelector(".openai-llm-assistant-shell", { state: "detached", timeout: 5_000 });
 
     const snapshots = [
-      snapshotEntry("page", pageSnapshot, pageState),
+      snapshotEntry("page", pageSnapshot, pageState, pagePerceptualBaseline),
       snapshotEntry("search", searchSnapshot, searchState),
       snapshotEntry("database", databaseSnapshot, databaseState),
       snapshotEntry("plugin", pluginSnapshot, pluginState)
@@ -113,18 +137,22 @@ const result = await withLotionUIHarness("white-theme-ui", async ({ artifactRoot
   return {
     ...summary,
     artifactContract: await assertWhiteThemeArtifactContract(summary, {
-      expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+      expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+      requiredPerceptualBaselineViewportNames: process.env.LOTION_WHITE_THEME_SKIP_BASELINE === "1"
+        ? []
+        : expectedViewports.map((viewport) => viewport.name)
     })
   };
 });
 
 console.log(JSON.stringify(result, null, 2));
 
-function snapshotEntry(phase, snapshot, state) {
+function snapshotEntry(phase, snapshot, state, perceptualBaseline = null) {
   return {
     phase,
     imagePath: snapshot.imagePath,
     metadataPath: snapshot.metadataPath,
+    ...(perceptualBaseline ? { perceptualBaseline } : {}),
     state
   };
 }
@@ -141,6 +169,91 @@ async function waitForWhiteThemePage(page, pageTitle) {
       editor.textContent?.includes(title)
     );
   }, pageTitle, { timeout: 20_000 });
+}
+
+async function stabilizeWhiteThemePage(page) {
+  await page.waitForFunction(() => {
+    const host = document.querySelector(".cm-md-floating-toc-host");
+    if (!(host instanceof HTMLElement) || !host.classList.contains("cm-md-toc-collapsed")) return false;
+    const borderColor = getComputedStyle(host).borderLeftColor;
+    return borderColor === "transparent" || /rgba\([^)]*,\s*0\)$/.test(borderColor);
+  }, undefined, { timeout: 5_000 });
+  const state = await page.evaluate(async () => {
+    const selectors = [".main-content", ".page-editor"];
+    for (let frame = 0; frame < 3; frame += 1) {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (element instanceof HTMLElement) element.scrollTop = 0;
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    const scrollTop = Object.fromEntries(selectors.map((selector) => {
+      const element = document.querySelector(selector);
+      return [selector, element instanceof HTMLElement ? element.scrollTop : null];
+    }));
+    const toc = document.querySelector(".cm-md-floating-toc-host");
+    return {
+      scrollTop,
+      floatingToc: toc instanceof HTMLElement
+        ? {
+          borderLeftColor: getComputedStyle(toc).borderLeftColor,
+          collapsed: toc.classList.contains("cm-md-toc-collapsed"),
+          width: toc.getBoundingClientRect().width
+        }
+        : null
+    };
+  });
+  const unstable = Object.entries(state.scrollTop).filter(([, scrollTop]) => scrollTop !== 0);
+  if (unstable.length > 0) {
+    throw new Error(`White Theme page scroll did not stabilize: ${JSON.stringify(state)}`);
+  }
+  if (state.floatingToc?.collapsed !== true) {
+    throw new Error(`White Theme page floating TOC did not stabilize: ${JSON.stringify(state.floatingToc)}`);
+  }
+  return state;
+}
+
+async function prepareWhiteThemePageSnapshot(page) {
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await page.waitForFunction(() => {
+    const addCover = document.querySelector(".page-header-addition.page-add-cover");
+    return !(addCover instanceof HTMLElement) || Number(getComputedStyle(addCover).opacity) === 0;
+  }, null, { timeout: 2_000 });
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.setAttribute("data-white-theme-page-snapshot-style", "true");
+    style.textContent = `
+      .app-shell,
+      .app-shell * {
+        -webkit-font-smoothing: antialiased !important;
+        font-feature-settings: normal !important;
+        font-kerning: none !important;
+        font-optical-sizing: none !important;
+        font-variant-ligatures: none !important;
+        text-rendering: geometricPrecision !important;
+      }
+      .main-content,
+      .page-editor {
+        scrollbar-width: none !important;
+      }
+      .main-content::-webkit-scrollbar,
+      .page-editor::-webkit-scrollbar {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function restoreWhiteThemePageSnapshot(page) {
+  await page.evaluate(() => {
+    for (const style of document.querySelectorAll("[data-white-theme-page-snapshot-style]")) style.remove();
+  });
 }
 
 async function assertPageTheme(page, viewportName) {
@@ -165,11 +278,11 @@ async function assertPageTheme(page, viewportName) {
   assertBackground(state.surfaces.html, EXPECTED.sand, "html");
   assertBackground(state.surfaces.sidebar, EXPECTED.sand, "sidebar");
   assertBackground(state.surfaces.mainArea, EXPECTED.paper, "main area");
-  assertBackground(state.surfaces.tabStrip, EXPECTED.sand, "tab strip");
+  assertBackgroundNear(state.surfaces.tabStrip, EXPECTED.sand, "tab strip", 3);
   assertBackground(state.surfaces.activeTab, EXPECTED.paper, "active tab");
   assertBackground(state.surfaces.searchBox, "transparent", "search box");
   assertBorderColor(state.surfaces.searchBox, "transparent", "search box");
-  assertTextColor(state.surfaces.activeNavIcon, "#4c5049", "active nav icon");
+  assertTextColor(state.surfaces.activeNavIcon, EXPECTED.themeAccent, "active nav icon");
   const editorChrome = await page.evaluate(() => ({
     gutterCount: document.querySelectorAll('[data-testid="markdown-editor"] .cm-gutters').length,
     lineNumberCount: document.querySelectorAll('[data-testid="markdown-editor"] .cm-lineNumbers').length
@@ -275,7 +388,8 @@ async function readThemeState(page, selectors) {
         shell: root.getPropertyValue("--shell").trim(),
         rule: root.getPropertyValue("--rule").trim(),
         ruleStrong: root.getPropertyValue("--rule-strong").trim(),
-        accent: root.getPropertyValue("--accent").trim()
+        accent: root.getPropertyValue("--accent").trim(),
+        themeAccent: root.getPropertyValue("--theme-accent").trim()
       },
       surfaces: Object.fromEntries(Object.entries(targetSelectors).map(([key, selector]) => {
         const element = document.querySelector(selector);
@@ -285,6 +399,7 @@ async function readThemeState(page, selectors) {
         return [key, {
           selector,
           backgroundColor: style.backgroundColor,
+          backgroundImage: style.backgroundImage,
           borderColor: style.borderColor,
           color: style.color,
           outlineColor: style.outlineColor,
@@ -314,9 +429,18 @@ function assertTokens(tokens) {
 function assertBackground(surface, expected, label) {
   if (!surface) throw new Error(`Missing ${label} surface.`);
   const actual = normalizeColor(surface.backgroundColor);
-  if (actual !== expected) {
+  const paintedByGradient = expected !== "transparent" && actual === "transparent" && backgroundImageIncludesColor(surface.backgroundImage, expected);
+  if (actual !== expected && !paintedByGradient) {
     throw new Error(`Expected ${label} background ${expected}, got ${surface.backgroundColor} (${actual})`);
   }
+}
+
+function backgroundImageIncludesColor(backgroundImage, expected) {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(expected);
+  if (!hex) return false;
+  const rgb = hex.slice(1).map((part) => Number.parseInt(part, 16));
+  const normalized = String(backgroundImage ?? "").replace(/\s+/g, "").toLowerCase();
+  return normalized.includes(`rgb(${rgb.join(",")})`) || normalized.includes(`rgba(${rgb.join(",")},1)`);
 }
 
 function assertBorderColor(surface, expected, label) {
@@ -324,6 +448,16 @@ function assertBorderColor(surface, expected, label) {
   const actual = normalizeColor(surface.borderColor);
   if (actual !== expected) {
     throw new Error(`Expected ${label} border ${expected}, got ${surface.borderColor} (${actual})`);
+  }
+}
+
+function assertBackgroundNear(surface, expected, label, tolerance) {
+  if (!surface) throw new Error(`Missing ${label} surface.`);
+  const actual = normalizeColor(surface.backgroundColor);
+  const actualChannels = hexChannels(actual);
+  const expectedChannels = hexChannels(expected);
+  if (!actualChannels || !expectedChannels || actualChannels.some((channel, index) => Math.abs(channel - expectedChannels[index]) > tolerance)) {
+    throw new Error(`Expected ${label} background near ${expected}, got ${surface.backgroundColor} (${actual})`);
   }
 }
 
@@ -355,10 +489,24 @@ function normalizeColor(value) {
   const hex = /^#([0-9a-f]{6})$/.exec(text);
   if (hex) return `#${hex[1]}`;
   const rgb = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([.\d]+))?\)$/.exec(text);
-  if (!rgb) return text;
+  if (!rgb) {
+    const srgb = /^color\(srgb\s+([.\d]+)\s+([.\d]+)\s+([.\d]+)(?:\s*\/\s*([.\d]+))?\)$/.exec(text);
+    if (!srgb) return text;
+    if (srgb[4] !== undefined && Number(srgb[4]) === 0) return "transparent";
+    return rgbToHex(srgb.slice(1, 4).map((component) => Math.round(Number(component) * 255)));
+  }
   const alpha = rgb[4] === undefined ? 1 : Number(rgb[4]);
   if (alpha === 0) return "transparent";
-  return `#${[rgb[1], rgb[2], rgb[3]].map((part) => Number(part).toString(16).padStart(2, "0")).join("")}`;
+  return rgbToHex([Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]);
+}
+
+function rgbToHex(channels) {
+  return `#${channels.map((component) => component.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function hexChannels(value) {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value);
+  return match ? match.slice(1).map((component) => Number.parseInt(component, 16)) : null;
 }
 
 async function createWhiteThemeFixture(viewportName) {

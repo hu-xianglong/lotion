@@ -74,6 +74,31 @@ function assertEditorViewport(entry, viewportName) {
   if (!normal.lotionCalloutFence?.rendered || !normal.lotionViewFence?.rendered || !normal.markdownTableSyntax?.rendered) {
     throw new Error(`Editor regression ${viewportName} missing rendered block evidence`);
   }
+  for (const [scope, recovery] of [
+    ["normal page", normal.layoutRecovery],
+    ["empty row page", empty.layoutRecovery]
+  ]) {
+    if (typeof recovery?.retryMessage !== "string" || recovery.retryMessage.length === 0
+      || typeof recovery?.discardMessage !== "string" || recovery.discardMessage.length === 0) {
+      throw new Error(`Editor regression ${viewportName} missing ${scope} layout recovery messages`);
+    }
+    for (const key of [
+      "failedValueRolledBack",
+      "retainedDraft",
+      "competingControlsBlocked",
+      "duplicateRetrySuppressed",
+      "retryPersistedExactInput",
+      "discardFailureRolledBack",
+      "discardedDraftRetained",
+      "discardPreservedStoredValue",
+      "discardResetDraft",
+      "baselineStateRestored"
+    ]) {
+      if (recovery[key] !== true) {
+        throw new Error(`Editor regression ${viewportName} ${scope} layout recovery failed ${key}: ${JSON.stringify(recovery)}`);
+      }
+    }
+  }
 
   const beforeScroll = large.beforeScroll || {};
   const afterScroll = large.afterScroll || {};

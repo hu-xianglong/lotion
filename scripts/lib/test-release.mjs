@@ -247,6 +247,14 @@ async function collectProductionVisualGateSummary(root, manifestPath) {
       filter: gate.filter || "",
       kind: gate.kind || "lotion-production-visual-quality-gate",
       path: relative(root, gatePath).replaceAll("\\", "/"),
+      rendererCoverage: gate.rendererCoverage ? {
+        ...gate.rendererCoverage,
+        path: gate.rendererCoverage.path
+          ? relative(root, resolvePathMaybeAbsolute(root, gate.rendererCoverage.path)).replaceAll("\\", "/")
+          : null
+      } : null,
+      perceptualBaselineCount: Number(gate.contract?.perceptualBaselineCount || 0),
+      perceptualBaselines: collectPerceptualBaselineSummaries(root, gate.contract),
       status: gate.status || "unknown",
       uiSuiteArtifactIndex: gate.uiSuiteArtifactIndex
         ? relative(root, resolvePathMaybeAbsolute(root, gate.uiSuiteArtifactIndex)).replaceAll("\\", "/")
@@ -258,11 +266,37 @@ async function collectProductionVisualGateSummary(root, manifestPath) {
       filter: "",
       kind: "lotion-production-visual-quality-gate",
       path: relative(root, gatePath).replaceAll("\\", "/"),
+      rendererCoverage: null,
+      perceptualBaselineCount: 0,
+      perceptualBaselines: [],
       status: "unreadable",
       uiSuiteArtifactIndex: null,
       viewports: ""
     };
   }
+}
+
+function collectPerceptualBaselineSummaries(root, contract) {
+  return (Array.isArray(contract?.suites) ? contract.suites : []).flatMap((suite) =>
+    (Array.isArray(suite?.perceptualBaselines) ? suite.perceptualBaselines : []).map((baseline) => ({
+      suite: suite.name || "",
+      scriptPath: suite.scriptPath || "",
+      viewport: baseline.viewport || "",
+      status: baseline.status || "unknown",
+      diffPixels: Number(baseline.diffPixels || 0),
+      policyPath: normalizeArtifactPath(root, baseline.policyPath),
+      actualPath: normalizeArtifactPath(root, baseline.actualPath),
+      expectedPath: normalizeArtifactPath(root, baseline.expectedPath),
+      diffPath: normalizeArtifactPath(root, baseline.diffPath),
+      metadataPath: normalizeArtifactPath(root, baseline.metadataPath)
+    }))
+  );
+}
+
+function normalizeArtifactPath(root, filePath) {
+  return filePath
+    ? relative(root, resolvePathMaybeAbsolute(root, filePath)).replaceAll("\\", "/")
+    : null;
 }
 
 function resolvePathMaybeAbsolute(root, filePath) {

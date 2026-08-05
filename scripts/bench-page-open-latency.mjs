@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -19,6 +19,9 @@ const warmThresholdMs = Number(process.env.LOTION_PAGE_OPEN_WARM_THRESHOLD_MS ??
 const backlinkBuildThresholdMs = Number(process.env.LOTION_BACKLINK_BUILD_THRESHOLD_MS ?? 1000);
 const backlinkWarmThresholdMs = Number(process.env.LOTION_BACKLINK_WARM_THRESHOLD_MS ?? 60);
 const backlinkWarmStatThreshold = Number(process.env.LOTION_BACKLINK_WARM_STAT_THRESHOLD ?? 0);
+const backlinkDiskReloadThresholdMs = Number(process.env.LOTION_BACKLINK_DISK_RELOAD_THRESHOLD_MS ?? 100);
+const backlinkDiskReloadStatThreshold = Number(process.env.LOTION_BACKLINK_DISK_RELOAD_STAT_THRESHOLD ?? 0);
+const backlinkLargePersistedSourceCount = Number(process.env.LOTION_BACKLINK_LARGE_PERSISTED_SOURCES ?? 43_000);
 const iterations = Number(process.env.LOTION_PAGE_OPEN_ITERATIONS ?? 8);
 
 const root = await mkdtemp(join(tmpdir(), "lotion-page-open-bench-"));
@@ -74,6 +77,18 @@ try {
     }
     if (summary.backlinks.warmStatCalls > backlinkWarmStatThreshold) {
       throw new Error(`Backlink warm lookups made ${summary.backlinks.warmStatCalls} file stat calls, expected <= ${backlinkWarmStatThreshold}`);
+    }
+    if (summary.backlinks.diskReloadMs > backlinkDiskReloadThresholdMs) {
+      throw new Error(`Backlink persisted-cache reload ${summary.backlinks.diskReloadMs}ms exceeds ${backlinkDiskReloadThresholdMs}ms`);
+    }
+    if (summary.backlinks.diskReloadStatCalls > backlinkDiskReloadStatThreshold) {
+      throw new Error(`Backlink persisted-cache reload made ${summary.backlinks.diskReloadStatCalls} source stat calls, expected <= ${backlinkDiskReloadStatThreshold}`);
+    }
+    if (summary.backlinks.largePersistedReloadMs > backlinkDiskReloadThresholdMs) {
+      throw new Error(`Backlink ${summary.backlinks.largePersistedSourceCount}-source persisted-cache reload ${summary.backlinks.largePersistedReloadMs}ms exceeds ${backlinkDiskReloadThresholdMs}ms`);
+    }
+    if (summary.backlinks.largePersistedStatCalls > backlinkDiskReloadStatThreshold) {
+      throw new Error(`Backlink ${summary.backlinks.largePersistedSourceCount}-source persisted-cache reload made ${summary.backlinks.largePersistedStatCalls} source stat calls, expected <= ${backlinkDiskReloadStatThreshold}`);
     }
   }
 } finally {
@@ -182,6 +197,21 @@ async function benchBacklinks(fixture, iterations) {
   fileService.clearCache();
   const firstMs = await timeBacklinks(entities, fixture.targetId);
   const targetCount = (await entities.backlinks(fixture.targetId)).length;
+  const diskReload = new EntitiesDatabaseService(fixture.workspace);
+  const originalDiskStat = fileService.stat.bind(fileService);
+  let diskReloadStatCalls = 0;
+  fileService.stat = async (...statArgs) => {
+    diskReloadStatCalls += 1;
+    return originalDiskStat(...statArgs);
+  };
+  let diskReloadMs;
+  try {
+    diskReloadMs = await timeBacklinks(diskReload, fixture.targetId);
+  } finally {
+    fileService.stat = originalDiskStat;
+    diskReload.dispose();
+  }
+  const largePersisted = await benchLargePersistedBacklinkCache(fixture, backlinkLargePersistedSourceCount);
   const warm = [];
   const originalStat = fileService.stat.bind(fileService);
   let warmStatCalls = 0;
@@ -210,8 +240,50 @@ async function benchBacklinks(fixture, iterations) {
     lightWarmMedianMs: median(lightWarm),
     lightWarmMaxMs: Math.max(...lightWarm),
     warmStatCalls,
+    diskReloadMs,
+    diskReloadStatCalls,
+    largePersistedSourceCount: largePersisted.sourceCount,
+    largePersistedReloadMs: largePersisted.reloadMs,
+    largePersistedStatCalls: largePersisted.statCalls,
     cacheStats: entities.backlinkCacheStats()
   };
+}
+
+async function benchLargePersistedBacklinkCache(fixture, sourceCount) {
+  const cachePath = join(fixture.workspace.requirePaths().root, ".lotion-cache", "backlinks.json");
+  const originalCache = await readFile(cachePath, "utf8");
+  const payload = JSON.parse(originalCache);
+  const markdownTemplate = Object.values(payload.sourceContributions).find((entry) => entry.kind === "markdown");
+  if (!markdownTemplate) throw new Error("Backlink benchmark cache has no Markdown contribution template");
+  const directory = markdownTemplate.path.slice(0, markdownTemplate.path.lastIndexOf("/") + 1);
+  for (let index = Object.keys(payload.sourceContributions).length; index < sourceCount; index += 1) {
+    const path = `${directory}Synthetic_${index}--pg_synthetic_${index}.md`;
+    payload.sourceContributions[`markdown:${path}`] = {
+      kind: "markdown",
+      path,
+      backlinks: [],
+      markdownLinkCount: 0,
+      propertyCellCount: 0
+    };
+  }
+  payload.sourceCount = sourceCount;
+  await writeFile(cachePath, `${JSON.stringify(payload)}\n`, "utf8");
+  fileService.clearCache();
+  const entities = new EntitiesDatabaseService(fixture.workspace);
+  const originalStat = fileService.stat.bind(fileService);
+  let statCalls = 0;
+  fileService.stat = async (...statArgs) => {
+    statCalls += 1;
+    return originalStat(...statArgs);
+  };
+  try {
+    return { sourceCount, reloadMs: await timeBacklinks(entities, fixture.targetId), statCalls };
+  } finally {
+    fileService.stat = originalStat;
+    entities.dispose();
+    await writeFile(cachePath, originalCache, "utf8");
+    fileService.clearCache();
+  }
 }
 
 async function timeBacklinks(entities, id) {

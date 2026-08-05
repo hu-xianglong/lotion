@@ -3,10 +3,31 @@
   "databaseId": "db_tasks",
   "name": "Default",
   "type": "table",
-  "visibleFieldIds": ["title", "status", "priority", "tags", "due_date", "effort", "done", "score"],
-  "fieldOrder": ["title", "status", "priority", "tags", "due_date", "effort", "done", "score"],
+  "visibleFieldIds": [
+    "title",
+    "status",
+    "priority",
+    "tags",
+    "due_date",
+    "effort",
+    "done",
+    "score"
+  ],
+  "fieldOrder": [
+    "title",
+    "due_date",
+    "status",
+    "tags",
+    "done",
+    "priority",
+    "score",
+    "effort"
+  ],
   "sorts": [
-    { "fieldId": "due_date", "direction": "asc" }
+    {
+      "fieldId": "due_date",
+      "direction": "asc"
+    }
   ],
   "filters": []
 }

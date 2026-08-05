@@ -3,10 +3,23 @@
   "databaseId": "db_csv_edges",
   "name": "Default",
   "type": "table",
-  "visibleFieldIds": ["title", "note", "amount", "checked"],
-  "fieldOrder": ["title", "note", "amount", "checked"],
+  "visibleFieldIds": [
+    "title",
+    "note",
+    "amount",
+    "checked"
+  ],
+  "fieldOrder": [
+    "title",
+    "note",
+    "checked",
+    "amount"
+  ],
   "sorts": [
-    { "fieldId": "amount", "direction": "desc" }
+    {
+      "fieldId": "amount",
+      "direction": "desc"
+    }
   ],
   "filters": []
 }

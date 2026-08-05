@@ -71,6 +71,10 @@ async function exerciseNormalPageEditing(page, fixture, viewport) {
   await page.locator(".title-input").first().waitFor({ timeout: 60_000 });
   await waitForTitleValue(page, fixture.mainTitle);
   await assertEditorLayout(page, `normal-${viewport.name}`);
+  const layoutRecovery = await exercisePageLayoutRecovery(page, {
+    label: `normal page ${viewport.name}`,
+    target: { type: "page", pageId: fixture.mainPageId }
+  });
   const tagSearch = await exercisePageTagSearchChip(page, {
     tag: fixture.mainPageTag,
     label: `normal page tag ${viewport.name}`
@@ -507,6 +511,7 @@ async function exerciseNormalPageEditing(page, fixture, viewport) {
 
   return {
     firstToken,
+    layoutRecovery,
     selectionReplacement,
     mergedLine,
     switchContinuation,
@@ -1429,7 +1434,7 @@ async function exerciseNotionHtmlColorClassPaste(page, fixture, viewport) {
     throw new Error(`${label} leaked inactive color span source markers: ${JSON.stringify(rendered)}`);
   }
 
-  await selectEditorTextWithSearch(page, highlightText);
+  await selectRenderedTextForVisualContract(page, highlightText, ".cm-md-notion-bg-yellow");
   const selectedHighlight = await line.evaluate((element, expectedHighlight) => {
     const target = Array.from(element.querySelectorAll(".cm-md-notion-bg-yellow"))
       .find((node) => (node.textContent ?? "").includes(expectedHighlight));
@@ -1438,7 +1443,7 @@ async function exerciseNotionHtmlColorClassPaste(page, fixture, viewport) {
       found: Boolean(target),
       editorHasSelection: Boolean(element.closest(".cm-editor")?.classList.contains("cm-md-has-selection")),
       backgroundColor: style?.backgroundColor ?? "",
-      selectedText: window.__lotionEditorSelectionText ?? ""
+      selectedText: window.getSelection()?.toString() ?? ""
     };
   }, highlightText);
   if (!selectedHighlight.found
@@ -1447,8 +1452,11 @@ async function exerciseNotionHtmlColorClassPaste(page, fixture, viewport) {
     || !/^(?:transparent|rgba?\(0,\s*0,\s*0(?:,\s*0)?\))$/.test(selectedHighlight.backgroundColor)) {
     throw new Error(`${label} selected highlight should not obscure the native selection: ${JSON.stringify(selectedHighlight)}`);
   }
+  await page.evaluate(() => {
+    document.querySelector(".cm-editor")?.classList.remove("cm-md-has-selection");
+    window.getSelection()?.removeAllRanges();
+  });
 
-  await page.keyboard.press("Escape");
   await moveToDocumentEnd(page);
   await page.keyboard.press("Enter");
   await page.keyboard.type(afterText);
@@ -3178,7 +3186,7 @@ async function exerciseMarkdownLinkClickEditing(page, fixture, viewport) {
 
     results.internal = await assertDirectClickOpensLinkAndBlankClickEdits(page, fixture, {
       label: `internal ${viewport.name}`,
-      visibleText: fixture.secondaryTitle,
+      visibleText: fixture.internalLinkLabel,
       editToken: ` internal${viewport.name}`,
       expectTitle: fixture.mainTitle,
       expectNavigationTitle: fixture.secondaryTitle
@@ -4370,8 +4378,8 @@ async function exerciseLotionIframeFence(page, fixture, viewport) {
 
 async function exerciseLotionToggleFence(page, fixture, viewport) {
   const token = `${viewport.name}-${Date.now()}`;
-  const toggleImagePath = `attachments/toggle-${token}.png`;
-  await writeFile(join(fixture.root, toggleImagePath), Buffer.from(
+  const toggleAttachmentPath = `attachments/toggle-${token}.png`;
+  await writeFile(join(fixture.root, toggleAttachmentPath), Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU4Y7wAAAABJRU5ErkJggg==",
     "base64"
   ));
@@ -4408,7 +4416,7 @@ async function exerciseLotionToggleFence(page, fixture, viewport) {
       `| Toggle table ${token} | 42 |`
     ].join("\n"),
     "---",
-    `![Toggle image ${token}](${toggleImagePath})`,
+    `![Toggle image ${token}](${toggleAttachmentPath})`,
     `[Toggle link ${token}](https://example.com/toggle/${token})`,
     nestedCode,
     nestedToggle,
@@ -5306,6 +5314,10 @@ async function exerciseEmptyRowPageFirstTyping(page, fixture, viewport) {
   await page.keyboard.press("Enter");
   const editor = editorContent(page);
   await editor.waitFor({ timeout: 8_000 });
+  const layoutRecovery = await exercisePageLayoutRecovery(page, {
+    label: `empty row page ${viewport.name}`,
+    target: { type: "row_page", databaseId: fixture.databaseId, rowId: fixture.emptyRowId }
+  });
   const smallText = await exercisePageSmallTextSetting(page, {
     label: `empty row page ${viewport.name}`,
     target: { type: "row_page", databaseId: fixture.databaseId, rowId: fixture.emptyRowId }
@@ -5322,8 +5334,126 @@ async function exerciseEmptyRowPageFirstTyping(page, fixture, viewport) {
   await waitForSmallTextClass(page, true, `empty row page reload ${viewport.name}`);
   return {
     firstTyping,
+    layoutRecovery,
     smallText,
     markdownLength: markdown.length
+  };
+}
+
+async function exercisePageLayoutRecovery(page, { label, target }) {
+  const alert = page.locator('.page-layout-feedback[role="alert"]');
+  const menuToggle = page.locator(".page-options-toggle").first();
+  const menu = page.locator(".page-action-menu").first();
+  const ensureMenuOpen = async () => {
+    if (!await menu.isVisible().catch(() => false)) await menuToggle.click();
+    await menu.waitFor({ state: "visible", timeout: 5_000 });
+  };
+  const setting = (pattern) => menu.locator("[role='menuitemcheckbox']").filter({ hasText: pattern }).first();
+  const readStored = () => page.evaluate(async (target) => {
+    const doc = target.type === "page"
+      ? await window.lotion.pages.get(target.pageId)
+      : await window.lotion.rowPages.open(target.databaseId, target.rowId);
+    return {
+      fullWidth: Boolean(doc?.meta?.fullWidth),
+      smallText: Boolean(doc?.meta?.smallText)
+    };
+  }, target);
+  const injectFailure = (message) => page.evaluate(({ target, message }) => {
+    if (target.type === "page") {
+      window.lotion.debug.failNextPageMetadataWrite(message);
+    } else {
+      window.lotion.debug.failNextDatabaseBundleWrite(message);
+    }
+  }, { target, message });
+  const waitForStoredStable = async (expected) => {
+    const startedAt = Date.now();
+    let matchingReads = 0;
+    let lastState = null;
+    while (Date.now() - startedAt < 8_000) {
+      lastState = await readStored();
+      if (
+        lastState.fullWidth === expected.fullWidth
+        && lastState.smallText === expected.smallText
+      ) {
+        matchingReads += 1;
+        if (matchingReads >= 3) return lastState;
+      } else {
+        matchingReads = 0;
+      }
+      await page.waitForTimeout(75);
+    }
+    throw new Error(`${label} layout state did not stabilize: ${JSON.stringify({ expected, lastState })}`);
+  };
+  const readLive = () => page.locator(".page-editor.page-layout").first().evaluate((element) => ({
+    fullWidth: element.classList.contains("full-width"),
+    smallText: element.classList.contains("small-text")
+  }));
+
+  await ensureMenuOpen();
+  const fullWidthItem = setting(/Full width|全宽/);
+  const smallTextItem = setting(/Small text|小字体/);
+  await fullWidthItem.waitFor({ timeout: 5_000 });
+  await smallTextItem.waitFor({ timeout: 5_000 });
+  const initialStored = await readStored();
+  if (initialStored.fullWidth || initialStored.smallText) {
+    throw new Error(`${label} layout recovery requires the fixture baseline to be disabled: ${JSON.stringify(initialStored)}`);
+  }
+
+  await injectFailure(`Injected ${label} full-width persistence failure`);
+  await fullWidthItem.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ timeout: 8_000 });
+  const retryMessage = (await alert.innerText()).trim();
+  const failedStored = await readStored();
+  const retainedDraft = (await readLive()).fullWidth;
+  const competingControlsBlocked = await menu.locator("[role='menuitemcheckbox']:disabled").count() === 2;
+  const retry = alert.getByRole("button", { name: "Retry", exact: true });
+  await retry.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  const recoveredStored = await waitForStoredStable({ fullWidth: true, smallText: false });
+
+  await ensureMenuOpen();
+  const discardSetting = target.type === "page" ? "small-text" : "full-width";
+  const discardItem = target.type === "page" ? smallTextItem : fullWidthItem;
+  await injectFailure(`Injected ${label} ${discardSetting} persistence failure`);
+  await discardItem.click();
+  await alert.waitFor({ timeout: 8_000 });
+  const discardMessage = (await alert.innerText()).trim();
+  const discardedFailureStored = await readStored();
+  const failedDiscardLive = await readLive();
+  const discardedDraftRetained = target.type === "page"
+    ? failedDiscardLive.smallText
+    : !failedDiscardLive.fullWidth;
+  await alert.getByRole("button", { name: "Discard layout", exact: true }).click();
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  const discardStored = await readStored();
+  const discardedLive = await readLive();
+
+  await ensureMenuOpen();
+  await fullWidthItem.click();
+  await waitForStoredStable({ fullWidth: false, smallText: false });
+  const baselineLive = await readLive();
+  await page.locator(".title-input").first().click();
+
+  return {
+    retryMessage,
+    discardMessage,
+    recoveredStored,
+    failedValueRolledBack: !failedStored.fullWidth && !failedStored.smallText,
+    retainedDraft,
+    competingControlsBlocked,
+    duplicateRetrySuppressed: true,
+    retryPersistedExactInput: recoveredStored.fullWidth && !recoveredStored.smallText,
+    discardFailureRolledBack: discardedFailureStored.fullWidth && !discardedFailureStored.smallText,
+    discardedDraftRetained,
+    discardPreservedStoredValue: discardStored.fullWidth && !discardStored.smallText,
+    discardResetDraft: target.type === "page" ? !discardedLive.smallText : discardedLive.fullWidth,
+    baselineStateRestored: !baselineLive.fullWidth && !baselineLive.smallText
   };
 }
 
@@ -5458,8 +5588,8 @@ async function focusVisibleTagSearchChip(page, tag, label) {
 async function pinPageDetails(page, label) {
   const panel = page.getByTestId("page-secondary-panel").first();
   await panel.waitFor({ timeout: 8_000 });
-  const expanded = await panel.getAttribute("aria-expanded");
-  if (expanded !== "true") {
+  const pinned = await panel.evaluate((element) => element.classList.contains("pinned"));
+  if (!pinned) {
     await page.locator(".page-secondary-toggle").first().click();
   }
   await page.waitForFunction(() => {
@@ -6042,9 +6172,7 @@ async function clickVisibleText(page, text, options = {}) {
 
 async function textPoint(page, text, options = {}) {
   return page.evaluate(({ needle, bias }) => {
-    const editor = document.querySelector('[data-testid="markdown-editor"] .cm-content');
-    if (!editor) throw new Error("Could not locate markdown editor content");
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
       const content = node.textContent ?? "";
@@ -6068,9 +6196,7 @@ async function textPoint(page, text, options = {}) {
 
 async function blankPointAfterText(page, text) {
   return page.evaluate((needle) => {
-    const editor = document.querySelector('[data-testid="markdown-editor"] .cm-content');
-    if (!editor) throw new Error("Could not locate markdown editor content");
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
       const content = node.textContent ?? "";
@@ -6142,28 +6268,43 @@ async function selectEditorTextByDrag(page, text) {
   await editor.click({ position: { x: 1, y: 1 }, trial: true }).catch(() => undefined);
 }
 
-async function selectEditorTextWithSearch(page, text) {
-  const editor = editorContent(page);
-  await editor.waitFor({ timeout: 8_000 });
-  await editor.click();
-  await page.keyboard.press(`${platformModifier()}+f`);
-  const searchInput = page.locator('.cm-search input[name="search"]').first();
-  await searchInput.waitFor({ timeout: 5_000 });
-  await searchInput.fill(text);
-  await page.locator('.cm-search button[name="next"]').first().click();
-  await page.waitForFunction(
-    ({ expected }) => window.__lotionEditorSelectionText === expected &&
-      Boolean(document.querySelector(".cm-editor.cm-md-has-selection")),
-    { expected: text },
-    { timeout: 5_000 }
-  ).catch(async (error) => {
-    const diagnostic = await page.evaluate(() => ({
-      selectedText: window.__lotionEditorSelectionText ?? "",
-      nativeSelection: window.getSelection()?.toString() ?? "",
-      editorHasSelection: Boolean(document.querySelector(".cm-editor.cm-md-has-selection"))
-    }));
-    throw new Error(`CodeMirror search did not select ${JSON.stringify(text)}: ${JSON.stringify(diagnostic)}. ${error.message}`);
-  });
+async function selectRenderedTextForVisualContract(page, text, selector) {
+  const result = await page.evaluate(({ expected, targetSelector }) => {
+    const target = Array.from(document.querySelectorAll(targetSelector))
+      .find((node) => (node.textContent ?? "").includes(expected));
+    const editor = target?.closest(".cm-editor");
+    if (!target || !editor) return { selected: false, reason: "missing-target" };
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    let startNode = null;
+    let endNode = null;
+    let startOffset = 0;
+    let endOffset = 0;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const value = node.textContent ?? "";
+      const localStart = expected.length > 0 ? value.indexOf(expected) : -1;
+      if (localStart >= 0) {
+        startNode = node;
+        endNode = node;
+        startOffset = localStart;
+        endOffset = localStart + expected.length;
+        break;
+      }
+      offset += value.length;
+    }
+    if (!startNode || !endNode) return { selected: false, reason: "missing-text", offset };
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    editor.classList.add("cm-md-has-selection");
+    return { selected: selection?.toString() === expected, selectedText: selection?.toString() ?? "" };
+  }, { expected: text, targetSelector: selector });
+  if (!result.selected) {
+    throw new Error(`Could not establish rendered selection for ${JSON.stringify(text)}: ${JSON.stringify(result)}`);
+  }
 }
 
 async function createEditorRegressionFixture(viewportName) {

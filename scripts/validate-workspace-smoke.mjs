@@ -9,7 +9,6 @@ const repoRoot = join(__dirname, "..");
 
 const args = parseArgs(process.argv.slice(2));
 const workspaceRoot = resolve(args.workspace ?? join(repoRoot, "samples", "demo-space"));
-const OPTIONAL_GENERATED_DATA_IDS = new Set(["db_rows_500k"]);
 const errors = [];
 const stats = {
   databases: 0,
@@ -19,7 +18,8 @@ const stats = {
   missingBodyFiles: 0,
   markdownFiles: 0,
   urlFields: 0,
-  searchFiles: 0
+  searchFiles: 0,
+  ignoredEmptyScaffolds: 0
 };
 
 assert(existsSync(join(workspaceRoot, "lotion.json")), `workspace has lotion.json: ${workspaceRoot}`);
@@ -33,16 +33,25 @@ const allRows = [];
 const pageBodyPaths = new Set();
 
 for (const db of dbDirs) {
-  stats.databases += 1;
   const schemaPath = join(db.abs, "schema.json");
   const dataPath = join(db.abs, "data.csv");
-  assert(existsSync(schemaPath), `${db.rel}/schema.json exists`);
-  if (!existsSync(schemaPath)) continue;
+  const hasSchema = existsSync(schemaPath);
+  const hasData = existsSync(dataPath);
+  if (!hasSchema && !hasData && !(await containsFiles(db.abs))) {
+    stats.ignoredEmptyScaffolds += 1;
+    continue;
+  }
+  stats.databases += 1;
+  assert(hasSchema, `${db.rel}/schema.json exists`);
+  if (!hasSchema) {
+    assert(hasData, `${db.rel}/data.csv exists`);
+    continue;
+  }
 
   const schema = await readJson(schemaPath);
   dbDirById.set(schema.id, db);
-  const hasData = existsSync(dataPath);
-  assert(hasData || OPTIONAL_GENERATED_DATA_IDS.has(schema.id), `${db.rel}/data.csv exists`);
+  const missingGeneratedDataAllowed = !hasData && args.allowMissingDataIds.includes(schema.id);
+  assert(hasData || missingGeneratedDataAllowed, `${db.rel}/data.csv exists`);
   if (!hasData) continue;
   const fieldIds = new Set();
   for (const field of schema.fields ?? []) {
@@ -191,7 +200,8 @@ console.log(
     `${stats.missingRowPageFiles} lazy row page bodies`,
     `${stats.missingBodyFiles} lazy page bodies`,
     `${stats.urlFields} URL fields`,
-    `${stats.searchFiles} searchable files`
+    `${stats.searchFiles} searchable files`,
+    `${stats.ignoredEmptyScaffolds} empty database scaffolds ignored`
   ].join(" ")
 );
 
@@ -200,7 +210,8 @@ function parseArgs(argv) {
     workspace: null,
     expectQueries: [],
     expectDatabaseTitleContains: [],
-    forbidSystemPageSourceFragments: []
+    forbidSystemPageSourceFragments: [],
+    allowMissingDataIds: []
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -216,6 +227,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--forbid-system-page-source-fragment") {
       parsed.forbidSystemPageSourceFragments.push(value);
+      index += 1;
+    } else if (arg === "--allow-missing-data") {
+      parsed.allowMissingDataIds.push(value);
       index += 1;
     } else if (!arg.startsWith("-") && !parsed.workspace) {
       parsed.workspace = arg;
@@ -253,6 +267,16 @@ async function listFiles(root, predicate) {
     else if (predicate(path)) files.push(path);
   }
   return files;
+}
+
+async function containsFiles(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === ".DS_Store") continue;
+    if (entry.isFile()) return true;
+    if (entry.isDirectory() && await containsFiles(join(root, entry.name))) return true;
+  }
+  return false;
 }
 
 async function assertNonEmptyMarkdown(path) {

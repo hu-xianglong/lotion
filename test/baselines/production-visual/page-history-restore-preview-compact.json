@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "page-history-restore-preview",
+  "theme": "light",
+  "viewport": {
+    "name": "compact",
+    "width": 1040,
+    "height": 820
+  },
+  "image": {
+    "path": "test/baselines/production-visual/page-history-restore-preview-compact.png",
+    "sha256": "f839ebfc2e1d079030b56216fb58a9d49e326baac36188b9ee9bd0a10d0061cf",
+    "width": 712,
+    "height": 459
+  },
+  "comparison": {
+    "threshold": 0.2,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/page-cover-offset-transactional-recovery.md"
+}

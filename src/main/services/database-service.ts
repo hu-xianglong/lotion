@@ -1,16 +1,16 @@
-import { DATABASE_STATS_DATABASE_ID, DEFAULT_VIEW_ID, ENTITIES_DATABASE_ID, PAGES_DATABASE_ID } from "../../shared/constants.js";
+import { DATABASE_STATS_DATABASE_ID, DEFAULT_VIEW_ID, ENTITIES_DATABASE_ID, PAGES_DATABASE_ID, isSystemDatabaseId } from "../../shared/constants.js";
 import { orderFieldIdsByContentRichness, orderFieldIdsByInformationAmount } from "../../shared/field-order.js";
 import { applyFormulasToRecords } from "../../shared/formula.js";
 import { createId, slugifyId } from "../../shared/ids.js";
 import { applyRollupsToRecords } from "../../shared/rollup.js";
-import { parseDateTimeValue } from "../../shared/date-values.js";
 import { pageMarkdownFileName } from "../../shared/workspace-paths.js";
+import { DatabaseViewError } from "../../shared/database-view-errors.js";
 import type { RowPagesService } from "./row-pages-service.js";
 import type {
   AddFieldInput,
-  ColumnSummaryType,
   CopyFieldToSystemTimeInput,
   CopyFieldToSystemTimeResult,
+  ColumnSummaryType,
   CreateDatabaseInput,
   CreateViewInput,
   DatabaseBundle,
@@ -20,6 +20,12 @@ import type {
   DatabaseStats,
   DatabaseSummary,
   DuplicateViewInput,
+  PatchViewInput,
+  ReorderViewsInput,
+  ReorderFieldsInput,
+  RestoreFieldInput,
+  PermanentlyDeleteFieldInput,
+  PatchViewResult,
   DeleteViewInput,
   DeleteDatabaseTemplateInput,
   DeleteRowInput,
@@ -36,12 +42,19 @@ import type {
   UpdateDatabaseMetaInput,
   UpdateFieldInput
 } from "../../shared/types.js";
+import { filterExpressionUsesField, flattenSimpleAndFilters, legacyFiltersToExpression, normalizeFilterExpression } from "../../shared/filter-expression.js";
+import { normalizeViewGroups } from "../../shared/database-grouping.js";
+import { normalizePageOpenMode } from "../../shared/database-page-open.js";
+import { parseDateTimeValue, parseDateValue } from "../../shared/date-values.js";
+import { assertDatabaseUnlocked, DatabaseLockedError } from "../../shared/database-lock.js";
+import { DatabaseMutationError, databasePersistenceError } from "../../shared/database-mutation-errors.js";
 import { readCsvFile, writeCsvFile } from "../storage/csv-file.js";
 import { readJsonFile, writeJsonFile, writeTextFile } from "../storage/json-file.js";
 import { createPagesDefaultView, createPagesFields, createPagesSchema, PagesDatabaseService } from "./pages-database-service.js";
 import { createEntitiesDefaultView, createEntitiesSchema, normalizeEntitiesSchema } from "./entities-database-service.js";
 import type { WorkspaceService } from "./workspace-service.js";
 import { fileService } from "./file-service.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 const TEMPLATE_VALUES_FIELD = "template_values";
 const TEMPLATE_FULL_WIDTH_FIELD = "full_width";
@@ -81,9 +94,18 @@ const ROLLUP_AGGREGATIONS: ReadonlySet<RollupAggregation> = new Set([
 export class DatabaseService {
   private rowPages?: RowPagesService;
   private readonly pageRecords: PagesDatabaseService;
+  private listPromiseRoot?: string;
+  private listPromise?: Promise<DatabaseSummary[]>;
+  private readonly viewMutationQueues = new Map<string, Promise<void>>();
+  private nextViewWriteFailure?: string;
+  private nextBundleWriteFailure?: string;
+  private nextMetaWriteFailure?: string;
 
-  constructor(private readonly workspace: WorkspaceService) {
-    this.pageRecords = new PagesDatabaseService(workspace);
+  constructor(
+    private readonly workspace: WorkspaceService,
+    pageRecords?: PagesDatabaseService
+  ) {
+    this.pageRecords = pageRecords ?? new PagesDatabaseService(workspace);
   }
 
   /** Late-bound to break the DatabaseService ↔ RowPagesService cycle. */
@@ -91,13 +113,47 @@ export class DatabaseService {
     this.rowPages = rowPages;
   }
 
+  failNextViewWriteForDebug(message = "Injected view persistence failure"): void {
+    this.nextViewWriteFailure = message;
+  }
+
+  failNextBundleWriteForDebug(message = "Injected database persistence failure"): void {
+    this.nextBundleWriteFailure = message;
+  }
+
+  failNextMetaWriteForDebug(message = "Injected database metadata persistence failure"): void {
+    this.nextMetaWriteFailure = message;
+  }
+
   async list(): Promise<DatabaseSummary[]> {
+    const root = this.workspace.requirePaths().root;
+    if (this.listPromise && this.listPromiseRoot === root) return this.listPromise;
+    this.listPromiseRoot = root;
+    const promise = this.listFresh();
+    this.listPromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this.listPromise === promise) {
+        this.listPromise = undefined;
+        this.listPromiseRoot = undefined;
+      }
+    }
+  }
+
+  private async listFresh(): Promise<DatabaseSummary[]> {
     const manifest = await this.workspace.getManifest();
     const paths = this.workspace.requirePaths();
-    return Promise.all(manifest.databases.map(async (id) => {
+    return mapWithConcurrency(manifest.databases, 24, async (id) => {
       const schema = normalizeDatabasePath(await readJsonFile<DatabaseSchema>(paths.schema(id)));
-      return { id: schema.id, name: schema.name, path: schema.path, icon: schema.icon, tags: schema.tags };
-    }));
+      return {
+        id: schema.id,
+        name: schema.name,
+        path: schema.path,
+        icon: schema.icon,
+        tags: schema.tags
+      };
+    });
   }
 
   async listStats(): Promise<DatabaseStats[]> {
@@ -209,6 +265,7 @@ export class DatabaseService {
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
     }
+    if (schema?.locked) throw new DatabaseLockedError(id);
 
     await this.pageRecords.ensure();
     for (const meta of await this.pageRecords.listMetas()) {
@@ -236,7 +293,13 @@ export class DatabaseService {
     }
     const tStart = performance.now();
     const paths = this.workspace.requirePaths();
-    let schema = normalizeDatabasePath(await readJsonFile<DatabaseSchema>(paths.schema(id)));
+    let schema: DatabaseSchema;
+    try {
+      schema = normalizeDatabasePath(await readJsonFile<DatabaseSchema>(paths.schema(id)));
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Database not found: ${id}`, { cause: error });
+    }
     const tSchema = performance.now();
     const records = await readCsvFile(paths.data(id));
     const tCsv = performance.now();
@@ -263,6 +326,7 @@ export class DatabaseService {
       await this.writeViews(schema, generated.views);
     }
     const views = generated.views;
+    schema = await this.refreshDeletedFieldDependencies(id, schema, views);
     const tEnd = performance.now();
     console.log(
       `[lotion main] db get id=${id} rows=${records.length} ` +
@@ -276,7 +340,17 @@ export class DatabaseService {
 
   async addField(id: string, input: AddFieldInput): Promise<DatabaseBundle> {
     const bundle = await this.get(id);
-    const fieldIdBase = slugifyId(input.name) || "field";
+    assertDatabaseUnlocked(bundle.schema);
+    const sourceField = input.sourceFieldId ? bundle.schema.fields.find((field) => field.id === input.sourceFieldId) : undefined;
+    if (input.sourceFieldId && !sourceField) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Source property not found: ${input.sourceFieldId}`);
+    if (sourceField?.system) throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", "System properties cannot be duplicated.");
+    if (input.insertAfterFieldId && input.insertBeforeFieldId) throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", "Choose either an insert-before or insert-after property, not both.");
+    const anchorId = input.insertBeforeFieldId ?? input.insertAfterFieldId;
+    if (anchorId && !bundle.schema.fields.some((field) => field.id === anchorId)) {
+      throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Insert anchor property not found: ${anchorId}`);
+    }
+    const fieldName = uniqueFieldName(bundle.schema.fields, input.name.trim() || "Untitled field");
+    const fieldIdBase = slugifyId(fieldName) || "field";
     let fieldId = fieldIdBase;
     let suffix = 2;
     while (bundle.schema.fields.some((field) => field.id === fieldId)) {
@@ -285,28 +359,38 @@ export class DatabaseService {
     }
 
     const field: FieldSchema = {
+      ...(sourceField ? structuredClone(sourceField) : {}),
       id: fieldId,
-      name: input.name.trim() || "Untitled field",
-      type: input.type,
-      options: needsOptions(input.type) ? normalizeOptions(input.options) : undefined,
-      formula: input.type === "formula" ? input.formula || "" : undefined,
-      relation: normalizeRelationConfig(input.type, input.relation),
-      rollup: normalizeRollupConfig(input.type, input.rollup),
-      dateFormat: hasDateDisplay(input.type) ? input.dateFormat : undefined,
-      timeFormat: hasDateDisplay(input.type) ? input.timeFormat : undefined
+      name: fieldName,
+      type: sourceField?.type ?? input.type,
+      system: undefined,
+      hidden: undefined,
+      options: needsOptions(sourceField?.type ?? input.type) ? normalizeOptions(input.options ?? sourceField?.options) : undefined,
+      formula: (sourceField?.type ?? input.type) === "formula" ? input.formula ?? sourceField?.formula ?? "" : undefined,
+      relation: normalizeRelationConfig(sourceField?.type ?? input.type, input.relation ?? sourceField?.relation),
+      rollup: normalizeRollupConfig(sourceField?.type ?? input.type, input.rollup ?? sourceField?.rollup),
+      dateFormat: hasDateDisplay(sourceField?.type ?? input.type) ? input.dateFormat ?? sourceField?.dateFormat : undefined,
+      timeFormat: hasDateDisplay(sourceField?.type ?? input.type) ? input.timeFormat ?? sourceField?.timeFormat : undefined
     };
     const now = new Date().toISOString();
     const schema = {
       ...bundle.schema,
       updated_time: now,
-      fields: [...bundle.schema.fields, field]
+      fields: insertFieldAt(bundle.schema.fields, field, input.insertAfterFieldId, input.insertBeforeFieldId)
     };
-    const views = bundle.views.map((view) => ({
-      ...view,
-      visibleFieldIds: [...view.visibleFieldIds, field.id],
-      fieldOrder: [...view.fieldOrder, field.id],
-      wrapFieldIds: view.wrapFieldIds ? [...view.wrapFieldIds, field.id] : undefined
-    }));
+    const visibility = input.visibility ?? "all";
+    if (visibility === "current" && !bundle.views.some((view) => view.id === input.viewId)) {
+      throw new DatabaseViewError("VIEW_NOT_FOUND", `Database view not found: ${input.viewId || "missing"}`);
+    }
+    const views = bundle.views.map((view) => {
+      const visible = visibility === "all" || (visibility === "current" && view.id === input.viewId);
+      return visible ? {
+        ...view,
+        visibleFieldIds: insertStringAt(view.visibleFieldIds, field.id, input.insertAfterFieldId, input.insertBeforeFieldId),
+        fieldOrder: insertStringAt(view.fieldOrder, field.id, input.insertAfterFieldId, input.insertBeforeFieldId),
+        wrapFieldIds: view.wrapFieldIds ? [...view.wrapFieldIds, field.id] : undefined
+      } : view;
+    });
     const records = bundle.records.map((record) => ({ ...record, [field.id]: "" }));
     const final = await this.writeBundle(schema, records, views);
     return { schema, records: final, views };
@@ -314,10 +398,9 @@ export class DatabaseService {
 
   async updateField(input: UpdateFieldInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     const field = bundle.schema.fields.find((item) => item.id === input.fieldId);
-    if (!field) {
-      return bundle;
-    }
+    if (!field) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Property not found: ${input.fieldId}`);
 
     const nextType = field.system ? field.type : input.type || field.type;
     const nextField: FieldSchema = {
@@ -331,19 +414,38 @@ export class DatabaseService {
       dateFormat: hasDateDisplay(nextType) ? input.dateFormat ?? field.dateFormat : undefined,
       timeFormat: hasDateDisplay(nextType) ? input.timeFormat ?? field.timeFormat : undefined
     };
-    const schema: DatabaseSchema = {
+    let schema: DatabaseSchema = {
       ...bundle.schema,
       updated_time: new Date().toISOString(),
       fields: bundle.schema.fields.map((item) => (item.id === input.fieldId ? nextField : item))
     };
     const records = sanitizeRecordsForField(bundle.records, nextField);
+    const views = bundle.views.map((view) => sanitizeViewForSchema(view, schema, records));
+    schema = await this.refreshDeletedFieldDependencies(input.databaseId, schema, views);
+    const final = await this.writeBundle(schema, records, views);
+    return { ...bundle, schema, records: final, views };
+  }
 
-    const final = await this.writeBundle(schema, records, bundle.views);
+  async reorderFields(input: ReorderFieldsInput): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
+    const existingIds = bundle.schema.fields.map((field) => field.id);
+    if (input.fieldIds.length !== existingIds.length || new Set(input.fieldIds).size !== existingIds.length || input.fieldIds.some((id) => !existingIds.includes(id))) {
+      throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", "Field order must contain every schema field exactly once.");
+    }
+    const byId = new Map(bundle.schema.fields.map((field) => [field.id, field]));
+    const schema = {
+      ...bundle.schema,
+      updated_time: new Date().toISOString(),
+      fields: input.fieldIds.map((id) => byId.get(id)!)
+    };
+    const final = await this.writeBundle(schema, bundle.records, bundle.views);
     return { ...bundle, schema, records: final };
   }
 
   async copyFieldToSystemTime(input: CopyFieldToSystemTimeInput): Promise<CopyFieldToSystemTimeResult> {
     const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     const sourceField = bundle.schema.fields.find((field) => field.id === input.sourceFieldId);
     if (!sourceField) throw new Error(`Source field not found: ${input.sourceFieldId}`);
     if (!hasDateDisplay(sourceField.type)) {
@@ -405,27 +507,135 @@ export class DatabaseService {
 
   async deleteField(databaseId: string, fieldId: string): Promise<DatabaseBundle> {
     const bundle = await this.get(databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     const field = bundle.schema.fields.find((item) => item.id === fieldId);
-    if (!field || field.id === "title" || field.system) {
-      return bundle;
-    }
+    if (!field) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Property not found: ${fieldId}`);
+    if (field.id === "title" || field.system) throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", "System and title properties cannot be deleted.");
 
-    const schema: DatabaseSchema = {
+    const tombstone = {
+      field,
+      values: Object.fromEntries(bundle.records.map((record) => [String(record.id), record[fieldId] ?? ""])),
+      position: bundle.schema.fields.findIndex((candidate) => candidate.id === fieldId),
+      views: bundle.views.map((view) => ({
+        viewId: view.id,
+        visibleIndex: view.visibleFieldIds.indexOf(fieldId),
+        orderIndex: view.fieldOrder.indexOf(fieldId),
+        wrapped: Boolean(view.wrapFieldIds?.includes(fieldId))
+      })),
+      dependencies: [],
+      deletedAt: new Date().toISOString()
+    };
+
+    let schema: DatabaseSchema = {
       ...bundle.schema,
       updated_time: new Date().toISOString(),
-      fields: bundle.schema.fields.filter((item) => item.id !== fieldId)
+      fields: bundle.schema.fields.filter((item) => item.id !== fieldId),
+      deletedFields: [...(bundle.schema.deletedFields ?? []).filter((item) => item.field.id !== fieldId), tombstone]
     };
     const records = bundle.records.map((record) => {
       const { [fieldId]: _removed, ...next } = record;
       return next;
     });
     const views = bundle.views.map((view) => sanitizeViewForSchema(view, schema, records));
+    schema = await this.refreshDeletedFieldDependencies(databaseId, schema, views);
     const final = await this.writeBundle(schema, records, views);
     return { ...bundle, schema, records: final, views };
   }
 
+  async restoreField(input: RestoreFieldInput): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
+    const tombstone = bundle.schema.deletedFields?.find((item) => item.field.id === input.fieldId);
+    if (!tombstone) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Deleted property not found: ${input.fieldId}`);
+    if (bundle.schema.fields.some((field) => field.id === tombstone.field.id || field.name.toLocaleLowerCase() === tombstone.field.name.toLocaleLowerCase())) {
+      throw new Error("Cannot restore property because its id or name is already in use.");
+    }
+    const fields = [...bundle.schema.fields];
+    fields.splice(Math.min(Math.max(tombstone.position, 0), fields.length), 0, tombstone.field);
+    let schema: DatabaseSchema = {
+      ...bundle.schema,
+      updated_time: new Date().toISOString(),
+      fields,
+      deletedFields: bundle.schema.deletedFields?.filter((item) => item.field.id !== input.fieldId)
+    };
+    const records = bundle.records.map((record) => ({ ...record, [input.fieldId]: tombstone.values[String(record.id)] ?? "" }));
+    const byView = new Map(tombstone.views.map((state) => [state.viewId, state]));
+    const views = bundle.views.map((view) => {
+      const state = byView.get(view.id);
+      if (!state) return view;
+      return {
+        ...view,
+        visibleFieldIds: insertAtIfPresent(view.visibleFieldIds, input.fieldId, state.visibleIndex),
+        fieldOrder: insertAtIfPresent(view.fieldOrder, input.fieldId, state.orderIndex),
+        wrapFieldIds: state.wrapped ? [...(view.wrapFieldIds ?? []), input.fieldId] : view.wrapFieldIds
+      };
+    });
+    schema = await this.refreshDeletedFieldDependencies(input.databaseId, schema, views);
+    const final = await this.writeBundle(schema, records, views);
+    return { ...bundle, schema, records: final, views };
+  }
+
+  async permanentlyDeleteField(input: PermanentlyDeleteFieldInput): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
+    const tombstone = bundle.schema.deletedFields?.find((item) => item.field.id === input.fieldId);
+    if (!tombstone) throw new Error(`Deleted property not found: ${input.fieldId}`);
+    const dependencies = await this.findFieldDependencies(input.databaseId, bundle.schema.fields, bundle.views, tombstone.field);
+    if (dependencies.length > 0) throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", `Property still has dependencies: ${dependencies.join(", ")}`);
+    const schema = {
+      ...bundle.schema,
+      updated_time: new Date().toISOString(),
+      deletedFields: bundle.schema.deletedFields?.filter((item) => item.field.id !== input.fieldId)
+    };
+    await writeJsonFile(this.workspace.requirePaths().schema(input.databaseId), withoutSchemaTemplates(schema));
+    return { ...bundle, schema };
+  }
+
+  private async refreshDeletedFieldDependencies(databaseId: string, schema: DatabaseSchema, views: TableView[]): Promise<DatabaseSchema> {
+    if (!schema.deletedFields?.length) return schema;
+    const deletedFields = await Promise.all(schema.deletedFields.map(async (tombstone) => {
+      const dependencies = await this.findFieldDependencies(databaseId, schema.fields, views, tombstone.field);
+      return sameStringList(dependencies, tombstone.dependencies)
+        ? tombstone
+        : { ...tombstone, dependencies };
+    }));
+    return deletedFields.every((tombstone, index) => tombstone === schema.deletedFields?.[index])
+      ? schema
+      : { ...schema, deletedFields };
+  }
+
+  private async findFieldDependencies(databaseId: string, fields: readonly FieldSchema[], views: readonly TableView[], field: FieldSchema): Promise<string[]> {
+    const dependencies = fieldDependencies(databaseId, fields, views, field);
+    const manifest = await this.workspace.getManifest();
+    const paths = this.workspace.requirePaths();
+    await Promise.all(manifest.databases.filter((id) => id !== databaseId).map(async (id) => {
+      let schema: DatabaseSchema;
+      try {
+        schema = await readJsonFile<DatabaseSchema>(paths.schema(id));
+      } catch (error) {
+        if (isNotFoundError(error)) return;
+        throw error;
+      }
+      const fieldsById = new Map(schema.fields.map((candidate) => [candidate.id, candidate]));
+      for (const candidate of schema.fields) {
+        if (candidate.type !== "rollup" || candidate.rollup?.targetFieldId !== field.id) continue;
+        const relationField = candidate.rollup.relationFieldId
+          ? fieldsById.get(candidate.rollup.relationFieldId)
+          : undefined;
+        if (relationField?.relation?.targetDatabaseId === databaseId) {
+          dependencies.push(`rollup:${schema.id}:${candidate.id}`);
+        }
+      }
+    }));
+    return [...new Set(dependencies)].sort();
+  }
+
   async updateMeta(input: UpdateDatabaseMetaInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
+    if (input.locked === true && isSystemDatabaseId(bundle.schema.id)) {
+      throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", "System databases cannot be locked through database metadata.");
+    }
+    if (bundle.schema.locked && input.locked !== false && input.tags !== undefined) assertDatabaseUnlocked(bundle.schema);
     const schema: DatabaseSchema = {
       ...bundle.schema,
       updated_time: new Date().toISOString()
@@ -435,11 +645,21 @@ export class DatabaseService {
       if (tags.length === 0) delete schema.tags;
       else schema.tags = tags;
     }
-    await writeJsonFile(this.workspace.requirePaths().schema(input.databaseId), withoutSchemaTemplates(schema));
+    if (input.locked !== undefined) schema.locked = input.locked || undefined;
+    try {
+      if (this.nextMetaWriteFailure) {
+        const message = this.nextMetaWriteFailure;
+        this.nextMetaWriteFailure = undefined;
+        throw new Error(message);
+      }
+      await writeJsonFile(this.workspace.requirePaths().schema(input.databaseId), withoutSchemaTemplates(schema));
+    } catch (error) {
+      throw databasePersistenceError(input.databaseId, error);
+    }
     return { ...bundle, schema };
   }
 
-  async addRow(databaseId: string, templateId?: string): Promise<DatabaseBundle> {
+  async addRow(databaseId: string, templateId?: string, initialValues?: Record<string, RecordValue>): Promise<DatabaseBundle> {
     const bundle = await this.get(databaseId);
     const now = new Date().toISOString();
     const template = templateId
@@ -469,6 +689,16 @@ export class DatabaseService {
         if (editableFieldIds.has(fieldId)) record[fieldId] = value as RecordValue;
       }
     }
+    for (const [fieldId, value] of Object.entries(initialValues ?? {})) {
+      const field = bundle.schema.fields.find((candidate) => candidate.id === fieldId);
+      if (!field) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Property not found: ${fieldId}`);
+      if (field.system || isReadOnlyComputedField(field)) {
+        throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", `Property cannot be initialized: ${fieldId}`);
+      }
+      const invalid = validateBatchValue(field, value);
+      if (invalid) throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", `${field.name}: ${invalid}`);
+      record[fieldId] = value;
+    }
     if (template && (!record.title || String(record.title).trim() === "New row")) {
       record.title = template.name || "New row";
     }
@@ -490,22 +720,34 @@ export class DatabaseService {
 
   async saveTemplate(input: SaveDatabaseTemplateInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     const template = normalizeDatabaseTemplate(bundle.schema, input.template);
-    await this.upsertStoredTemplate(input.databaseId, template);
+    try {
+      this.consumeNextBundleWriteFailure();
+      await this.upsertStoredTemplate(input.databaseId, template);
+    } catch (error) {
+      throw databasePersistenceError(input.databaseId, error);
+    }
     return this.get(input.databaseId);
   }
 
   async deleteTemplate(input: DeleteDatabaseTemplateInput): Promise<DatabaseBundle> {
-    await this.deleteStoredTemplate(input.databaseId, input.templateId);
+    assertDatabaseUnlocked((await this.get(input.databaseId)).schema);
+    try {
+      this.consumeNextBundleWriteFailure();
+      await this.deleteStoredTemplate(input.databaseId, input.templateId);
+    } catch (error) {
+      throw databasePersistenceError(input.databaseId, error);
+    }
     return this.get(input.databaseId);
   }
 
   async updateCell(input: UpdateCellInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
     const field = bundle.schema.fields.find((item) => item.id === input.fieldId);
-    if (!field || field.system || field.type === "formula" || field.type === "rollup") {
-      return bundle;
-    }
+    if (!field) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Property not found: ${input.fieldId}`);
+    if (field.system || field.type === "formula" || field.type === "rollup") throw new DatabaseMutationError("DATABASE_INVALID_DEPENDENCY", `Property cannot be edited: ${input.fieldId}`);
+    if (!bundle.records.some((record) => String(record.id) === input.rowId)) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Row not found: ${input.rowId}`);
 
     const now = new Date().toISOString();
     const records = bundle.records.map((record) => {
@@ -524,12 +766,123 @@ export class DatabaseService {
   async deleteRow(input: DeleteRowInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
     const doomed = bundle.records.find((record) => record.id === input.rowId);
+    if (!doomed) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Row not found: ${input.rowId}`);
     const records = bundle.records.filter((record) => record.id !== input.rowId);
+    const pageMeta = await this.pageRecords.getMeta(input.rowId);
+    const bodyPath = pageMeta ? await this.pageRecords.getBodyPath(input.rowId) : undefined;
+    const schema = {
+      ...bundle.schema,
+      updated_time: new Date().toISOString(),
+      deletedRows: [...(bundle.schema.deletedRows ?? []).filter((item) => String(item.record.id) !== input.rowId), { record: doomed, position: bundle.records.findIndex((record) => record.id === input.rowId), deletedAt: new Date().toISOString(), page: pageMeta ? { meta: pageMeta, bodyPath } : undefined }]
+    };
+    const final = await this.writeBundle(schema, records, bundle.views);
+    if (pageMeta) await this.pageRecords.delete(input.rowId);
+    return { ...bundle, schema, records: final };
+  }
+
+  async duplicateRow(input: { databaseId: string; rowId: string }): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    const source = bundle.records.find((record) => String(record.id) === input.rowId);
+    if (!source) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Row not found: ${input.rowId}`);
+    const now = new Date().toISOString();
+    const record = { ...source, id: createId("pg"), title: `${String(source.title ?? "Untitled")} copy`, created_time: now, updated_time: now, page_file: "", body_path: "" };
+    const sourceIndex = bundle.records.indexOf(source);
+    const records = [...bundle.records];
+    records.splice(sourceIndex + 1, 0, record);
     const final = await this.writeBundle(bundle.schema, records, bundle.views);
-    if (doomed && this.rowPages) {
-      await this.rowPages.handleRowDeleted(input.databaseId, doomed);
-    }
+    await this.copyRowPageForDuplicate(input.databaseId, bundle.schema, source, record, now);
+    if (this.rowPages) return this.get(input.databaseId);
     return { ...bundle, records: final };
+  }
+
+  async restoreRow(input: { databaseId: string; rowId: string }): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    const tombstone = bundle.schema.deletedRows?.find((item) => String(item.record.id) === input.rowId);
+    if (!tombstone) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Deleted row not found: ${input.rowId}`);
+    if (bundle.records.some((record) => String(record.id) === input.rowId)) throw new DatabaseMutationError("DATABASE_CONFLICT", `Row id is already in use: ${input.rowId}`);
+    const records = [...bundle.records];
+    records.splice(Math.min(Math.max(tombstone.position, 0), records.length), 0, tombstone.record);
+    const schema = { ...bundle.schema, updated_time: new Date().toISOString(), deletedRows: bundle.schema.deletedRows?.filter((item) => String(item.record.id) !== input.rowId) };
+    const final = await this.writeBundle(schema, records, bundle.views);
+    if (tombstone.page) {
+      await this.pageRecords.upsert({
+        meta: tombstone.page.meta,
+        kind: "page",
+        bodyPath: tombstone.page.bodyPath,
+        databaseId: input.databaseId,
+        rowId: input.rowId
+      });
+    } else {
+      await this.syncPageRecordForRow(input.databaseId, tombstone.record);
+    }
+    return { ...bundle, schema, records: final };
+  }
+
+  async permanentlyDeleteRow(input: { databaseId: string; rowId: string }): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    const tombstone = bundle.schema.deletedRows?.find((item) => String(item.record.id) === input.rowId);
+    if (!tombstone) throw new DatabaseMutationError("DATABASE_NOT_FOUND", `Deleted row not found: ${input.rowId}`);
+    if (this.rowPages) await this.rowPages.handleRowDeleted(input.databaseId, tombstone.record, tombstone.page?.bodyPath);
+    const schema = { ...bundle.schema, updated_time: new Date().toISOString(), deletedRows: bundle.schema.deletedRows?.filter((item) => String(item.record.id) !== input.rowId) };
+    await writeJsonFile(this.workspace.requirePaths().schema(input.databaseId), withoutSchemaTemplates(schema));
+    return { ...bundle, schema };
+  }
+
+  async batchRows(input: { databaseId: string; updates?: Array<{ rowId: string; fieldId: string; value: RecordValue }>; duplicateRowIds?: string[]; deleteRowIds?: string[] }): Promise<{ bundle: DatabaseBundle; errors: Array<{ rowId: string; message: string }>; createdRowIds: string[] }> {
+    const operationCount = (input.updates?.length ?? 0) + (input.duplicateRowIds?.length ?? 0) + (input.deleteRowIds?.length ?? 0);
+    if (operationCount > 500) throw new Error("Batch row operations are limited to 500 items.");
+    const bundle = await this.get(input.databaseId);
+    const errors: Array<{ rowId: string; message: string }> = [];
+    const byId = new Map(bundle.records.map((record) => [String(record.id), record]));
+    const deletedIds = new Set(input.deleteRowIds ?? []);
+    const validDeletedIds = [...deletedIds].filter((rowId) => byId.has(rowId));
+    const deletedPageSnapshots = await this.pageRecords.getSnapshots(validDeletedIds);
+    const updatesByRow = new Map<string, Array<{ fieldId: string; value: RecordValue }>>();
+    for (const update of input.updates ?? []) {
+      const field = bundle.schema.fields.find((candidate) => candidate.id === update.fieldId);
+      if (!byId.has(update.rowId)) { errors.push({ rowId: update.rowId, message: "Row not found." }); continue; }
+      if (!field || field.system || field.type === "formula" || field.type === "rollup") { errors.push({ rowId: update.rowId, message: "Property is not editable." }); continue; }
+      const invalid = validateBatchValue(field, update.value);
+      if (invalid) { errors.push({ rowId: update.rowId, message: invalid }); continue; }
+      updatesByRow.set(update.rowId, [...(updatesByRow.get(update.rowId) ?? []), { fieldId: update.fieldId, value: update.value }]);
+    }
+    const now = new Date().toISOString();
+    let records = bundle.records.map((record) => {
+      const rowId = String(record.id);
+      const updates = updatesByRow.get(rowId);
+      return updates ? { ...record, ...Object.fromEntries(updates.map((update) => [update.fieldId, update.value])), updated_time: now } : record;
+    });
+    const created: Array<{ sourceId: string; record: DatabaseRecord }> = [];
+    for (const rowId of [...new Set(input.duplicateRowIds ?? [])]) {
+      const source = byId.get(rowId);
+      if (!source) { errors.push({ rowId, message: "Row not found." }); continue; }
+      const record = { ...source, id: createId("pg"), title: `${String(source.title ?? "Untitled")} copy`, created_time: now, updated_time: now, page_file: "", body_path: "" };
+      const index = records.findIndex((candidate) => String(candidate.id) === rowId);
+      records.splice(index + 1, 0, record);
+      created.push({ sourceId: rowId, record });
+    }
+    const updatedById = new Map(records.map((record) => [String(record.id), record]));
+    const tombstones = [...(bundle.schema.deletedRows ?? [])].filter((item) => !deletedIds.has(String(item.record.id)));
+    for (const rowId of deletedIds) {
+      const record = updatedById.get(rowId);
+      if (!record) { errors.push({ rowId, message: "Row not found." }); continue; }
+      const page = deletedPageSnapshots.get(rowId);
+      tombstones.push({ record, position: bundle.records.findIndex((candidate) => String(candidate.id) === rowId), deletedAt: now, page });
+    }
+    records = records.filter((record) => !deletedIds.has(String(record.id)));
+    const schema = { ...bundle.schema, updated_time: now, deletedRows: tombstones };
+    const final = await this.writeBundle(schema, records, bundle.views);
+    for (const item of created) {
+      await this.copyRowPageForDuplicate(
+        input.databaseId,
+        schema,
+        byId.get(item.sourceId)!,
+        item.record,
+        now
+      );
+    }
+    await this.pageRecords.deleteMany(validDeletedIds);
+    return { bundle: created.length ? await this.get(input.databaseId) : { ...bundle, schema, records: final }, errors, createdRowIds: created.map((item) => String(item.record.id)) };
   }
 
   /**
@@ -566,42 +919,63 @@ export class DatabaseService {
   }
 
   async syncPageRecordForRow(databaseId: string, record: DatabaseRecord): Promise<void> {
-    await this.syncPageRecordsForRows(databaseId, [record]);
+    const pageId = String(record.id ?? "");
+    if (!pageId) return;
+    const now = new Date().toISOString();
+    await this.pageRecords.upsert({
+      meta: {
+        id: pageId,
+        title: String(record.title ?? "").trim() || "Untitled",
+        created_time: String(record.created_time ?? "") || now,
+        updated_time: String(record.updated_time ?? "") || now,
+        icon: String(record.row_icon ?? "").trim() || undefined
+      },
+      kind: "page",
+      bodyPath: await this.pageRecords.getBodyPath(pageId),
+      databaseId,
+      rowId: pageId
+    });
+  }
+
+  private async copyRowPageForDuplicate(
+    databaseId: string,
+    schema: DatabaseSchema,
+    sourceRecord: DatabaseRecord,
+    targetRecord: DatabaseRecord,
+    now: string
+  ): Promise<void> {
+    if (this.rowPages) {
+      await this.rowPages.duplicate(databaseId, schema, sourceRecord, targetRecord, now);
+      return;
+    }
+    await this.syncPageRecordForRow(databaseId, targetRecord);
   }
 
   async syncPageRecordsForRows(databaseId: string, records: DatabaseRecord[]): Promise<void> {
-    if (records.length === 0) return;
-    const ids = records.map((record) => String(record.id ?? "")).filter(Boolean);
-    const existingById = new Map((await this.pageRecords.listMetas(ids)).map((meta) => [meta.id, meta]));
-    const now = new Date().toISOString();
-    await this.pageRecords.upsertMany(records.flatMap((record) => {
-      const id = String(record.id ?? "");
-      if (!id) return [];
-      const existing = existingById.get(id);
-      return [{
-        meta: {
-          ...existing,
-          id,
-          title: String(record.title ?? "").trim() || existing?.title || "Untitled",
-          created_time: String(record.created_time ?? "") || existing?.created_time || now,
-          updated_time: String(record.updated_time ?? "") || existing?.updated_time || now,
-          icon: String(record.row_icon ?? "").trim() || existing?.icon
-        },
-        kind: "page" as const,
-        databaseId,
-        rowId: id
-      }];
-    }));
+    await Promise.all(records.map((record) => this.syncPageRecordForRow(databaseId, record)));
   }
 
   async createView(input: CreateViewInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
-    const source = bundle.views.find((view) => view.id === input.sourceViewId) || bundle.views[0];
+    assertDatabaseUnlocked(bundle.schema);
+    const requestedName = input.name.trim() || "New view";
+    const name = uniqueViewName(requestedName, bundle.views.map((item) => item.name));
+    const source = input.sourceMode === "duplicate"
+      ? bundle.views.find((view) => view.id === input.sourceViewId)
+      : undefined;
+    if (input.sourceMode === "duplicate" && !source) {
+      throw new DatabaseViewError("VIEW_NOT_FOUND", `Source database view not found: ${input.sourceViewId || "missing"}`);
+    }
+    const empty = createBlankTableView(bundle.schema, name);
     const view: TableView = {
-      ...source,
+      ...(source ?? empty),
       id: createId("view"),
       databaseId: input.databaseId,
-      name: input.name.trim() || "New view"
+      name,
+      type: input.type ?? source?.type ?? "table",
+      position: bundle.views.length,
+      revision: 0,
+      updatedAt: new Date().toISOString()
     };
     const views = [...bundle.views, view];
     const final = await this.writeBundle(bundle.schema, bundle.records, views);
@@ -610,9 +984,10 @@ export class DatabaseService {
 
   async duplicateView(input: DuplicateViewInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     const source = bundle.views.find((view) => view.id === input.viewId);
     if (!source) {
-      throw new Error(`Database view not found: ${input.viewId}`);
+      throw new DatabaseViewError("VIEW_NOT_FOUND", `Database view not found: ${input.viewId}`);
     }
     const view: TableView = {
       ...source,
@@ -621,30 +996,115 @@ export class DatabaseService {
       name: uniqueViewName(
         input.name?.trim() || `${source.name} copy`,
         bundle.views.map((item) => item.name)
-      )
+      ),
+      revision: 0,
+      updatedAt: new Date().toISOString(),
+      position: bundle.views.length
     };
     const views = [...bundle.views, view];
     const final = await this.writeBundle(bundle.schema, bundle.records, views);
     return { ...bundle, records: final, views };
   }
 
+  async reorderViews(input: ReorderViewsInput): Promise<DatabaseBundle> {
+    const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
+    const existingIds = bundle.views.map((view) => view.id);
+    if (input.viewIds.length !== existingIds.length || new Set(input.viewIds).size !== existingIds.length) {
+      throw new DatabaseViewError("INVALID_VIEW_ORDER", "View order must contain every view exactly once.");
+    }
+    if (input.viewIds.some((id) => !existingIds.includes(id))) {
+      throw new DatabaseViewError("INVALID_VIEW_ORDER", "View order contains an unknown view.");
+    }
+    const byId = new Map(bundle.views.map((view) => [view.id, view]));
+    const now = new Date().toISOString();
+    const views = input.viewIds.map((id, position) => ({
+      ...byId.get(id)!,
+      position,
+      revision: viewRevision(byId.get(id)!) + 1,
+      updatedAt: now
+    }));
+    await this.writeViews(bundle.schema, views);
+    return { ...bundle, views };
+  }
+
   async updateView(databaseId: string, view: TableView): Promise<DatabaseBundle> {
-    const bundle = await this.get(databaseId);
-    const next = sanitizeViewForSchema(view, bundle.schema, bundle.records);
-    const views = bundle.views.map((item) => (item.id === next.id ? next : item));
-    const final = await this.writeBundle(bundle.schema, bundle.records, views);
-    return { ...bundle, records: final, views };
+    return this.withViewMutationLock(databaseId, view.id, async () => {
+      const bundle = await this.get(databaseId);
+      assertDatabaseUnlocked(bundle.schema);
+      const current = bundle.views.find((item) => item.id === view.id);
+      if (!current) throw new DatabaseViewError("VIEW_NOT_FOUND", `Database view not found: ${view.id}`);
+      assertUniqueViewName(bundle.views, view.id, view.name);
+      const normalizedInputExpression = normalizeFilterExpression(view.filterExpression, view.filters ?? [], bundle.schema.fields);
+      const filterExpression = JSON.stringify(view.filters ?? []) === JSON.stringify(flattenSimpleAndFilters(normalizedInputExpression))
+        ? normalizedInputExpression
+        : legacyFiltersToExpression(view.filters ?? []);
+      const next = sanitizeViewForSchema({
+        ...view,
+        filterExpression,
+        name: view.name.trim(),
+        revision: viewRevision(current) + 1,
+        updatedAt: new Date().toISOString()
+      }, bundle.schema, bundle.records);
+      await this.writeView(bundle.schema, next);
+      return { ...bundle, views: bundle.views.map((item) => (item.id === next.id ? next : item)) };
+    });
+  }
+
+  async patchView(input: PatchViewInput): Promise<PatchViewResult> {
+    return this.withViewMutationLock(input.databaseId, input.viewId, async () => {
+      const bundle = await this.get(input.databaseId);
+      assertDatabaseUnlocked(bundle.schema);
+      const current = bundle.views.find((item) => item.id === input.viewId);
+      if (!current) throw new DatabaseViewError("VIEW_NOT_FOUND", `Database view not found: ${input.viewId}`);
+      if (typeof input.patch.name === "string") assertUniqueViewName(bundle.views, current.id, input.patch.name);
+      const actualRevision = viewRevision(current);
+      if (input.expectedRevision !== actualRevision) {
+        return {
+          ok: false,
+          error: {
+            code: "VIEW_CONFLICT",
+            message: `Database view changed from revision ${input.expectedRevision} to ${actualRevision}.`,
+            expectedRevision: input.expectedRevision,
+            actualRevision
+          },
+          bundle,
+          currentView: current
+        };
+      }
+      const next = sanitizeViewForSchema({
+        ...current,
+        ...input.patch,
+        filterExpression: input.patch.filters && input.patch.filterExpression === undefined
+          ? legacyFiltersToExpression(input.patch.filters)
+          : input.patch.filterExpression ?? current.filterExpression,
+        name: typeof input.patch.name === "string" ? input.patch.name.trim() : current.name,
+        id: current.id,
+        databaseId: current.databaseId,
+        revision: actualRevision + 1,
+        updatedAt: new Date().toISOString()
+      }, bundle.schema, bundle.records);
+      await this.writeView(bundle.schema, next);
+      const nextBundle = {
+        ...bundle,
+        views: bundle.views.map((item) => (item.id === next.id ? next : item))
+      };
+      return { ok: true, bundle: nextBundle, view: next };
+    });
   }
 
   async deleteView(input: DeleteViewInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     if (bundle.views.length <= 1) {
-      throw new Error("Cannot delete the last database view.");
+      throw new DatabaseViewError("LAST_VIEW", "Cannot delete the last database view.");
     }
     if (!bundle.views.some((view) => view.id === input.viewId)) {
-      throw new Error(`Database view not found: ${input.viewId}`);
+      throw new DatabaseViewError("VIEW_NOT_FOUND", `Database view not found: ${input.viewId}`);
     }
-    const views = bundle.views.filter((view) => view.id !== input.viewId);
+    const views = bundle.views
+      .filter((view) => view.id !== input.viewId)
+      .map((view, position) => ({ ...view, position }));
     const fallbackViewId = views[0]?.id ?? DEFAULT_VIEW_ID;
     const schema: DatabaseSchema = bundle.schema.defaultViewId === input.viewId
       ? { ...bundle.schema, defaultViewId: fallbackViewId, updated_time: new Date().toISOString() }
@@ -657,32 +1117,91 @@ export class DatabaseService {
 
   async setDefaultView(input: SetDefaultViewInput): Promise<DatabaseBundle> {
     const bundle = await this.get(input.databaseId);
+    assertDatabaseUnlocked(bundle.schema);
     if (!bundle.views.some((view) => view.id === input.viewId)) {
-      throw new Error(`Database view not found: ${input.viewId}`);
+      throw new DatabaseViewError("VIEW_NOT_FOUND", `Database view not found: ${input.viewId}`);
     }
     const schema: DatabaseSchema = {
       ...bundle.schema,
       defaultViewId: input.viewId,
       updated_time: new Date().toISOString()
     };
-    const final = await this.writeBundle(schema, bundle.records, bundle.views);
-    return { ...bundle, schema, records: final, views: sortViews(bundle.views, input.viewId) };
+    const views = [
+      bundle.views.find((view) => view.id === input.viewId)!,
+      ...bundle.views.filter((view) => view.id !== input.viewId)
+    ].map((view, position) => ({ ...view, position }));
+    const final = await this.writeBundle(schema, bundle.records, views);
+    return { ...bundle, schema, records: final, views };
   }
 
   private async writeBundle(schema: DatabaseSchema, records: DatabaseRecord[], views: TableView[]): Promise<DatabaseRecord[]> {
-    const paths = this.workspace.requirePaths();
-    const headers = schema.fields.map((field) => field.id);
-    const computedRecords = await this.computeRollupsForWrite(schema, applyFormulasToRecords(records, schema.fields));
-    await writeJsonFile(paths.schema(schema.id, schema.name), withoutSchemaTemplates(schema));
-    await writeCsvFile(paths.data(schema.id, schema.name), headers, computedRecords);
-    await Promise.all(views.map((view) => writeJsonFile(paths.view(schema.id, view.id, schema.name), view)));
-    return computedRecords;
+    try {
+      this.consumeNextBundleWriteFailure();
+      const paths = this.workspace.requirePaths();
+      const headers = schema.fields.map((field) => field.id);
+      const computedRecords = await this.computeRollupsForWrite(schema, applyFormulasToRecords(records, schema.fields));
+      await writeJsonFile(paths.schema(schema.id, schema.name), withoutSchemaTemplates(schema));
+      await writeCsvFile(paths.data(schema.id, schema.name), headers, computedRecords);
+      await Promise.all(views.map((view) => writeJsonFile(paths.view(schema.id, view.id, schema.name), view)));
+      return computedRecords;
+    } catch (error) {
+      throw databasePersistenceError(schema.id, error);
+    }
+  }
+
+  private consumeNextBundleWriteFailure(): void {
+    if (!this.nextBundleWriteFailure) return;
+    const message = this.nextBundleWriteFailure;
+    this.nextBundleWriteFailure = undefined;
+    throw new Error(message);
   }
 
   private async writeViews(schema: DatabaseSchema, views: TableView[]): Promise<void> {
-    const paths = this.workspace.requirePaths();
-    await fileService.ensureDir(paths.viewsDir(schema.id, schema.name));
-    await Promise.all(views.map((view) => writeJsonFile(paths.view(schema.id, view.id, schema.name), view)));
+    try {
+      this.consumeNextViewWriteFailure();
+      const paths = this.workspace.requirePaths();
+      await fileService.ensureDir(paths.viewsDir(schema.id, schema.name));
+      await Promise.all(views.map((view) => writeJsonFile(paths.view(schema.id, view.id, schema.name), view)));
+    } catch (error) {
+      throw databasePersistenceError(schema.id, error);
+    }
+  }
+
+  private async writeView(schema: DatabaseSchema, view: TableView): Promise<void> {
+    try {
+      const failureMatch = process.env.LOTION_TEST_FAIL_VIEW_WRITES_MATCH;
+      this.consumeNextViewWriteFailure();
+      if (process.env.LOTION_TEST_FAIL_VIEW_WRITES === "1" || (failureMatch && JSON.stringify(view).includes(failureMatch))) {
+        throw new Error("Injected view persistence failure");
+      }
+      const paths = this.workspace.requirePaths();
+      await writeJsonFile(paths.view(schema.id, view.id, schema.name), view);
+    } catch (error) {
+      throw databasePersistenceError(schema.id, error);
+    }
+  }
+
+  private consumeNextViewWriteFailure(): void {
+    if (!this.nextViewWriteFailure) return;
+    const message = this.nextViewWriteFailure;
+    this.nextViewWriteFailure = undefined;
+    throw new Error(message);
+  }
+
+  private async withViewMutationLock<T>(databaseId: string, viewId: string, mutation: () => Promise<T>): Promise<T> {
+    const key = `${databaseId}:${viewId}`;
+    const previous = this.viewMutationQueues.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.catch(() => undefined).then(() => current);
+    this.viewMutationQueues.set(key, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await mutation();
+    } finally {
+      release();
+      if (this.viewMutationQueues.get(key) === queued) this.viewMutationQueues.delete(key);
+    }
   }
 
   private async computeRollupsForWrite(schema: DatabaseSchema, records: DatabaseRecord[]): Promise<DatabaseRecord[]> {
@@ -722,7 +1241,7 @@ export class DatabaseService {
     const views = await Promise.all(
       files
         .filter((file) => file.endsWith(".json"))
-        .map((file) => readJsonFile<TableView>(`${paths.viewsDir(databaseId)}/${file}`))
+        .map(async (file) => normalizeViewRevision(await readJsonFile<TableView>(`${paths.viewsDir(databaseId)}/${file}`)))
     );
     return sortViews(views, defaultViewId);
   }
@@ -1305,6 +1824,21 @@ function createDefaultTableView(schema: DatabaseSchema, records: readonly Databa
   };
 }
 
+function createBlankTableView(schema: DatabaseSchema, name: string): TableView {
+  const visibleFieldIds = defaultVisibleFieldIds(schema.fields);
+  return {
+    id: DEFAULT_VIEW_ID,
+    databaseId: schema.id,
+    name,
+    type: "table",
+    visibleFieldIds,
+    fieldOrder: visibleFieldIds,
+    wrapFieldIds: [],
+    sorts: [],
+    filters: []
+  };
+}
+
 function ensureCreatedTimeSortViews(
   schema: DatabaseSchema,
   records: readonly DatabaseRecord[],
@@ -1322,8 +1856,9 @@ function ensureCreatedTimeSortViews(
     const generated = generatedById.get(view.id);
     if (!generated) return view;
     generatedById.delete(view.id);
-    if (!sameGeneratedCreatedTimeView(view, generated)) changed = true;
-    return generated;
+    // Generated views are defaults, not immutable templates. Once persisted,
+    // preserve user filters, widths, ordering, and revision on every reload.
+    return view;
   });
   if (generatedById.size > 0) {
     changed = true;
@@ -1358,18 +1893,6 @@ function createdTimeVisibleFieldIds(schema: DatabaseSchema, records: readonly Da
   return base.flatMap((id) => id === "title" ? ["title", "created_time"] : [id]);
 }
 
-function sameGeneratedCreatedTimeView(a: TableView, b: TableView): boolean {
-  return a.databaseId === b.databaseId &&
-    a.name === b.name &&
-    a.type === b.type &&
-    sameStringList(a.visibleFieldIds, b.visibleFieldIds) &&
-    sameStringList(a.fieldOrder, b.fieldOrder) &&
-    sameStringList(a.wrapFieldIds ?? [], b.wrapFieldIds ?? []) &&
-    a.sorts.length === b.sorts.length &&
-    a.sorts.every((sort, index) => sort.fieldId === b.sorts[index]?.fieldId && sort.direction === b.sorts[index]?.direction) &&
-    a.filters.length === 0;
-}
-
 function sanitizeViewForSchema(view: TableView, schema: DatabaseSchema, records: readonly DatabaseRecord[] = []): TableView {
   const fieldIds = new Set(schema.fields.map((field) => field.id));
   const templateIds = new Set((schema.templates ?? []).map((template) => template.id));
@@ -1385,18 +1908,20 @@ function sanitizeViewForSchema(view: TableView, schema: DatabaseSchema, records:
     safeVisibleFieldIds.filter((id) => !orderedVisibleFields.includes(id))
   );
   const viewType = view.type || "table";
-  const fieldOrder = shouldReorderDefaultViewByContentRichness(view, schema, viewType, safeVisibleFieldIds, orderedVisibleFields)
-    ? orderViewFieldIdsByContentRichness(records, safeVisibleFieldIds)
-    : [...orderedVisibleFields, ...missingVisibleFields];
+  const fieldOrder = [...orderedVisibleFields, ...missingVisibleFields];
 
+  const filterExpression = normalizeFilterExpression(view.filterExpression, view.filters ?? [], schema.fields);
   return {
     ...view,
     databaseId: schema.id,
     visibleFieldIds: safeVisibleFieldIds,
     fieldOrder,
     wrapFieldIds: view.wrapFieldIds?.filter((id) => fieldIds.has(id)),
-    sorts: (view.sorts ?? []).filter((sort) => fieldIds.has(sort.fieldId)),
-    filters: (view.filters ?? []).filter((filter) => fieldIds.has(filter.fieldId)),
+    sorts: sanitizeViewSorts(view.sorts ?? [], fieldIds),
+    filters: flattenSimpleAndFilters(filterExpression),
+    filterExpression,
+    groups: normalizeViewGroups(view.groups, schema.fields, view.type === "kanban" ? view.config?.groupBy : undefined, records),
+    pageOpenMode: normalizePageOpenMode(view.pageOpenMode, viewType),
     columnWidths: view.columnWidths
       ? Object.fromEntries(Object.entries(view.columnWidths).filter(([id, width]) => {
         return fieldIds.has(id) && Number.isFinite(width) && width > 0;
@@ -1415,23 +1940,20 @@ function sanitizeViewForSchema(view: TableView, schema: DatabaseSchema, records:
       : undefined,
     coverFieldId: viewType === "gallery" && view.coverFieldId && fieldIds.has(view.coverFieldId)
       ? view.coverFieldId
+      : undefined,
+    frozenThroughFieldId: view.frozenThroughFieldId && fieldIds.has(view.frozenThroughFieldId) && safeVisibleFieldIds.includes(view.frozenThroughFieldId)
+      ? view.frozenThroughFieldId
       : undefined
   };
 }
 
-function shouldReorderDefaultViewByContentRichness(
-  view: TableView,
-  schema: DatabaseSchema,
-  viewType: TableView["type"],
-  safeVisibleFieldIds: string[],
-  orderedVisibleFields: string[]
-): boolean {
-  if (view.id !== DEFAULT_VIEW_ID || viewType !== "table") return false;
-  if (orderedVisibleFields.length === 0) return true;
-  if (sameStringList(orderedVisibleFields, safeVisibleFieldIds)) return true;
-
-  const schemaDefaultVisible = defaultVisibleFieldIds(schema.fields).filter((id) => safeVisibleFieldIds.includes(id));
-  return sameStringList(orderedVisibleFields, schemaDefaultVisible);
+function sanitizeViewSorts(sorts: readonly TableView["sorts"][number][], fieldIds: ReadonlySet<string>): TableView["sorts"] {
+  const seen = new Set<string>();
+  return sorts.filter((sort) => {
+    if (!fieldIds.has(sort.fieldId) || seen.has(sort.fieldId) || (sort.direction !== "asc" && sort.direction !== "desc")) return false;
+    seen.add(sort.fieldId);
+    return true;
+  });
 }
 
 function sameStringList(a: readonly string[], b: readonly string[]): boolean {
@@ -1439,11 +1961,16 @@ function sameStringList(a: readonly string[], b: readonly string[]): boolean {
 }
 
 function sortViews(views: TableView[], defaultViewId: string): TableView[] {
-  return [...views].sort((a, b) => {
+  const ordered = [...views].sort((a, b) => {
+    if (Number.isFinite(a.position) || Number.isFinite(b.position)) {
+      return (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER)
+        || a.name.localeCompare(b.name);
+    }
     if (a.id === defaultViewId) return -1;
     if (b.id === defaultViewId) return 1;
     return a.name.localeCompare(b.name);
   });
+  return ordered.map((view, position) => view.position === position ? view : { ...view, position });
 }
 
 function uniqueViewName(baseName: string, existingNames: string[]): string {
@@ -1456,6 +1983,73 @@ function uniqueViewName(baseName: string, existingNames: string[]): string {
     candidate = `${baseName} ${suffix}`;
   }
   return candidate;
+}
+
+function assertUniqueViewName(views: readonly TableView[], viewId: string, name: string): void {
+  const normalized = name.trim().toLocaleLowerCase();
+  if (!normalized || views.some((view) => view.id !== viewId && view.name.trim().toLocaleLowerCase() === normalized)) {
+    throw new DatabaseViewError("VIEW_NAME_CONFLICT", "View names must be non-empty and unique within the database.");
+  }
+}
+
+function insertAtIfPresent(values: readonly string[], fieldId: string, index: number): string[] {
+  if (index < 0 || values.includes(fieldId)) return [...values];
+  const next = [...values];
+  next.splice(Math.min(index, next.length), 0, fieldId);
+  return next;
+}
+
+function insertStringAt(values: readonly string[], value: string, afterId?: string, beforeId?: string): string[] {
+  const next = [...values];
+  const before = beforeId ? next.indexOf(beforeId) : -1;
+  const after = afterId ? next.indexOf(afterId) : -1;
+  next.splice(before >= 0 ? before : after >= 0 ? after + 1 : next.length, 0, value);
+  return next;
+}
+
+function insertFieldAt(fields: readonly FieldSchema[], field: FieldSchema, afterId?: string, beforeId?: string): FieldSchema[] {
+  const next = [...fields];
+  const before = beforeId ? next.findIndex((candidate) => candidate.id === beforeId) : -1;
+  const after = afterId ? next.findIndex((candidate) => candidate.id === afterId) : -1;
+  next.splice(before >= 0 ? before : after >= 0 ? after + 1 : next.length, 0, field);
+  return next;
+}
+
+function uniqueFieldName(fields: readonly FieldSchema[], requestedName: string): string {
+  const baseName = requestedName.trim() || "Untitled field";
+  const existing = new Set(fields.map((field) => field.name.trim().toLocaleLowerCase()));
+  if (!existing.has(baseName.toLocaleLowerCase())) return baseName;
+  let suffix = 2;
+  let candidate = `${baseName} ${suffix}`;
+  while (existing.has(candidate.toLocaleLowerCase())) {
+    suffix += 1;
+    candidate = `${baseName} ${suffix}`;
+  }
+  return candidate;
+}
+
+function fieldDependencies(databaseId: string, fields: readonly FieldSchema[], views: readonly TableView[], field: FieldSchema): string[] {
+  const dependencies: string[] = [];
+  const fieldsById = new Map(fields.map((candidate) => [candidate.id, candidate]));
+  for (const candidate of fields) {
+    if (candidate.id === field.id) continue;
+    if (candidate.type === "formula" && candidate.formula && (candidate.formula.includes(field.id) || candidate.formula.includes(field.name))) {
+      dependencies.push(`formula:${candidate.id}`);
+    }
+    const relationField = candidate.rollup?.relationFieldId
+      ? fieldsById.get(candidate.rollup.relationFieldId)
+      : undefined;
+    if (candidate.rollup?.relationFieldId === field.id || (
+      candidate.rollup?.targetFieldId === field.id && relationField?.relation?.targetDatabaseId === databaseId
+    )) {
+      dependencies.push(`rollup:${candidate.id}`);
+    }
+  }
+  for (const view of views) {
+    if (view.filters.some((filter) => filter.fieldId === field.id) || filterExpressionUsesField(view.filterExpression, field.id)) dependencies.push(`filter:${view.id}`);
+    if (view.sorts.some((sort) => sort.fieldId === field.id)) dependencies.push(`sort:${view.id}`);
+  }
+  return [...new Set(dependencies)];
 }
 
 function fallbackVisibleFieldIds(fields: FieldSchema[]): string[] {
@@ -1482,7 +2076,10 @@ function orderViewFieldIdsByContentRichness(records: readonly DatabaseRecord[], 
   });
 }
 
-function orderDefaultViewFieldIds(records: readonly DatabaseRecord[], fieldIds: readonly string[]): string[] {
+function orderDefaultViewFieldIds(
+  records: readonly DatabaseRecord[],
+  fieldIds: readonly string[]
+): string[] {
   return orderFieldIdsByInformationAmount(records, fieldIds, {
     pinnedFirst: ["title"],
     pinnedLast: [ORIGINAL_NOTION_HTML_FIELD_ID, ORIGINAL_NOTION_CSV_FIELD_ID]
@@ -1620,3 +2217,86 @@ function sanitizeRecordsForField(records: DatabaseRecord[], field: FieldSchema):
     return nextValue === value ? record : { ...record, [field.id]: nextValue };
   });
 }
+
+function validateBatchValue(field: FieldSchema, value: RecordValue): string | undefined {
+  if (value === "") return undefined;
+  if (field.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) return "Enter a valid number.";
+  if (field.type === "checkbox" && typeof value !== "boolean") return "Choose a valid checkbox value.";
+  if (
+    field.type === "date"
+    && (
+      typeof value !== "string"
+      || !/^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value)
+      || !parseDateValue(value)
+    )
+  ) return "Enter a valid date.";
+  if (field.type === "select" && (typeof value !== "string" || !(field.options ?? []).some((option) => option.name === value))) return "Choose a valid option.";
+  if (field.type === "multi_select") {
+    if (typeof value !== "string") return "Choose valid options.";
+    const options = new Set((field.options ?? []).map((option) => option.name));
+    if (value.split(";").map((item) => item.trim()).filter(Boolean).some((item) => !options.has(item))) return "Choose valid options.";
+  }
+  return undefined;
+}
+
+function viewRevision(view: TableView): number {
+  return Number.isSafeInteger(view.revision) && (view.revision ?? 0) >= 0 ? view.revision! : 0;
+}
+
+function normalizeViewRevision(view: TableView): TableView {
+  return { ...view, revision: viewRevision(view) };
+}
+
+// Database normalization helpers are exposed only for focused runtime
+// regression tests. DatabaseService remains the supported production API.
+export const databaseServiceTestInternals = {
+  migrateLegacyUrlFields,
+  looksLikeUrlField,
+  looksLikeUrlValue,
+  createDatabaseStatsSchema,
+  normalizeDatabaseStatsSchema,
+  createDatabaseStatsFields,
+  createDatabaseStatsDefaultView,
+  databaseStatsToRecord,
+  recordToDatabaseStats,
+  numberCell,
+  templateHeaders,
+  withTemplateDefaults,
+  parseTemplateValues,
+  parseBooleanCell,
+  withoutSchemaTemplates,
+  normalizeDatabasePath,
+  normalizePathSegments,
+  createDefaultTableView,
+  createBlankTableView,
+  ensureCreatedTimeSortViews,
+  createCreatedTimeSortView,
+  createdTimeVisibleFieldIds,
+  sanitizeViewForSchema,
+  sanitizeViewSorts,
+  sameStringList,
+  sortViews,
+  uniqueViewName,
+  assertUniqueViewName,
+  insertAtIfPresent,
+  insertStringAt,
+  insertFieldAt,
+  uniqueFieldName,
+  fieldDependencies,
+  fallbackVisibleFieldIds,
+  defaultVisibleFieldIds,
+  orderViewFieldIdsByContentRichness,
+  orderDefaultViewFieldIds,
+  needsOptions,
+  normalizeRelationConfig,
+  normalizeRollupConfig,
+  hasDateDisplay,
+  isReadOnlyComputedField,
+  normalizeDatabaseTemplate,
+  normalizeOptions,
+  normalizeTags,
+  sanitizeRecordsForField,
+  validateBatchValue,
+  viewRevision,
+  normalizeViewRevision
+};

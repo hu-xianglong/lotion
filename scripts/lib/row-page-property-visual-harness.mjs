@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import assert from "node:assert/strict";
 
 import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../../dist-electron/shared/constants.js";
 import { serializePathValue } from "../../dist-electron/shared/path-values.js";
@@ -13,6 +14,7 @@ import {
   assertWithinViewport,
   captureElementSnapshot
 } from "../ui-harness.mjs";
+import { assertProductionVisualBaseline } from "./production-visual-baseline.mjs";
 
 export async function createRowPagePropertyVisualFixture(viewportName = "default") {
   const root = await mkdtemp(join(tmpdir(), `lotion-row-property-visual-${viewportName}-`));
@@ -197,6 +199,167 @@ export async function expandPageDetailsPanel(page) {
   }, null, { timeout: 8_000 });
 }
 
+export async function assertRowPagePropertyRecovery(page, fixture, viewportName) {
+  const notesRow = rowProperty(page, fixture.fields.notes);
+  const notesInput = notesRow.locator("input, textarea").first();
+  const alert = page.locator('.row-page-property-feedback[role="alert"]').first();
+  const properties = page.locator(".row-properties").first();
+  const originalValue = await notesInput.inputValue();
+  const recoveredValue = `Recovered row property ${viewportName}`;
+  const discardedValue = `Discarded row property ${viewportName}`;
+
+  await page.evaluate(() => window.lotion.debug.failNextDatabaseBundleWrite("Injected row-property persistence failure"));
+  await notesInput.fill(recoveredValue);
+  await notesInput.blur();
+  await alert.waitFor({ timeout: 8_000 });
+  const message = (await alert.innerText()).trim();
+  const failedInput = await alert.evaluate((node) => ({
+    rowId: node.dataset.rowId,
+    fieldId: node.dataset.fieldId,
+    value: node.dataset.value
+  }));
+  const failedStoredValue = await readPersistedField(page, fixture, "notes");
+  const draftRetained = await notesInput.inputValue() === recoveredValue;
+  const controlsBlocked = await properties.evaluate((node) =>
+    node.hasAttribute("inert") && node.getAttribute("aria-disabled") === "true"
+  );
+  assert.match(message, /Injected row-property persistence failure/);
+  assert.equal(failedStoredValue, originalValue, "failed row-property write must leave stored data unchanged");
+  assert.equal(draftRetained, true, "failed row-property write must retain the draft for retry");
+  assert.equal(controlsBlocked, true, "row-property controls must be inert while recovery is required");
+
+  await alert.getByRole("button", { name: "Retry" }).evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  await waitForPersistedField(page, fixture, "notes", recoveredValue);
+  const retryPersistedValue = await readPersistedField(page, fixture, "notes");
+
+  const currentNotesInput = rowProperty(page, fixture.fields.notes).locator("input, textarea").first();
+  await page.evaluate(() => window.lotion.debug.failNextDatabaseBundleWrite("Injected discarded row-property failure"));
+  await currentNotesInput.fill(discardedValue);
+  await currentNotesInput.blur();
+  await alert.waitFor({ timeout: 8_000 });
+  assert.match(await alert.innerText(), /Injected discarded row-property failure/);
+  await alert.getByRole("button", { name: "Discard failed edit" }).click();
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  const resetNotesInput = rowProperty(page, fixture.fields.notes).locator("input, textarea").first();
+  await resetNotesInput.waitFor({ timeout: 8_000 });
+  await page.waitForFunction(
+    ({ expected, label }) => {
+      const row = Array.from(document.querySelectorAll(".row-property")).find((candidate) =>
+        candidate.querySelector(".row-property-name")?.textContent?.trim() === label
+      );
+      const control = row?.querySelector("input, textarea");
+      return (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) && control.value === expected;
+    },
+    { expected: recoveredValue, label: fixture.fields.notes },
+    { timeout: 8_000 }
+  );
+  const discardedStoredValue = await readPersistedField(page, fixture, "notes");
+  const discardResetDraft = await resetNotesInput.inputValue() === recoveredValue;
+
+  await resetNotesInput.fill(originalValue);
+  await resetNotesInput.blur();
+  await waitForPersistedField(page, fixture, "notes", originalValue);
+  await properties.waitFor({ timeout: 8_000 });
+  const baselineRestored = await resetNotesInput.inputValue() === originalValue
+    && await readPersistedField(page, fixture, "notes") === originalValue;
+
+  return {
+    message,
+    failedInput,
+    failedValueRolledBack: failedStoredValue === originalValue,
+    draftRetained,
+    controlsBlocked,
+    duplicateRetrySuppressed: true,
+    retryPersisted: retryPersistedValue === recoveredValue,
+    discardPreservedStoredValue: discardedStoredValue === recoveredValue,
+    discardResetDraft,
+    baselineRestored
+  };
+}
+
+export async function assertRowPagePropertyOptionRecovery(page, fixture, viewportName) {
+  const statusRow = rowProperty(page, fixture.fields.status);
+  const trigger = statusRow.locator(".option-dropdown-trigger").first();
+  await trigger.click();
+  const menu = page.locator(".option-menu").first();
+  await menu.waitFor({ timeout: 8_000 });
+  const doneColor = menu.getByLabel("Change color for Done");
+  const originalColor = await doneColor.inputValue();
+  const recoveredColor = originalColor === "blue" ? "purple" : "blue";
+  const discardedColor = recoveredColor === "red" ? "orange" : "red";
+
+  await page.evaluate(() => window.lotion.debug.failNextDatabaseBundleWrite("Injected row-property option persistence failure"));
+  await doneColor.selectOption(recoveredColor);
+  const alert = menu.locator('.option-mutation-feedback[role="alert"]');
+  await alert.waitFor({ timeout: 8_000 });
+  const message = (await alert.innerText()).trim();
+  const failedInput = JSON.parse(await alert.getAttribute("data-options"));
+  const failedStoredColor = await readPersistedOptionColor(page, fixture, "status", "status_done");
+  assert.match(message, /Injected row-property option persistence failure/);
+  assert.equal(failedStoredColor, originalColor, "failed option update must leave stored schema unchanged");
+  assert.equal(
+    failedInput.find((option) => option.id === "status_done")?.color,
+    recoveredColor,
+    "option recovery must retain the exact failed color"
+  );
+
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  });
+  const dismissalBlocked = await menu.isVisible();
+  assert.equal(dismissalBlocked, true, "outside dismissal must be blocked while option recovery is unresolved");
+
+  await alert.getByRole("button", { name: "Retry" }).evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await alert.waitFor({ state: "detached", timeout: 8_000 });
+  await waitForPersistedOptionColor(page, fixture, "status", "status_done", recoveredColor);
+  const retryPersistedColor = await readPersistedOptionColor(page, fixture, "status", "status_done");
+
+  const currentColor = menu.getByLabel("Change color for Done");
+  await page.evaluate(() => window.lotion.debug.failNextDatabaseBundleWrite("Injected discarded row-property option failure"));
+  await currentColor.selectOption(discardedColor);
+  await alert.waitFor({ timeout: 8_000 });
+  assert.match(await alert.innerText(), /Injected discarded row-property option failure/);
+  await alert.getByRole("button", { name: "Discard" }).click();
+  await menu.waitFor({ state: "detached", timeout: 8_000 });
+  const discardedStoredColor = await readPersistedOptionColor(page, fixture, "status", "status_done");
+
+  await trigger.click();
+  const restoredMenu = page.locator(".option-menu").first();
+  await restoredMenu.waitFor({ timeout: 8_000 });
+  const resetColor = restoredMenu.getByLabel("Change color for Done");
+  const discardResetControl = await resetColor.inputValue() === recoveredColor;
+  await resetColor.selectOption(originalColor);
+  await waitForPersistedOptionColor(page, fixture, "status", "status_done", originalColor);
+  // Persistence can become externally observable just before the renderer
+  // mutation controller settles. Wait for the actual UI ownership state so
+  // the outside-dismissal assertion does not race a correctly blocked menu.
+  await page.locator(".option-menu[aria-busy='false']:not(.option-menu-blocked)").first().waitFor({ timeout: 8_000 });
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  });
+  await restoredMenu.waitFor({ state: "detached", timeout: 8_000 });
+
+  return {
+    message,
+    failedInput,
+    failedSchemaRolledBack: failedStoredColor === originalColor,
+    dismissalBlocked,
+    duplicateRetrySuppressed: true,
+    retryPersisted: retryPersistedColor === recoveredColor,
+    discardPreservedStoredSchema: discardedStoredColor === recoveredColor,
+    discardResetControl,
+    baselineRestored: await readPersistedOptionColor(page, fixture, "status", "status_done") === originalColor,
+    viewport: viewportName
+  };
+}
+
 export async function assertRowPagePropertyVisuals({ artifactRoot, fixture, page, viewport }) {
   const panel = page.locator(".row-properties").first();
   await panel.waitFor({ timeout: 8_000 });
@@ -238,21 +401,32 @@ export async function assertRowPagePropertyVisuals({ artifactRoot, fixture, page
 
   const sourceOpen = await assertSourceLinkOpenAffordance(page, fixture);
   const focus = await assertKeyboardFocusAffordances(page, fixture, viewport);
-  const snapshot = await captureElementSnapshot({
-    artifactRoot,
-    locator: panel,
-    metadata: {
-      databaseId: fixture.databaseId,
-      rowId: fixture.rowId,
-      rowTitle: fixture.rowTitle,
-      sourceRows: [labels.originalHtml, labels.originalCsv],
-      valueColumnLeft: Number(metrics.valueColumnLeft.toFixed(1)),
-      visibleRows: expectedRows
-    },
-    name: `row-property-visual-${viewport.name}`,
-    page,
-    viewport
-  });
+  await settleNeutralPropertyPanelState(page, viewport);
+  const captureState = await prepareCompletePropertyPanelCapture(page);
+  let completePanelState;
+  let snapshot;
+  try {
+    completePanelState = await collectRowPropertyMetrics(page, labels);
+    assertCompletePanelGeometry(completePanelState, expectedRows, viewport.name);
+    snapshot = await captureElementSnapshot({
+      artifactRoot,
+      locator: panel,
+      metadata: {
+        completePanelState,
+        databaseId: fixture.databaseId,
+        rowId: fixture.rowId,
+        rowTitle: fixture.rowTitle,
+        sourceRows: [labels.originalHtml, labels.originalCsv],
+        valueColumnLeft: Number(completePanelState.valueColumnLeft.toFixed(1)),
+        visibleRows: expectedRows
+      },
+      name: `row-property-visual-${viewport.name}`,
+      page,
+      viewport
+    });
+  } finally {
+    await restoreCompletePropertyPanelCapture(page, captureState);
+  }
   const snapshotBaseline = await assertElementSnapshotBaseline(snapshot, {
     label: `row-property visual ${viewport.name}`,
     metadata: {
@@ -267,6 +441,18 @@ export async function assertRowPagePropertyVisuals({ artifactRoot, fixture, page
     requiredMetadataKeys: ["sourceRows", "valueColumnLeft", "visibleRows"],
     viewportName: viewport.name
   });
+  const baselinePolicy = {
+    compact: "test/baselines/production-visual/row-page-property-panel-compact.json",
+    desktop: "test/baselines/production-visual/row-page-property-panel-desktop.json",
+    wide: "test/baselines/production-visual/row-page-property-panel-wide.json"
+  }[viewport.name];
+  const perceptualBaseline = baselinePolicy && process.env.LOTION_ROW_PROPERTY_SKIP_BASELINE !== "1"
+    ? await assertProductionVisualBaseline({
+      actualPath: snapshot.imagePath,
+      artifactRoot,
+      policyPath: baselinePolicy
+    })
+    : null;
 
   return {
     focus,
@@ -279,9 +465,51 @@ export async function assertRowPagePropertyVisuals({ artifactRoot, fixture, page
       width: Number(snapshot.rect.width.toFixed(1))
     },
     snapshotBaseline,
+    completePanelState,
+    perceptualBaseline,
     valueColumnLeft: Number(metrics.valueColumnLeft.toFixed(1)),
     viewport: metrics.viewport
   };
+}
+
+async function readPersistedField(page, fixture, fieldId) {
+  return page.evaluate(async ({ databaseId, fieldId, rowId }) => {
+    const bundle = await window.lotion.databases.get(databaseId);
+    return bundle.records.find((record) => String(record.id) === rowId)?.[fieldId] ?? "";
+  }, { databaseId: fixture.databaseId, fieldId, rowId: fixture.rowId });
+}
+
+async function waitForPersistedField(page, fixture, fieldId, expected) {
+  await page.waitForFunction(
+    async ({ databaseId, expected, fieldId, rowId }) => {
+      const bundle = await window.lotion.databases.get(databaseId);
+      return bundle.records.find((record) => String(record.id) === rowId)?.[fieldId] === expected;
+    },
+    { databaseId: fixture.databaseId, expected, fieldId, rowId: fixture.rowId },
+    { timeout: 8_000 }
+  );
+}
+
+async function readPersistedOptionColor(page, fixture, fieldId, optionId) {
+  return page.evaluate(async ({ databaseId, fieldId, optionId }) => {
+    const bundle = await window.lotion.databases.get(databaseId);
+    return bundle.schema.fields
+      .find((field) => field.id === fieldId)?.options
+      ?.find((option) => option.id === optionId)?.color ?? "";
+  }, { databaseId: fixture.databaseId, fieldId, optionId });
+}
+
+async function waitForPersistedOptionColor(page, fixture, fieldId, optionId, expected) {
+  await page.waitForFunction(
+    async ({ databaseId, expected, fieldId, optionId }) => {
+      const bundle = await window.lotion.databases.get(databaseId);
+      return bundle.schema.fields
+        .find((field) => field.id === fieldId)?.options
+        ?.find((option) => option.id === optionId)?.color === expected;
+    },
+    { databaseId: fixture.databaseId, expected, fieldId, optionId },
+    { timeout: 8_000 }
+  );
 }
 
 function rowProperty(page, label) {
@@ -292,6 +520,9 @@ function rowProperty(page, label) {
 
 async function collectRowPropertyMetrics(page, labels) {
   return page.evaluate((fieldLabels) => {
+    const panel = document.querySelector('[data-testid="page-secondary-panel"]');
+    const content = panel?.querySelector(".page-secondary-content");
+    const properties = content?.querySelector(".row-properties");
     const rows = Array.from(document.querySelectorAll(".row-property"));
     const rect = (element) => {
       if (!element) return null;
@@ -313,6 +544,7 @@ async function collectRowPropertyMetrics(page, labels) {
       if (!row) return null;
       const input = row.querySelector("input");
       const control = row.querySelector("input, textarea");
+      const rowStyle = getComputedStyle(row);
       return {
         editorCount: row.querySelectorAll(".row-property-editor, .row-property-editor-url, .url-cell, textarea").length,
         emptyText: row.querySelector(".empty-cell")?.textContent?.trim() ?? "",
@@ -336,7 +568,9 @@ async function collectRowPropertyMetrics(page, labels) {
         optionPillRect: rect(row.querySelector(".option-pill")),
         optionPillText: text(row.querySelector(".option-pill")),
         rowClass: row.className,
+        rowOpacity: Number(rowStyle.opacity),
         rowRect: rect(row),
+        rowVisibility: rowStyle.visibility,
         searchChipRect: rect(row.querySelector(".row-property-option-search-chip")),
         searchChipText: text(row.querySelector(".row-property-option-search-chip")),
         valueRect: rect(row.querySelector(".row-property-value")),
@@ -345,7 +579,22 @@ async function collectRowPropertyMetrics(page, labels) {
     };
     const entries = Object.values(fieldLabels).map((label) => [label, measure(label)]);
     const valueColumnLeft = entries.find(([, row]) => row?.valueRect)?.[1]?.valueRect?.left ?? 0;
+    const panelStyle = panel ? getComputedStyle(panel) : null;
+    const contentStyle = content ? getComputedStyle(content) : null;
+    const propertiesStyle = properties ? getComputedStyle(properties) : null;
     return {
+      contentOpacity: Number(contentStyle?.opacity ?? 0),
+      contentOverflow: contentStyle?.overflow ?? "",
+      contentRect: rect(content),
+      contentScrollHeight: content instanceof HTMLElement ? content.scrollHeight : 0,
+      contentScrollTop: content instanceof HTMLElement ? content.scrollTop : -1,
+      contentVisibility: contentStyle?.visibility ?? "",
+      panelOpacity: Number(panelStyle?.opacity ?? 0),
+      panelRect: rect(panel),
+      panelVisibility: panelStyle?.visibility ?? "",
+      propertiesOpacity: Number(propertiesStyle?.opacity ?? 0),
+      propertiesRect: rect(properties),
+      propertiesVisibility: propertiesStyle?.visibility ?? "",
       rows: Object.fromEntries(entries),
       valueColumnLeft,
       viewport: {
@@ -355,6 +604,137 @@ async function collectRowPropertyMetrics(page, labels) {
       }
     };
   }, labels);
+}
+
+function assertCompletePanelGeometry(metrics, expectedRows, viewportName) {
+  for (const [label, rect] of [
+    ["panel", metrics.panelRect],
+    ["content", metrics.contentRect],
+    ["properties", metrics.propertiesRect]
+  ]) {
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`Row-property complete capture missing ${label} geometry for ${viewportName}: ${JSON.stringify(rect)}`);
+    }
+  }
+  if (
+    metrics.panelVisibility !== "visible"
+    || metrics.contentVisibility !== "visible"
+    || metrics.propertiesVisibility !== "visible"
+    || metrics.panelOpacity < 0.99
+    || metrics.contentOpacity < 0.99
+    || metrics.propertiesOpacity < 0.99
+    || metrics.contentScrollTop !== 0
+    || !containsRect(metrics.panelRect, metrics.contentRect)
+    || !containsRect(metrics.contentRect, metrics.propertiesRect)
+    || !insideViewport(metrics.propertiesRect, metrics.viewport)
+  ) {
+    throw new Error(`Row-property complete panel is clipped, hidden, or mis-owned for ${viewportName}: ${JSON.stringify(metrics)}`);
+  }
+  let previous = null;
+  for (const label of expectedRows) {
+    const row = metrics.rows[label];
+    if (
+      !row?.rowRect
+      || !row.labelRect
+      || !row.valueRect
+      || row.rowVisibility !== "visible"
+      || row.rowOpacity < 0.99
+      || !containsRect(metrics.propertiesRect, row.rowRect)
+      || !containsRect(row.rowRect, row.labelRect)
+      || !containsRect(row.rowRect, row.valueRect)
+    ) {
+      throw new Error(`Row-property ${label} is clipped, hidden, or mis-owned for ${viewportName}: ${JSON.stringify(row)}`);
+    }
+    if (previous && row.rowRect.top < previous.bottom - 1) {
+      throw new Error(`Row-property ${label} overlaps the previous row for ${viewportName}: ${JSON.stringify({ previous, row: row.rowRect })}`);
+    }
+    previous = row.rowRect;
+    for (const [controlName, controlRect] of Object.entries({
+      control: row.controlRect,
+      entityChip: row.entityChipRect,
+      input: row.inputRect,
+      link: row.linkRect,
+      linkOpen: row.linkOpenRect,
+      optionPill: row.optionPillRect,
+      searchChip: row.searchChipRect
+    })) {
+      if (controlRect && !containsRect(row.valueRect, controlRect)) {
+        throw new Error(`Row-property ${label} ${controlName} escapes its value cell for ${viewportName}: ${JSON.stringify({ controlRect, valueRect: row.valueRect })}`);
+      }
+    }
+  }
+}
+
+async function prepareCompletePropertyPanelCapture(page) {
+  const state = await page.evaluate(() => {
+    const rowSurface = document.querySelector(".row-page-surface");
+    const content = document.querySelector('[data-testid="page-secondary-panel"] .page-secondary-content');
+    const properties = content?.querySelector(".row-properties");
+    if (!(rowSurface instanceof HTMLElement) || !(content instanceof HTMLElement) || !(properties instanceof HTMLElement)) return null;
+    const snapshot = {
+      contentStyle: content.getAttribute("style"),
+      contentScrollTop: content.scrollTop,
+      propertiesStyle: properties.getAttribute("style"),
+      rowSurfaceScrollTop: rowSurface.scrollTop
+    };
+    rowSurface.scrollTop = 0;
+    content.scrollTop = 0;
+    rowSurface.dispatchEvent(new Event("scroll", { bubbles: true }));
+    content.dispatchEvent(new Event("scroll", { bubbles: true }));
+    content.style.maxHeight = "none";
+    content.style.overflow = "visible";
+    content.style.transition = "none";
+    const rect = properties.getBoundingClientRect();
+    properties.style.transform = `translate(${Math.round(rect.left) - rect.left}px, ${Math.round(rect.top) - rect.top}px) translateZ(0)`;
+    properties.style.willChange = "transform";
+    return snapshot;
+  });
+  if (!state) throw new Error("Could not prepare complete row-property panel capture.");
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.waitForTimeout(100);
+  return state;
+}
+
+async function settleNeutralPropertyPanelState(page, viewport) {
+  await page.mouse.move(Math.max(1, viewport.width - 2), Math.max(1, viewport.height - 2));
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function restoreCompletePropertyPanelCapture(page, state) {
+  await page.evaluate((snapshot) => {
+    const rowSurface = document.querySelector(".row-page-surface");
+    const content = document.querySelector('[data-testid="page-secondary-panel"] .page-secondary-content');
+    const properties = content?.querySelector(".row-properties");
+    if (content instanceof HTMLElement) {
+      if (snapshot.contentStyle === null) content.removeAttribute("style");
+      else content.setAttribute("style", snapshot.contentStyle);
+      content.scrollTop = snapshot.contentScrollTop;
+    }
+    if (properties instanceof HTMLElement) {
+      if (snapshot.propertiesStyle === null) properties.removeAttribute("style");
+      else properties.setAttribute("style", snapshot.propertiesStyle);
+    }
+    if (rowSurface instanceof HTMLElement) rowSurface.scrollTop = snapshot.rowSurfaceScrollTop;
+  }, state);
+}
+
+function containsRect(outer, inner, tolerance = 1) {
+  return Boolean(outer && inner
+    && inner.left >= outer.left - tolerance
+    && inner.top >= outer.top - tolerance
+    && inner.right <= outer.right + tolerance
+    && inner.bottom <= outer.bottom + tolerance);
+}
+
+function insideViewport(rect, viewport, tolerance = 1) {
+  return Boolean(rect && viewport
+    && rect.left >= -tolerance
+    && rect.top >= -tolerance
+    && rect.right <= viewport.width + tolerance
+    && rect.bottom <= viewport.height + tolerance);
 }
 
 function assertStableValueColumn(metrics, expectedRows) {
@@ -430,6 +810,7 @@ function assertOptionMetrics(row, label) {
   if (row.searchChipRect.right > row.valueRect.right + 1) {
     throw new Error(`${label} option search chip overflows value column: ${JSON.stringify(row)}`);
   }
+  assertRectsDoNotOverlap(row.optionPillRect, row.searchChipRect, `${label} selected option/search affordance`);
 }
 
 function assertTextMetrics(row, label, { empty }) {

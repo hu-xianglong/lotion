@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/constants.js";
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import { assertSettingsCenterArtifactContract } from "./lib/settings-center-artifacts.mjs";
 import {
   assertNoDocumentHorizontalOverflow,
@@ -29,39 +30,70 @@ const result = await withLotionUIHarness("settings-center-ui", async ({ artifact
 
     await openSettingsFromSidebar(page);
     const initial = await assertSettingsCenter(page, viewport.name, "General");
+    const dateTimeDefaults = await verifyDateTimeDefaultSettings(page, viewport.name);
+    const dateTimeSnapshot = await captureElementSnapshot({
+      artifactRoot,
+      locator: page.locator('[data-testid="settings-center"]').first(),
+      metadata: { dateTimeDefaults, phase: "global-date-time-defaults", viewport: viewport.name },
+      name: `settings-center-date-time-${viewport.name}`,
+      page,
+      viewport
+    });
     const searchJump = await verifySettingsSearchJump(page, viewport.name);
     const searchAiDeepLink = await verifySearchAiSettingsDeepLink(page, viewport.name);
     const importSection = await verifyPluginSettingsSection(page, viewport.name, "Import", ["Latest import report", "Audit imported workspace"]);
     const pluginsSection = await verifyPluginSettingsSection(page, viewport.name, "Plugins", ["Installed plugins", "Open plugin manager"]);
+    const snapshotState = await stabilizeSettingsSnapshot(page, viewport.name);
     const snapshot = await captureElementSnapshot({
       artifactRoot,
       locator: page.locator('[data-testid="settings-center"]').first(),
       metadata: {
         initial,
+        dateTimeDefaults,
         importSection,
         pluginsSection,
         searchAiDeepLink,
         searchJump,
+        snapshotState,
         viewport: viewport.name
       },
       name: `settings-center-${viewport.name}`,
       page,
       viewport
     });
+    const baselinePolicy = {
+      compact: "test/baselines/production-visual/settings-center-compact.json",
+      desktop: "test/baselines/production-visual/settings-center-desktop.json",
+      wide: "test/baselines/production-visual/settings-center-wide.json"
+    }[viewport.name];
+    const perceptualBaseline = baselinePolicy && process.env.LOTION_SETTINGS_CENTER_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: snapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
     viewports.push({
       viewport: viewport.name,
       workspaceRoot: fixture.root,
       initial,
+      dateTimeDefaults,
+      dateTimeSnapshot,
       importSection,
       pluginsSection,
       searchAiDeepLink,
       searchJump,
-      snapshot
+      snapshotState,
+      snapshot,
+      perceptualBaseline
     });
   });
   const summary = { cdpUrl, status: "passed", viewports };
   summary.artifactContract = await assertSettingsCenterArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_SETTINGS_CENTER_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
   });
   return summary;
 });
@@ -97,6 +129,25 @@ async function assertSettingsCenter(page, viewportName, expectedSection) {
   return { activeText, categories };
 }
 
+async function verifyDateTimeDefaultSettings(page, viewportName) {
+  const center = page.locator('[data-testid="settings-center"]').first();
+  const dateFormat = center.getByLabel(/Default date format|默认日期格式/);
+  const timeFormat = center.getByLabel(/Default time format|默认时间格式/);
+  await dateFormat.waitFor({ timeout: 8_000 });
+  await timeFormat.waitFor({ timeout: 8_000 });
+  await dateFormat.selectOption("iso");
+  await timeFormat.selectOption("h24");
+  const state = await page.evaluate(() => ({
+    dateFormat: window.localStorage.getItem("lotion.settings.defaultDateFormat"),
+    timeFormat: window.localStorage.getItem("lotion.settings.defaultTimeFormat")
+  }));
+  if (state.dateFormat !== "iso" || state.timeFormat !== "h24") {
+    throw new Error(`Global date/time defaults did not persist for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  await assertSettingsGeometry(page, `date-time defaults ${viewportName}`);
+  return state;
+}
+
 async function verifySettingsSearchJump(page, viewportName) {
   const center = page.locator('[data-testid="settings-center"]').first();
   const input = center.getByLabel("Search settings");
@@ -119,7 +170,20 @@ async function verifySearchAiSettingsDeepLink(page, viewportName) {
   const surface = page.locator('[data-testid="search-ai-surface"]').first();
   await surface.waitFor({ timeout: 8_000 });
   await assertWithinViewport(page, surface, `Search & AI source surface ${viewportName}`, 8);
-  await surface.getByRole("tab", { name: "Advanced" }).click();
+  const advancedTab = surface.getByRole("tab", { name: "Advanced" });
+  await advancedTab.waitFor({ state: "visible", timeout: 8_000 });
+  const advancedTabClick = await advancedTab.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const metrics = {
+      disabled: element instanceof HTMLButtonElement ? element.disabled : false,
+      height: rect.height,
+      width: rect.width
+    };
+    element.click();
+    return metrics;
+  });
+  await surface.getByRole("button", { name: "Search & AI Settings" }).waitFor({ timeout: 8_000 });
+  advancedTabClick.ariaSelectedAfter = await surface.getByRole("tab", { name: "Advanced" }).getAttribute("aria-selected");
   await surface.getByRole("button", { name: "Search & AI Settings" }).click();
   await surface.waitFor({ state: "detached", timeout: 8_000 });
   const center = page.locator('[data-testid="settings-center"]').first();
@@ -129,7 +193,7 @@ async function verifySearchAiSettingsDeepLink(page, viewportName) {
   await center.getByText("Lotion API permissions").first().waitFor({ timeout: 8_000 });
   await assertSettingsGeometry(page, `search ai deep link ${viewportName}`);
   const pluginHosts = await center.locator(".plugin-settings-tab-host").count();
-  return { pluginHosts };
+  return { advancedTabClick, pluginHosts };
 }
 
 async function verifyPluginSettingsSection(page, viewportName, sectionName, expectedTexts) {
@@ -179,6 +243,74 @@ async function assertSettingsGeometry(page, label) {
     throw new Error(`Settings center geometry failed for ${label}: ${JSON.stringify(metrics)}`);
   }
   return metrics;
+}
+
+async function stabilizeSettingsSnapshot(page, viewportName) {
+  const center = page.locator('[data-testid="settings-center"]').first();
+  const activeTab = center.locator(".settings-section-list button.active").first();
+  await activeTab.waitFor({ state: "visible", timeout: 8_000 });
+  await activeTab.evaluate(async (element) => {
+    const animations = element.getAnimations({ subtree: true });
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  });
+  const state = await center.evaluate((element) => {
+    const active = element.querySelector(".settings-section-list button.active");
+    const pane = element.querySelector('[data-testid="settings-center-pane"]');
+    const navigation = element.querySelector(".settings-center-nav");
+    const pluginRows = Array.from(element.querySelectorAll(".settings-plugin-list-row"));
+    const activeStyle = active instanceof HTMLElement ? getComputedStyle(active) : null;
+    const centerRect = element.getBoundingClientRect();
+    const paneRect = pane?.getBoundingClientRect();
+    const pluginRowRects = pluginRows.map((row) => row.getBoundingClientRect());
+    const lastPluginRowRect = pluginRowRects.at(-1);
+    return {
+      activeTab: active?.textContent?.trim() || "",
+      activeTabAriaSelected: active?.getAttribute("aria-selected") || "",
+      activeTabStyle: activeStyle
+        ? {
+          backgroundColor: activeStyle.backgroundColor,
+          borderColor: activeStyle.borderColor,
+          color: activeStyle.color
+        }
+        : null,
+      focusedInside: element.contains(document.activeElement),
+      lastPluginRowWithinCenter: Boolean(
+        lastPluginRowRect
+        && lastPluginRowRect.left >= centerRect.left
+        && lastPluginRowRect.right <= centerRect.right
+        && lastPluginRowRect.top >= centerRect.top
+        && lastPluginRowRect.bottom <= centerRect.bottom + 1
+      ),
+      navigationScrollTop: navigation instanceof HTMLElement ? navigation.scrollTop : null,
+      paneScrollTop: pane instanceof HTMLElement ? pane.scrollTop : null,
+      paneVisible: Boolean(paneRect && paneRect.width > 0 && paneRect.height > 0),
+      pluginRowCount: pluginRows.length,
+      visiblePluginRowCount: pluginRowRects.filter((rect) =>
+        rect.width > 0
+        && rect.height > 0
+        && rect.left >= centerRect.left
+        && rect.right <= centerRect.right
+        && rect.top >= centerRect.top
+        && rect.bottom <= centerRect.bottom + 1
+      ).length
+    };
+  });
+  if (
+    state.activeTab !== "PluginsExtensions"
+    || state.activeTabAriaSelected !== "true"
+    || state.focusedInside
+    || !state.lastPluginRowWithinCenter
+    || state.navigationScrollTop !== 0
+    || state.paneScrollTop !== 0
+    || !state.paneVisible
+    || state.pluginRowCount < 7
+    || state.visiblePluginRowCount !== state.pluginRowCount
+  ) {
+    throw new Error(`Settings Center snapshot state failed for ${viewportName}: ${JSON.stringify(state)}`);
+  }
+  return state;
 }
 
 async function createSettingsCenterFixture(viewportName) {

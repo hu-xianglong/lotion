@@ -137,7 +137,7 @@ test("customer API metrics records success and errors without payload bodies", a
   try {
     await api.workspace.createAt(root, { name: "Metrics Space" });
     await api.pages.create({ title: sensitiveTitle });
-    await assert.rejects(() => api.databases.get(missingId), /ENOENT|no such file/i);
+    await assert.rejects(() => api.databases.get(missingId), (error) => error?.code === "DATABASE_NOT_FOUND" && /not found/i.test(error.message));
 
     const entries = await api.metrics.list();
     assert.equal(entries.some((entry) => entry.methodId === "workspace.createAt" && entry.ok), true);
@@ -238,6 +238,69 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
     assert.equal(page.meta.title, "API Page Renamed");
     assert.equal((await api.pages.get(page.meta.id)).meta.title, "API Page Renamed");
     const parentPage = await api.pages.create({ title: "Parent API Page" });
+    const childPage = await api.pages.create({
+      title: "Child API Page",
+      parentId: parentPage.meta.id,
+      parentKind: "page"
+    });
+    await assert.rejects(
+      api.pages.update(parentPage.meta.id, {
+        parentId: parentPage.meta.id,
+        parentKind: "page",
+        path: [parentPage.meta.title, parentPage.meta.title]
+      }),
+      /cannot parent a page under itself/i
+    );
+    await assert.rejects(
+      api.pages.update(parentPage.meta.id, {
+        parentId: childPage.meta.id,
+        parentKind: "page",
+        path: [parentPage.meta.title, childPage.meta.title, parentPage.meta.title]
+      }),
+      /would create a page hierarchy cycle/i
+    );
+    assert.equal((await api.pages.get(parentPage.meta.id)).meta.parentId, undefined);
+    let databaseParentedPage = await api.pages.update(parentPage.meta.id, {
+      parentId: "db_external_parent",
+      parentKind: "database",
+      path: ["External database", parentPage.meta.title]
+    });
+    assert.equal(databaseParentedPage.meta.parentId, "db_external_parent");
+    assert.equal(databaseParentedPage.meta.parentKind, "database");
+    databaseParentedPage = await api.pages.update(parentPage.meta.id, {
+      parentId: null,
+      parentKind: null,
+      path: [parentPage.meta.title]
+    });
+    assert.equal(databaseParentedPage.meta.parentId, undefined);
+    const concurrentParentA = await api.pages.create({ title: "Concurrent Parent A" });
+    const concurrentParentB = await api.pages.create({ title: "Concurrent Parent B" });
+    const concurrentMoves = await Promise.allSettled([
+      api.pages.update(concurrentParentA.meta.id, {
+        parentId: concurrentParentB.meta.id,
+        parentKind: "page"
+      }),
+      api.pages.update(concurrentParentB.meta.id, {
+        parentId: concurrentParentA.meta.id,
+        parentKind: "page"
+      })
+    ]);
+    assert.equal(concurrentMoves.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(concurrentMoves.filter((result) => result.status === "rejected").length, 1);
+    assert.match(
+      String(concurrentMoves.find((result) => result.status === "rejected")?.reason),
+      /page hierarchy cycle/i
+    );
+    const concurrentParentAAfter = await api.pages.get(concurrentParentA.meta.id);
+    const concurrentParentBAfter = await api.pages.get(concurrentParentB.meta.id);
+    assert.equal(
+      concurrentParentAAfter.meta.parentId === concurrentParentB.meta.id &&
+        concurrentParentBAfter.meta.parentId === concurrentParentA.meta.id,
+      false
+    );
+    await api.pages.delete(concurrentParentA.meta.id);
+    await api.pages.delete(concurrentParentB.meta.id);
+    await api.pages.delete(childPage.meta.id);
     page = await api.pages.update(page.meta.id, {
       parentId: parentPage.meta.id,
       parentKind: "page",
@@ -309,7 +372,8 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
     assert.equal(Object.hasOwn(bundle.records.find((record) => record.id === acmeRowId) ?? {}, priorityField.id), false);
     assert.equal(bundle.views.some((view) => view.visibleFieldIds.includes(priorityField.id)), false);
     assert.equal(bundle.views.some((view) => view.fieldOrder.includes(priorityField.id)), false);
-    bundle = await api.databases.deleteField(databaseId, "title");
+    await assert.rejects(() => api.databases.deleteField(databaseId, "title"), /System and title properties cannot be deleted/);
+    bundle = await api.databases.get(databaseId);
     assert.equal(bundle.schema.fields.some((field) => field.id === "title"), true);
     bundle = await api.databases.addField(databaseId, { name: "Imported date", type: "date" });
     const importedDateField = bundle.schema.fields.find((field) => field.name === "Imported date");
@@ -400,7 +464,13 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
 
     const tree = await api.workspace.getPagesTree();
     assert.equal(tree.topLevelPages.length, 1);
-    assert.equal(tree.databases.some((folder) => folder.databaseId === databaseId), true);
+    const treeDatabase = tree.databases.find((folder) => folder.databaseId === databaseId);
+    assert.ok(treeDatabase);
+    assert.equal(
+      treeDatabase.fileNames.some((fileName) => fileName.endsWith(`--${templateRowId}.md`)),
+      true,
+      "page tree should derive row-page files from the authoritative page index"
+    );
 
     const addedAttachment = await api.attachments.add(Buffer.from("plugin attachment body"), "txt");
     assert.match(addedAttachment.sha, /^[a-f0-9]{24}$/);
@@ -481,7 +551,7 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
     await api.databases.delete(disposableDatabaseId);
     assert.equal((await api.databases.list()).some((item) => item.id === disposableDatabaseId), false);
     assert.equal((await api.workspace.getManifest()).databases.includes(disposableDatabaseId), false);
-    await assert.rejects(() => api.databases.get(disposableDatabaseId), /ENOENT|no such file/i);
+    await assert.rejects(() => api.databases.get(disposableDatabaseId), (error) => error?.code === "DATABASE_NOT_FOUND" && /not found/i.test(error.message));
 
     const disposablePage = await api.pages.create({ title: "Disposable API Page" });
     assert.equal((await api.workspace.getManifest()).activePageId, disposablePage.meta.id);

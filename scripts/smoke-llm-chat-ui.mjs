@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertLLMChatArtifactContract } from "./lib/llm-chat-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertNoDocumentHorizontalOverflow,
   captureElementSnapshot,
@@ -57,7 +58,10 @@ const result = await withLotionUIHarness("llm-chat-ui", async ({ artifactRoot, c
     status: "passed"
   };
   summary.artifactContract = await assertLLMChatArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_LLM_CHAT_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
   });
   return summary;
 });
@@ -328,7 +332,7 @@ async function assertLLMChatPanelState(page, fixture, viewport, artifactRoot) {
 }
 
 async function assertLLMChatInteraction(page, fixture, viewport, artifactRoot) {
-  await installLLMChatDebugHook(page);
+  await installLLMChatDebugHook(page, { holdFirstRequest: true });
   await openLLMChatFromSidebar(page);
   const modal = page.locator(".openai-llm-assistant-shell").filter({ hasText: "LLM Chat" }).first();
   await modal.waitFor({ timeout: 8_000 });
@@ -355,6 +359,7 @@ async function assertLLMChatInteraction(page, fixture, viewport, artifactRoot) {
   }
   if (!await sendButton.isDisabled()) throw new Error("LLM Chat send button should be disabled while completion is running.");
   if (!await clearButton.isDisabled()) throw new Error("LLM Chat clear button should be disabled while completion is running.");
+  await releaseLLMChatDebugRequest(page);
 
   await modal.locator(".openai-llm-chat-message.is-assistant .openai-llm-chat-message-label", { hasText: "LLM" }).waitFor({ timeout: 8_000 });
   const assistantText = `Smoke response for: ${prompt}`;
@@ -405,6 +410,18 @@ async function assertLLMChatInteraction(page, fixture, viewport, artifactRoot) {
     page,
     viewport
   });
+  const baselinePolicy = {
+    compact: "test/baselines/production-visual/llm-chat-conversation-compact.json",
+    desktop: "test/baselines/production-visual/llm-chat-conversation-desktop.json",
+    wide: "test/baselines/production-visual/llm-chat-conversation-wide.json"
+  }[viewport.name];
+  conversationSnapshot.perceptualBaseline = baselinePolicy && process.env.LOTION_LLM_CHAT_SKIP_BASELINE !== "1"
+    ? await assertProductionVisualBaseline({
+      actualPath: conversationSnapshot.imagePath,
+      artifactRoot,
+      policyPath: baselinePolicy
+    })
+    : null;
 
   await modal.getByRole("button", { name: "Close LLM Chat" }).click();
   await modal.waitFor({ state: "detached", timeout: 8_000 });
@@ -512,18 +529,46 @@ async function assertWorkspaceQASourceCitations(page, modal, fixture, viewport, 
 }
 
 async function captureLLMChatSnapshot({ artifactRoot, fixture, metadata, modal, page, viewport }) {
+  await stabilizeLLMChatSnapshot(page, modal);
   const geometry = await readLLMChatGeometry(modal);
-  const visibleState = await modal.evaluate((dialog) => ({
-    providerValue: dialog.querySelector(".openai-llm-chat-provider")?.value ?? "",
-    modelValue: dialog.querySelector(".openai-llm-chat-model")?.value ?? "",
-    permissionText: dialog.querySelector(".openai-llm-chat-permissions-state")?.textContent?.trim() ?? "",
-    statusText: dialog.querySelector(".openai-llm-chat-status")?.textContent?.trim() ?? "",
-    historyItems: dialog.querySelectorAll(".openai-llm-chat-history-item").length,
-    messages: Array.from(dialog.querySelectorAll(".openai-llm-chat-message")).map((message) => ({
-      label: message.querySelector(".openai-llm-chat-message-label")?.textContent?.trim() ?? "",
-      content: message.querySelector(".openai-llm-chat-message-content")?.textContent?.trim() ?? ""
-    }))
-  }));
+  const visibleState = await modal.evaluate((dialog) => {
+    const transcript = dialog.querySelector(".openai-llm-chat-transcript");
+    const transcriptRect = transcript?.getBoundingClientRect();
+    return {
+      providerValue: dialog.querySelector(".openai-llm-chat-provider")?.value ?? "",
+      modelValue: dialog.querySelector(".openai-llm-chat-model")?.value ?? "",
+      permissionText: dialog.querySelector(".openai-llm-chat-permissions-state")?.textContent?.trim() ?? "",
+      statusText: dialog.querySelector(".openai-llm-chat-status")?.textContent?.trim() ?? "",
+      historyItems: dialog.querySelectorAll(".openai-llm-chat-history-item").length,
+      transcriptViewport: {
+        clientHeight: transcript instanceof HTMLElement ? transcript.clientHeight : 0,
+        scrollHeight: transcript instanceof HTMLElement ? transcript.scrollHeight : 0,
+        scrollTop: transcript instanceof HTMLElement ? transcript.scrollTop : 0
+      },
+      messages: Array.from(dialog.querySelectorAll(".openai-llm-chat-message")).map((message) => {
+        const rect = message.getBoundingClientRect();
+        return {
+          label: message.querySelector(".openai-llm-chat-message-label")?.textContent?.trim() ?? "",
+          content: message.querySelector(".openai-llm-chat-message-content")?.textContent?.trim() ?? "",
+          fullyVisible: Boolean(
+            transcriptRect
+            && rect.width > 0
+            && rect.height > 0
+            && rect.top >= transcriptRect.top
+            && rect.bottom <= transcriptRect.bottom + 0.5
+          ),
+          rect: {
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height
+          }
+        };
+      })
+    };
+  });
   const snapshot = await captureElementSnapshot({
     artifactRoot,
     locator: modal,
@@ -547,6 +592,17 @@ async function captureLLMChatSnapshot({ artifactRoot, fixture, metadata, modal, 
   };
 }
 
+async function stabilizeLLMChatSnapshot(page, modal) {
+  await page.mouse.move(0, 0);
+  await modal.evaluate(async (dialog) => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const animations = dialog.getAnimations({ subtree: true });
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+    dialog.getBoundingClientRect();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
 async function inputErrorScenario(modal) {
   const input = modal.locator(".openai-llm-chat-input").first();
   const sendButton = modal.getByRole("button", { name: "Send" }).first();
@@ -556,12 +612,21 @@ async function inputErrorScenario(modal) {
   await modal.locator(".openai-llm-chat-message.is-assistant .openai-llm-chat-message-content", { hasText: "Smoke forced error" }).waitFor({ timeout: 8_000 });
 }
 
-async function installLLMChatDebugHook(page) {
-  await page.evaluate(() => {
+async function installLLMChatDebugHook(page, { holdFirstRequest = false } = {}) {
+  await page.evaluate(({ hold }) => {
     window.__lotionLLMChatDebugRequests = [];
+    window.__lotionLLMChatDebugHoldFirstRequest = hold;
+    window.__lotionLLMChatDebugFirstRequestReleased = false;
     window.__lotionLLMChatDebugComplete = async (request) => {
       window.__lotionLLMChatDebugRequests.push(request);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (window.__lotionLLMChatDebugHoldFirstRequest && !window.__lotionLLMChatDebugFirstRequestReleased) {
+        await new Promise((resolve) => {
+          window.__lotionLLMChatDebugReleaseFirstRequest = resolve;
+        });
+        window.__lotionLLMChatDebugFirstRequestReleased = true;
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       const normalizedPrompt = request.prompt.trim();
       if (normalizedPrompt === "Force an error." || normalizedPrompt.endsWith("User:\nForce an error.")) {
         throw new Error("Smoke forced error");
@@ -582,13 +647,24 @@ async function installLLMChatDebugHook(page) {
       }
       return `Smoke response for: ${request.prompt}`;
     };
+  }, { hold: holdFirstRequest });
+}
+
+async function releaseLLMChatDebugRequest(page) {
+  await page.evaluate(() => {
+    window.__lotionLLMChatDebugReleaseFirstRequest?.();
+    delete window.__lotionLLMChatDebugReleaseFirstRequest;
   });
 }
 
 async function clearLLMChatDebugHook(page) {
   await page.evaluate(() => {
+    window.__lotionLLMChatDebugReleaseFirstRequest?.();
     delete window.__lotionLLMChatDebugComplete;
     delete window.__lotionLLMChatDebugRequests;
+    delete window.__lotionLLMChatDebugHoldFirstRequest;
+    delete window.__lotionLLMChatDebugFirstRequestReleased;
+    delete window.__lotionLLMChatDebugReleaseFirstRequest;
   });
 }
 

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { DatabaseBundle, DatabaseRecord, DatabaseSchema, DatabaseSummary, DateDisplayFormat, EntityRef, FieldSchema, FieldType, RecordValue, RelationFieldConfig, RollupFieldConfig, SelectOption, TimeDisplayFormat } from "../../../shared/types";
-import { Cell } from "../databases/DatabaseTable";
+import { Cell, createCellEditQueue, type CellEditQueueSnapshot } from "../databases/DatabaseTable";
 import { FieldSettingsDialog } from "../databases/FieldSettingsDialog";
-import { OptionPill } from "../databases/OptionPill";
 import { FieldTypeIcon } from "../../components/FieldTypeIcon";
 import { MarkdownPropertyLinks, WorkspaceLinkButton, parseStandaloneMarkdownLinks } from "./PropertyLinks";
+import { useDateTimeDisplayDefaults } from "../../lib/settings";
+import type { DateTimeDisplayDefaults } from "../../../shared/date-values";
 
 const ORIGINAL_NOTION_LINK_FIELD_IDS = new Set(["notion_original_html", "notion_original_csv"]);
 
@@ -24,12 +25,39 @@ interface RowPagePropertiesProps {
   record: DatabaseRecord;
   databases?: DatabaseSummary[];
   loadDatabase?: (id: string) => Promise<DatabaseBundle>;
-  onUpdateField: (fieldId: string, value: RecordValue) => void;
+  onUpdateField: (fieldId: string, value: RecordValue) => Promise<void> | void;
   onUpdateFieldSettings?: (field: FieldSchema, input: FieldSettingsInput) => Promise<void> | void;
-  onUpdateFieldOptions: (fieldId: string, options: SelectOption[]) => void;
-  onUpdateFieldOptionColor: (fieldId: string, optionId: string, color: string) => void;
+  onUpdateFieldOptions: (fieldId: string, options: SelectOption[]) => Promise<void> | void;
   onOpenEntityRef?: (ref: EntityRef) => void;
   onSearchPropertyValue?: (value: string) => void;
+}
+
+export function createRowPagePropertyEditController({
+  onDiscard,
+  onStateChange,
+  operation
+}: {
+  onDiscard: () => void;
+  onStateChange: (snapshot: CellEditQueueSnapshot) => void;
+  operation: (fieldId: string, value: RecordValue) => Promise<void> | void;
+}) {
+  const queue = createCellEditQueue({
+    operation: async (input) => operation(input.fieldId, input.value),
+    onStateChange
+  });
+  return {
+    enqueue(databaseId: string, rowId: string, fieldId: string, value: RecordValue) {
+      return queue.enqueue({ databaseId, rowId, fieldId, value });
+    },
+    retry() {
+      return queue.retry();
+    },
+    discard() {
+      const discarded = queue.discard();
+      if (discarded) onDiscard();
+      return discarded;
+    }
+  };
 }
 
 export function RowPageProperties({
@@ -40,46 +68,85 @@ export function RowPageProperties({
   onUpdateField,
   onUpdateFieldSettings,
   onUpdateFieldOptions,
-  onUpdateFieldOptionColor,
   onOpenEntityRef,
   onSearchPropertyValue
 }: RowPagePropertiesProps) {
+  const dateTimeDefaults = useDateTimeDisplayDefaults();
   const [editingField, setEditingField] = useState<FieldSchema | null>(null);
+  const [editorResetVersion, setEditorResetVersion] = useState(0);
+  const [editState, setEditState] = useState<CellEditQueueSnapshot>({ status: "idle", queuedCount: 0 });
+  const operationRef = useRef(onUpdateField);
+  operationRef.current = onUpdateField;
+  const editControllerRef = useRef<ReturnType<typeof createRowPagePropertyEditController> | null>(null);
+  if (!editControllerRef.current) {
+    editControllerRef.current = createRowPagePropertyEditController({
+      operation: (fieldId, value) => operationRef.current(fieldId, value),
+      onStateChange: setEditState,
+      onDiscard: () => setEditorResetVersion((value) => value + 1)
+    });
+  }
+  const controlsBlocked = editState.status !== "idle";
   // Skip: hidden bookkeeping fields, the title (already in the editor's
   // title input), and the implicit `id` system column.
   const fields = schema.fields.filter((field) => !field.hidden && field.id !== "title" && field.id !== "id");
   if (fields.length === 0) return null;
 
   return (
-    <div className="row-properties">
-      {fields.map((field) => (
-        <PropertyRow
-          key={field.id}
-          field={field}
-          value={record[field.id]}
-          record={record}
-          databaseId={schema.id}
-          onChange={(value) => onUpdateField(field.id, value)}
-          onOpenEntityRef={onOpenEntityRef}
-          onOptionColorChange={(optionId, color) => onUpdateFieldOptionColor(field.id, optionId, color)}
-          onOptionsChange={(options) => onUpdateFieldOptions(field.id, options)}
-          onManageField={onUpdateFieldSettings ? () => setEditingField(field) : undefined}
-          onSearchPropertyValue={onSearchPropertyValue}
-        />
-      ))}
-      {editingField && onUpdateFieldSettings && (
-        <FieldSettingsDialog
-          field={editingField}
-          fields={schema.fields}
-          databases={databases}
-          loadDatabase={loadDatabase}
-          onClose={() => setEditingField(null)}
-          onSave={async (input) => {
-            await onUpdateFieldSettings(editingField, input);
-          }}
-        />
-      )}
-    </div>
+    <>
+      <div
+        className="row-properties"
+        aria-busy={editState.status === "saving"}
+        aria-disabled={controlsBlocked}
+        inert={controlsBlocked ? true : undefined}
+      >
+        {fields.map((field) => (
+          <PropertyRow
+            key={`${field.id}:${editorResetVersion}`}
+            field={field}
+            value={record[field.id]}
+            record={record}
+            databaseId={schema.id}
+            onChange={(value) => {
+              void editControllerRef.current?.enqueue(schema.id, String(record.id), field.id, value);
+            }}
+            onOpenEntityRef={onOpenEntityRef}
+            onOptionsChange={(options) => onUpdateFieldOptions(field.id, options)}
+            onManageField={onUpdateFieldSettings ? () => setEditingField(field) : undefined}
+            onSearchPropertyValue={onSearchPropertyValue}
+            dateTimeDefaults={dateTimeDefaults}
+          />
+        ))}
+        {editingField && onUpdateFieldSettings && (
+          <FieldSettingsDialog
+            field={editingField}
+            fields={schema.fields}
+            databases={databases}
+            loadDatabase={loadDatabase}
+            onClose={() => setEditingField(null)}
+            onSave={async (input) => {
+              await onUpdateFieldSettings(editingField, input);
+            }}
+          />
+        )}
+      </div>
+      {editState.status === "error" ? (
+        <div
+          className="database-mutation-toast row-page-property-feedback error"
+          role="alert"
+          aria-live="assertive"
+          data-row-id={editState.failedInput?.rowId}
+          data-field-id={editState.failedInput?.fieldId}
+          data-value={String(editState.failedInput?.value ?? "")}
+        >
+          <span>
+            Row property failed to save: {editState.error}
+            {editState.queuedCount > 0 ? ` · ${editState.queuedCount} later edit${editState.queuedCount === 1 ? "" : "s"} queued` : ""}
+          </span>
+          <button type="button" onClick={() => { editControllerRef.current?.retry(); }}>Retry</button>
+          <button type="button" onClick={() => { editControllerRef.current?.discard(); }}>Discard failed edit</button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -90,23 +157,23 @@ interface PropertyRowProps {
   databaseId: string;
   onChange: (value: RecordValue) => void;
   onOpenEntityRef?: (ref: EntityRef) => void;
-  onOptionColorChange: (optionId: string, color: string) => void;
-  onOptionsChange: (options: SelectOption[]) => void;
+  onOptionsChange: (options: SelectOption[]) => Promise<void> | void;
   onManageField?: () => void;
   onSearchPropertyValue?: (value: string) => void;
+  dateTimeDefaults?: DateTimeDisplayDefaults;
 }
 
-function PropertyRow({
+export function PropertyRow({
   field,
   value,
   record,
   databaseId,
   onChange,
   onOpenEntityRef,
-  onOptionColorChange,
   onOptionsChange,
   onManageField,
-  onSearchPropertyValue
+  onSearchPropertyValue,
+  dateTimeDefaults
 }: PropertyRowProps) {
   const originalNotionLink = ORIGINAL_NOTION_LINK_FIELD_IDS.has(field.id) ? String(value ?? "").trim() : "";
   const editable = isEditablePropertyField(field) && !originalNotionLink;
@@ -155,8 +222,8 @@ function PropertyRow({
                 databaseId={databaseId}
                 onChange={onChange}
                 onOpenEntityRef={onOpenEntityRef}
-                onOptionColorChange={onOptionColorChange}
                 onOptionsChange={onOptionsChange}
+                dateTimeDefaults={dateTimeDefaults}
               />
             </span>
             {searchableOptionValues.length > 0 && (
@@ -176,7 +243,7 @@ function PropertyRow({
                     }}
                   >
                     <span className="row-property-option-search-glyph" aria-hidden="true">⌕</span>
-                    <OptionPill option={item} />
+                    <span className="row-property-option-search-label">{item.name}</span>
                   </button>
                 ))}
               </span>

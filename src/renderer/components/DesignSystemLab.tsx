@@ -32,6 +32,7 @@ export function DesignSystemLab() {
           <span className="lotion-ui-status-pill success">Readable</span>
           <span className="lotion-ui-status-pill warning">Dense</span>
           <span className="lotion-ui-status-pill neutral">Tokenized</span>
+          <span className="lotion-ui-status-pill neutral">Local</span>
         </div>
       </header>
 

@@ -2,7 +2,7 @@
 
 Status: done
 
-Split from `tasks/todo/git-sync-plugin.md`.
+Split from `tasks/done/git-sync-plugin.md`.
 
 ## Goal
 

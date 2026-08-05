@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertNotionImportAuditArtifactContract } from "./lib/notion-import-audit-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertHarnessViewportCoverage,
   assertIntersectsViewport,
@@ -33,19 +34,11 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
   const viewportResults = [];
   const diagnosticResults = [];
   const modalResults = [];
-  const directModalResults = [];
   const expectedViewports = selectedViewports();
   await forEachViewport(page, expectedViewports, async (viewport) => {
     const fixture = await createAuditFixture(`${viewport.name}-passing`);
     registerTempWorkspace(fixture.root);
     modalResults.push(await runImportModalOverlayCheck({
-      artifactRoot,
-      fixture,
-      openWorkspace,
-      page,
-      viewport
-    }));
-    directModalResults.push(await runDirectImportModalCheck({
       artifactRoot,
       fixture,
       openWorkspace,
@@ -77,7 +70,6 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
   const summary = {
     cdpUrl,
     diagnostics: diagnosticResults,
-    directImportModal: directModalResults,
     importModal: modalResults,
     viewports: viewportResults,
     status: "passed"
@@ -85,7 +77,10 @@ const result = await withLotionUIHarness("notion-import-audit", async ({
   return {
     ...summary,
     artifactContract: await assertNotionImportAuditArtifactContract(summary, {
-      expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+      expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+      requiredPerceptualBaselineViewportNames: process.env.LOTION_NOTION_IMPORT_SKIP_BASELINE === "1"
+        ? []
+        : expectedViewports.map((viewport) => viewport.name)
     }),
     viewportCoverage: assertHarnessViewportCoverage(summary)
   };
@@ -134,11 +129,20 @@ async function runImportModalOverlayCheck({ artifactRoot, fixture, openWorkspace
   ) {
     throw new Error(`Notion import modal overlay is not isolated from page content: ${JSON.stringify(overlay)}`);
   }
+  const controlState = await readImportModalControlState(page);
+  assertImportModalControlState(controlState, viewport.name);
+  await modal.evaluate((node) => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && node.contains(active)) active.blur();
+  });
+  await page.mouse.move(4, 4);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const snapshot = await captureElementSnapshot({
     artifactRoot,
     locator: modal,
     metadata: {
       overlay,
+      controlState,
       phase: "command-modal",
       workspaceRoot: fixture.workspaceRoot
     },
@@ -146,89 +150,171 @@ async function runImportModalOverlayCheck({ artifactRoot, fixture, openWorkspace
     page,
     viewport
   });
+  const baselinePolicy = {
+    compact: "test/baselines/production-visual/notion-import-command-modal-compact.json",
+    desktop: "test/baselines/production-visual/notion-import-command-modal-desktop.json",
+    wide: "test/baselines/production-visual/notion-import-command-modal-wide.json"
+  }[viewport.name];
+  const perceptualBaseline = baselinePolicy && process.env.LOTION_NOTION_IMPORT_SKIP_BASELINE !== "1"
+    ? await assertProductionVisualBaseline({
+      actualPath: snapshot.imagePath,
+      artifactRoot,
+      policyPath: baselinePolicy
+    })
+    : null;
   await page.locator(".plugin-modal-close").click();
   await page.waitForSelector(".plugin-modal", { state: "detached", timeout: 8_000 });
   return {
     viewport: viewport.name,
     overlay,
+    controlState,
+    perceptualBaseline,
     snapshot: snapshotSummary(snapshot),
     workspaceRoot: fixture.workspaceRoot
   };
 }
 
-async function runDirectImportModalCheck({ artifactRoot, fixture, openWorkspace, page, viewport }) {
-  await openWorkspace(fixture.workspaceRoot);
-  await page.getByText("Audit UI Home").first().waitFor({ timeout: 8_000 });
-  await page.locator(".workspace-selector").click();
-  const menu = page.getByRole("menu").first();
-  await menu.waitFor({ timeout: 8_000 });
-  await menu.getByRole("button", { name: "Import from Notion…" }).click();
-
-  const modal = page.locator(".notion-dialog").first();
-  await modal.waitFor({ timeout: 8_000 });
-  await assertWithinViewport(page, modal, `direct Notion import modal ${viewport.name}`, 8);
-  await assertNoDocumentHorizontalOverflow(page, `direct Notion import modal ${viewport.name}`, 2);
-
-  const layout = await page.evaluate(() => {
-    const backdrop = document.querySelector(".dialog-backdrop");
-    const dialog = document.querySelector(".notion-dialog");
-    const dialogRect = dialog?.getBoundingClientRect();
-    const backdropRect = backdrop?.getBoundingClientRect();
-    const style = dialog ? window.getComputedStyle(dialog) : null;
-    const bodyStyle = document.body ? window.getComputedStyle(document.body) : null;
+async function readImportModalControlState(page) {
+  return page.evaluate(() => {
+    const modal = document.querySelector(".plugin-modal");
+    const body = modal?.querySelector(".plugin-modal-body");
+    const panel = modal?.querySelector(".notion-import-panel");
+    const options = panel?.querySelector(".notion-import-options");
+    const optionLabels = Array.from(options?.querySelectorAll("label") ?? []);
+    const sourceCards = Array.from(panel?.querySelectorAll(".notion-import-source-list > div") ?? []);
+    const sourceButtons = Array.from(panel?.querySelectorAll(".notion-import-source-list button") ?? []);
+    const actions = panel?.querySelector(".notion-dialog-actions");
+    const actionButtons = Array.from(actions?.querySelectorAll("button") ?? []);
+    const close = modal?.querySelector(".plugin-modal-close");
+    const title = modal?.querySelector(".dialog-header h2");
+    const rect = (node) => {
+      const value = node?.getBoundingClientRect();
+      return value ? {
+        left: Math.round(value.left),
+        top: Math.round(value.top),
+        right: Math.round(value.right),
+        bottom: Math.round(value.bottom),
+        width: Math.round(value.width),
+        height: Math.round(value.height)
+      } : null;
+    };
+    const contains = (outer, inner) => {
+      const outerRect = outer?.getBoundingClientRect();
+      const innerRect = inner?.getBoundingClientRect();
+      return Boolean(outerRect && innerRect
+        && innerRect.left >= outerRect.left - 1
+        && innerRect.top >= outerRect.top - 1
+        && innerRect.right <= outerRect.right + 1
+        && innerRect.bottom <= outerRect.bottom + 1);
+    };
+    const modalRect = modal?.getBoundingClientRect();
+    const bodyStyle = body ? getComputedStyle(body) : null;
+    const panelStyle = panel ? getComputedStyle(panel) : null;
     return {
-      ariaModal: dialog?.getAttribute("aria-modal") ?? "",
-      backdropCoversViewport: Boolean(backdropRect)
-        && backdropRect.left <= 1
-        && backdropRect.top <= 1
-        && backdropRect.right >= window.innerWidth - 1
-        && backdropRect.bottom >= window.innerHeight - 1,
-      backgroundColor: style?.backgroundColor ?? "",
-      bodyBackgroundColor: bodyStyle?.backgroundColor ?? "",
-      htmlLabel: dialog?.querySelector(".notion-import-source:nth-of-type(2) strong")?.textContent?.trim() ?? "",
-      height: Math.round(dialogRect?.height ?? 0),
-      markdownCsvLabel: dialog?.querySelector(".notion-import-source:first-of-type strong")?.textContent?.trim() ?? "",
-      mergeById: (dialog?.textContent ?? "").includes("matches their stable Notion IDs"),
-      modalRole: dialog?.getAttribute("role") ?? "",
-      title: dialog?.querySelector(".notion-dialog-header h2")?.textContent?.trim() ?? "",
-      width: Math.round(dialogRect?.width ?? 0)
+      modalRect: rect(modal),
+      bodyRect: rect(body),
+      panelRect: rect(panel),
+      titleRect: rect(title),
+      closeRect: rect(close),
+      optionsRect: rect(options),
+      optionRects: optionLabels.map(rect),
+      sourceCardRects: sourceCards.map(rect),
+      sourceButtonRects: sourceButtons.map(rect),
+      actionsRect: rect(actions),
+      cancelRect: rect(actionButtons[0]),
+      scanRect: rect(actionButtons[1]),
+      titleText: title?.textContent?.trim() ?? "",
+      optionTexts: optionLabels.map((node) => node.textContent?.trim() ?? ""),
+      optionChecked: optionLabels.map((node) => Boolean(node.querySelector('input[type="checkbox"]')?.checked)),
+      sourceTexts: sourceCards.map((node) => node.textContent?.trim() ?? ""),
+      sourceButtonTexts: sourceButtons.map((node) => node.textContent?.trim() ?? ""),
+      actionTexts: actionButtons.map((node) => node.textContent?.trim() ?? ""),
+      scanDisabled: actionButtons[1]?.disabled === true,
+      panelInsideModal: contains(modal, panel),
+      titleInsideModal: contains(modal, title),
+      closeInsideModal: contains(modal, close),
+      optionsInsideModal: contains(modal, options),
+      optionsInsidePanel: contains(panel, options),
+      optionControlsInsideOptions: optionLabels.every((node) => contains(options, node)),
+      sourceCardsInsidePanel: sourceCards.every((node) => contains(panel, node)),
+      sourceButtonsInsideCards: sourceButtons.every((node, index) => contains(sourceCards[index], node)),
+      actionsInsidePanel: contains(panel, actions),
+      actionButtonsInsideActions: actionButtons.every((node) => contains(actions, node)),
+      modalInsideViewport: Boolean(modalRect
+        && modalRect.left >= -1
+        && modalRect.top >= -1
+        && modalRect.right <= window.innerWidth + 1
+        && modalRect.bottom <= window.innerHeight + 1),
+      bodyOverflowY: bodyStyle?.overflowY ?? "",
+      bodyScrollHeight: body?.scrollHeight ?? 0,
+      bodyClientHeight: body?.clientHeight ?? 0,
+      bodyOwnsVerticalScroll: bodyStyle?.overflowY === "auto" || bodyStyle?.overflowY === "scroll",
+      visibility: panelStyle?.visibility ?? "",
+      opacity: Number(panelStyle?.opacity ?? 0),
+      horizontalOverflow: Math.max(
+        0,
+        document.documentElement.scrollWidth - document.documentElement.clientWidth
+      )
     };
   });
-  if (
-    layout.title !== "Import from Notion" ||
-    layout.modalRole !== "dialog" ||
-    layout.ariaModal !== "true" ||
-    layout.markdownCsvLabel !== "Markdown & CSV export" ||
-    layout.htmlLabel !== "HTML export" ||
-    !layout.mergeById ||
-    !layout.backdropCoversViewport ||
-    !layout.backgroundColor ||
-    layout.backgroundColor === "rgba(0, 0, 0, 0)" ||
-    layout.backgroundColor === "transparent"
-  ) {
-    throw new Error(`Direct Notion import modal is incomplete: ${JSON.stringify(layout)}`);
-  }
+}
 
-  const snapshot = await captureElementSnapshot({
-    artifactRoot,
-    locator: modal,
-    metadata: {
-      layout,
-      phase: "direct-modal",
-      workspaceRoot: fixture.workspaceRoot
-    },
-    name: `notion-import-direct-modal-${viewport.name}`,
-    page,
-    viewport
-  });
-  await modal.getByRole("button", { name: "Close import dialog" }).click();
-  await page.waitForSelector(".notion-dialog", { state: "detached", timeout: 8_000 });
-  return {
-    viewport: viewport.name,
-    layout,
-    snapshot: snapshotSummary(snapshot),
-    workspaceRoot: fixture.workspaceRoot
-  };
+function assertImportModalControlState(state, viewportName) {
+  const rectKeys = [
+    "modalRect",
+    "bodyRect",
+    "panelRect",
+    "titleRect",
+    "closeRect",
+    "optionsRect",
+    "actionsRect",
+    "cancelRect",
+    "scanRect"
+  ];
+  for (const key of rectKeys) {
+    const rect = state?.[key];
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`Notion import modal missing ${key} geometry for ${viewportName}: ${JSON.stringify(rect)}`);
+    }
+  }
+  for (const [key, expectedCount] of [["optionRects", 3], ["sourceCardRects", 2], ["sourceButtonRects", 2]]) {
+    const rects = state?.[key];
+    if (!Array.isArray(rects) || rects.length !== expectedCount || rects.some((rect) => !rect || rect.width <= 0 || rect.height <= 0)) {
+      throw new Error(`Notion import modal missing complete ${key} geometry for ${viewportName}: ${JSON.stringify(rects)}`);
+    }
+  }
+  if (
+    state.titleText !== "Import from Notion"
+    || state.optionTexts?.length !== 3
+    || state.optionChecked?.length !== 3
+    || !state.optionChecked.every(Boolean)
+    || state.sourceTexts?.length !== 2
+    || state.sourceButtonTexts?.length !== 2
+    || !state.sourceTexts[0].includes("Markdown & CSV export")
+    || !state.sourceTexts[1].includes("HTML export")
+    || !state.sourceButtonTexts.every((text) => text === "Choose folder…")
+    || state.actionTexts?.[0] !== "Cancel"
+    || state.actionTexts?.[1] !== "Scan exports"
+    || state.scanDisabled !== true
+    || state.panelInsideModal !== true
+    || state.titleInsideModal !== true
+    || state.closeInsideModal !== true
+    || state.optionsInsideModal !== true
+    || state.optionsInsidePanel !== true
+    || state.optionControlsInsideOptions !== true
+    || state.sourceCardsInsidePanel !== true
+    || state.sourceButtonsInsideCards !== true
+    || state.actionsInsidePanel !== true
+    || state.actionButtonsInsideActions !== true
+    || state.modalInsideViewport !== true
+    || state.bodyOwnsVerticalScroll !== true
+    || state.bodyScrollHeight < state.bodyClientHeight
+    || state.visibility !== "visible"
+    || state.opacity < 0.99
+    || state.horizontalOverflow > 2
+  ) {
+    throw new Error(`Notion import modal controls are clipped, transparent, or incomplete for ${viewportName}: ${JSON.stringify(state)}`);
+  }
 }
 
 async function runPassingAudit({ artifactRoot, fixture, openWorkspace, page, viewport }) {
@@ -240,8 +326,11 @@ async function runPassingAudit({ artifactRoot, fixture, openWorkspace, page, vie
     await assertAuditPanelLayout(page, viewport.name, "before-audit");
     await page.locator(".notion-audit-source-row input").fill(fixture.sourceRoot);
     await page.locator('.notion-audit-options input[type="checkbox"]').first().setChecked(true);
-    await page.getByRole("button", { name: "Run audit" }).click();
+    const singleFlightSubmission = await submitAuditTwice(page);
     await page.getByText("No blocking audit issues found.").waitFor({ timeout: 10_000 });
+    singleFlightSubmission.resultCount = await page.locator(".notion-audit-result").count();
+    singleFlightSubmission.errorCount = await page.locator(".notion-error").count();
+    assertSingleFlightSubmission(singleFlightSubmission, viewport.name, "passing");
     await assertAuditPanelLayout(page, viewport.name, "after-audit");
 
     const summary = await readAuditSummary(page);
@@ -273,7 +362,8 @@ async function runPassingAudit({ artifactRoot, fixture, openWorkspace, page, vie
         pathButtons,
         sourceRoot: fixture.sourceRoot,
         workspaceRoot: fixture.workspaceRoot,
-        shellOpenDryRunRequests
+        shellOpenDryRunRequests,
+        singleFlightSubmission
       },
       name: `notion-audit-result-${viewport.name}`,
       page,
@@ -287,7 +377,8 @@ async function runPassingAudit({ artifactRoot, fixture, openWorkspace, page, vie
       summary,
       pathButtons,
       snapshot: snapshotSummary(snapshot),
-      shellOpenDryRunRequests
+      shellOpenDryRunRequests,
+      singleFlightSubmission
     };
   } finally {
     await disableShellOpenDryRun(page).catch(() => undefined);
@@ -303,8 +394,11 @@ async function runDiagnosticAudit({ artifactRoot, fixture, openWorkspace, page, 
     await assertAuditPanelLayout(page, viewport.name, "before-audit");
     await page.locator(".notion-audit-source-row input").fill(fixture.sourceRoot);
     await page.locator('.notion-audit-options input[type="checkbox"]').first().setChecked(true);
-    await page.getByRole("button", { name: "Run audit" }).click();
+    const singleFlightSubmission = await submitAuditTwice(page);
     await page.getByText("Audit found blocking import issues.").waitFor({ timeout: 10_000 });
+    singleFlightSubmission.resultCount = await page.locator(".notion-audit-result").count();
+    singleFlightSubmission.errorCount = await page.locator(".notion-error").count();
+    assertSingleFlightSubmission(singleFlightSubmission, viewport.name, "diagnostic");
     await assertAuditPanelLayout(page, viewport.name, "after-diagnostic");
 
     const summary = await readAuditSummary(page);
@@ -347,7 +441,8 @@ async function runDiagnosticAudit({ artifactRoot, fixture, openWorkspace, page, 
         shellOpenDryRunRequests,
         sourceRoot: fixture.sourceRoot,
         summary,
-        workspaceRoot: fixture.workspaceRoot
+        workspaceRoot: fixture.workspaceRoot,
+        singleFlightSubmission
       },
       name: `notion-audit-diagnostic-${viewport.name}`,
       page,
@@ -364,10 +459,40 @@ async function runDiagnosticAudit({ artifactRoot, fixture, openWorkspace, page, 
       snapshot: snapshotSummary(snapshot),
       sourceRoot: fixture.sourceRoot,
       summary,
-      workspaceRoot: fixture.workspaceRoot
+      workspaceRoot: fixture.workspaceRoot,
+      singleFlightSubmission
     };
   } finally {
     await disableShellOpenDryRun(page).catch(() => undefined);
+  }
+}
+
+async function submitAuditTwice(page) {
+  const button = page.getByRole("button", { name: "Run audit" });
+  const evidence = await button.evaluate((element) => {
+    element.click();
+    const disabledAfterFirstClick = element.disabled;
+    element.click();
+    return {
+      attemptedClicks: 2,
+      disabledAfterFirstClick,
+      disabledAfterDispatch: false,
+      resultCount: 0,
+      errorCount: 0
+    };
+  });
+  evidence.disabledAfterDispatch = await button.isDisabled();
+  return evidence;
+}
+
+function assertSingleFlightSubmission(evidence, viewportName, phase) {
+  if (
+    evidence.attemptedClicks !== 2
+    || evidence.disabledAfterFirstClick !== false
+    || evidence.resultCount !== 1
+    || evidence.errorCount !== 0
+  ) {
+    throw new Error(`Notion audit ${phase} single-flight submission failed for ${viewportName}: ${JSON.stringify(evidence)}`);
   }
 }
 

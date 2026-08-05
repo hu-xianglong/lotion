@@ -5,7 +5,12 @@ import {
   parseNotionHtmlBody,
   parseNotionHtmlMetadata
 } from "./notion-html-converter.js";
-import type { NotionLinkResolver, ParsedNotionHtmlPage } from "./notion-html-converter.js";
+import type {
+  NotionCollectionResolveContext,
+  NotionLinkResolver,
+  ParsedNotionHtmlPage
+} from "./notion-html-converter.js";
+import { resolveNotionCollectionRewrite } from "./notion-collection-resolver.js";
 import { fileService } from "./file-service.js";
 
 interface WorkerInit {
@@ -73,16 +78,12 @@ function exportRelativeRewriteKey(sourcePath: string): string {
   return `notion-path:${normalized}`;
 }
 
-function resolveCollection(hashNoDashes: string, title: string): string | null {
-  const directId = rewrites.get(`notion-db-id:${hashNoDashes}`);
-  if (directId) return `lotion-db:${directId}`;
-  const direct = rewrites.get(`notion-db:${hashNoDashes}`);
-  if (direct) return direct;
-  if (!title) return null;
-  const titleEnc = Buffer.from(title).toString("base64").replace(/=+$/, "");
-  const titleId = rewrites.get(`notion-db-title-id:${titleEnc}`);
-  if (titleId) return `lotion-db:${titleId}`;
-  return rewrites.get(`notion-db-title:${titleEnc}`) ?? null;
+function resolveCollection(
+  hashNoDashes: string,
+  title: string,
+  context?: NotionCollectionResolveContext
+): string | null {
+  return resolveNotionCollectionRewrite(rewrites, hashNoDashes, title, context);
 }
 
 async function convert(job: BodyJob): Promise<BodyResult> {

@@ -7,6 +7,7 @@ import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../dist-electron/shared/cons
 import { serializePathValue } from "../dist-electron/shared/path-values.js";
 import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/shared/workspace-paths.js";
 import { assertDesignSystemArtifactContract } from "./lib/design-system-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 import {
   assertHarnessViewportCoverage,
   assertIntersectsViewport,
@@ -57,28 +58,50 @@ const result = await withLotionUIHarness("design-system-ui", async ({ artifactRo
 
     const themeState = await assertDesignSystemTheme(page);
     const controlState = await assertDesignSystemControls(page);
+    await resetDesignSystemScroll(page);
     const layoutState = await assertDesignSystemLayout(page, viewport.name);
-    const snapshot = await captureElementSnapshot({
-      artifactRoot,
-      locator: lab,
-      metadata: {
-        controlState,
-        layoutState,
-        phase: "design-system",
-        themeState,
-        viewport: viewport.name
-      },
-      name: `design-system-${viewport.name}`,
-      page,
-      viewport
-    });
+    let snapshot;
+    if (viewport.name === "compact") await exposeFullDesignSystemForSnapshot(page);
+    await prepareDesignSystemSnapshot(page, lab, viewport.name);
+    try {
+      snapshot = await captureElementSnapshot({
+        artifactRoot,
+        locator: lab,
+        metadata: {
+          controlState,
+          layoutState,
+          phase: "design-system",
+          themeState,
+          viewport: viewport.name
+        },
+        name: `design-system-${viewport.name}`,
+        page,
+        viewport
+      });
+    } finally {
+      await restoreDesignSystemSnapshot(page, lab);
+      if (viewport.name === "compact") await restoreDesignSystemAfterSnapshot(page);
+    }
+    const baselinePolicy = {
+      compact: "test/baselines/production-visual/design-system-compact.json",
+      desktop: "test/baselines/production-visual/design-system-desktop.json",
+      wide: "test/baselines/production-visual/design-system-wide.json"
+    }[viewport.name];
+    const perceptualBaseline = baselinePolicy && process.env.LOTION_DESIGN_SYSTEM_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: snapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
 
     viewports.push({
       viewport,
       controlState,
       layoutState,
       themeState,
-      snapshot
+      snapshot,
+      ...(perceptualBaseline ? { perceptualBaseline } : {})
     });
   });
 
@@ -90,7 +113,10 @@ const result = await withLotionUIHarness("design-system-ui", async ({ artifactRo
   };
   summary.viewportCoverage = assertHarnessViewportCoverage(summary);
   summary.artifactContract = await assertDesignSystemArtifactContract(summary, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+    requiredPerceptualBaselineViewportNames: process.env.LOTION_DESIGN_SYSTEM_SKIP_BASELINE === "1"
+      ? []
+      : expectedViewports.map((viewport) => viewport.name)
   });
   return summary;
 });
@@ -180,11 +206,124 @@ async function assertDesignSystemControls(page) {
   if (!focusState.isPrimary || focusState.activeText !== "New page") {
     throw new Error(`Primary action did not receive keyboard focus: ${JSON.stringify(focusState)}`);
   }
-  const labels = await page.locator(".lotion-ui-status-pill").evaluateAll((items) => items.map((item) => item.textContent?.trim()));
+  const statusPills = page.locator(".design-system-status-row .lotion-ui-status-pill");
+  const statusPillGeometry = await statusPills.evaluateAll((items) => {
+    const labRect = document.querySelector('[data-testid="design-system-lab"]')?.getBoundingClientRect();
+    return items.map((item) => {
+      const rect = item.getBoundingClientRect();
+      return {
+        label: item.textContent?.trim() || "",
+        width: rect.width,
+        height: rect.height,
+        top: rect.top,
+        withinLab: Boolean(labRect)
+          && rect.left >= labRect.left
+          && rect.right <= labRect.right
+          && rect.top >= labRect.top
+          && rect.bottom <= labRect.bottom
+      };
+    });
+  });
+  const labels = statusPillGeometry.map((item) => item.label);
   for (const expected of ["Readable", "Dense", "Tokenized", "Local"]) {
     if (!labels.includes(expected)) throw new Error(`Missing design system status pill ${expected}: ${JSON.stringify(labels)}`);
   }
-  return { focusState, statusPills: labels };
+  if (statusPillGeometry.some((item) => item.width <= 0 || item.height <= 0 || !item.withinLab)) {
+    throw new Error(`Design system status pill is clipped: ${JSON.stringify(statusPillGeometry)}`);
+  }
+  const pillTops = statusPillGeometry.map((item) => item.top);
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const statusPillsLayoutValid = viewportWidth <= 1100
+    || Math.max(...pillTops) - Math.min(...pillTops) <= 1;
+  if (!statusPillsLayoutValid) throw new Error(`Design system wide status pills wrapped unexpectedly: ${JSON.stringify(statusPillGeometry)}`);
+  return { focusState, statusPillGeometry, statusPills: labels, statusPillsLayoutValid };
+}
+
+async function resetDesignSystemScroll(page) {
+  const scroller = page.locator(".management-view").first();
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await page.waitForFunction(() => document.querySelector(".management-view")?.scrollTop === 0);
+}
+
+async function prepareDesignSystemSnapshot(page, lab, viewportName) {
+  const normalizedSize = {
+    compact: { width: 733, height: 1986 },
+    desktop: { width: 912, height: 907 },
+    wide: { width: 912, height: 907 }
+  }[viewportName];
+  await lab.evaluate((node, size) => {
+    node.setAttribute("data-design-system-lab-snapshot-style", node.getAttribute("style") ?? "");
+    const rect = node.getBoundingClientRect();
+    node.style.translate = `${Math.round(rect.left) - rect.left}px ${Math.round(rect.top) - rect.top}px`;
+    if (size) {
+      node.style.boxSizing = "border-box";
+      node.style.width = `${size.width}px`;
+      node.style.height = `${size.height}px`;
+      node.style.minWidth = `${size.width}px`;
+      node.style.maxWidth = `${size.width}px`;
+      node.style.minHeight = `${size.height}px`;
+      node.style.maxHeight = `${size.height}px`;
+      node.style.overflow = "hidden";
+    }
+  }, normalizedSize);
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.setAttribute("data-design-system-snapshot-style", "true");
+    style.textContent = `
+      .management-view {
+        scrollbar-width: none !important;
+      }
+      .management-view::-webkit-scrollbar {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function restoreDesignSystemSnapshot(page, lab) {
+  await lab.evaluate((node) => {
+    const original = node.getAttribute("data-design-system-lab-snapshot-style") ?? "";
+    if (original) node.setAttribute("style", original);
+    else node.removeAttribute("style");
+    node.removeAttribute("data-design-system-lab-snapshot-style");
+  });
+  await page.evaluate(() => {
+    for (const style of document.querySelectorAll("[data-design-system-snapshot-style]")) style.remove();
+  });
+}
+
+async function exposeFullDesignSystemForSnapshot(page) {
+  await page.evaluate(() => {
+    const rules = [
+      [".app-shell", { height: "auto", minHeight: "100vh" }],
+      [".main-area", { overflow: "visible" }],
+      [".main-content", { overflow: "visible" }],
+      [".management-view", { height: "auto", overflow: "visible" }]
+    ];
+    for (const [selector, styles] of rules) {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) continue;
+      element.dataset.designSystemSnapshotStyle = element.getAttribute("style") || "";
+      Object.assign(element.style, styles);
+    }
+  });
+}
+
+async function restoreDesignSystemAfterSnapshot(page) {
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll("[data-design-system-snapshot-style]")) {
+      if (!(element instanceof HTMLElement)) continue;
+      const original = element.dataset.designSystemSnapshotStyle || "";
+      if (original) element.setAttribute("style", original);
+      else element.removeAttribute("style");
+      delete element.dataset.designSystemSnapshotStyle;
+    }
+  });
 }
 
 async function assertDesignSystemLayout(page, viewportName) {

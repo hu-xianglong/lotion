@@ -14,9 +14,14 @@ import {
   forEachViewport,
   setLotionLocale,
   selectedViewports,
+  withPreservedLocalStorageValue,
   withLotionUIHarness
 } from "./ui-harness.mjs";
-import { assertSearchUiArtifactContract } from "./lib/search-ui-artifacts.mjs";
+import {
+  assertSearchHarnessCacheEvidence,
+  assertSearchUiArtifactContract
+} from "./lib/search-ui-artifacts.mjs";
+import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const thresholdMs = Number(process.env.LOTION_SEARCH_UI_RENDER_THRESHOLD_MS ?? 1500);
@@ -24,10 +29,11 @@ const backendThresholdMs = Number(process.env.LOTION_SEARCH_BACKEND_THRESHOLD_MS
 const inputThresholdMs = Number(process.env.LOTION_SEARCH_INPUT_KEY_THRESHOLD_MS ?? 80);
 
 const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cdpUrl, openWorkspace, page }) => {
-  await setLotionLocale(page, "zh");
-  const viewports = [];
-  const expectedViewports = selectedViewports();
-  await forEachViewport(page, expectedViewports, async (viewport) => {
+  return withPreservedLocalStorageValue(page, "lotion.locale", async (_previousLocale, restoreLocale) => {
+    await setLotionLocale(page, "zh");
+    const viewports = [];
+    const expectedViewports = selectedViewports();
+    await forEachViewport(page, expectedViewports, async (viewport) => {
     const fixture = await createSearchFixture(args.visibleHits + 40, args.queries[0] ?? "the", viewport.name);
     await openWorkspace(fixture.root);
     await waitForPageService(page, fixture.pageIds[0]);
@@ -60,8 +66,25 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
       visibleHits: args.visibleHits,
       viewport
     });
+    const harnessCache = assertSearchHarnessCacheEvidence(
+      await page.evaluate(() => window.__lotionSearchUiHarness?.diagnostics),
+      viewport.name
+    );
+    const baselinePolicy = {
+      compact: "test/baselines/production-visual/global-search-results-compact.json",
+      desktop: "test/baselines/production-visual/global-search-results-desktop.json",
+      wide: "test/baselines/production-visual/global-search-results-wide.json"
+    }[viewport.name];
+    visualSnapshot.perceptualBaseline = baselinePolicy && process.env.LOTION_SEARCH_UI_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: visualSnapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
     const keyboardNavigation = await inputKeyboardNavigationSmoke(page, viewport.name);
     const inputOverflow = await assertNoDocumentHorizontalOverflow(page, `search input after keyboard ${viewport.name}`, 8);
+    if (viewport === expectedViewports.at(-1)) await restoreLocale();
     const jump = await assertSearchResultJumpsToMarkdownLine(page, fixture, viewport.name);
 
     const slowCandidate = selected.candidateChecks.find((candidate) => candidate.elapsedMs > backendThresholdMs);
@@ -72,10 +95,16 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
       );
     }
     if (first > thresholdMs) {
-      throw new Error(`First search UI render ${first}ms exceeds ${thresholdMs}ms`);
+      throw new Error(
+        `First search UI render ${first}ms exceeds ${thresholdMs}ms; ` +
+        `query timings=${JSON.stringify(harnessCache.queryTimings)}`
+      );
     }
     if (repeated > thresholdMs) {
-      throw new Error(`Repeated search UI render ${repeated}ms exceeds ${thresholdMs}ms`);
+      throw new Error(
+        `Repeated search UI render ${repeated}ms exceeds ${thresholdMs}ms; ` +
+        `query timings=${JSON.stringify(harnessCache.queryTimings)}`
+      );
     }
     if (inputLatency.maxMs > inputThresholdMs) {
       throw new Error(`Search input key latency ${inputLatency.maxMs}ms exceeds ${inputThresholdMs}ms`);
@@ -88,6 +117,7 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
       hits: selected.hits,
       firstRenderMs: first,
       repeatedRenderMs: repeated,
+      harnessCache,
       sorting,
       inputLatency,
       keyboardNavigation,
@@ -96,23 +126,28 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
       visualSnapshot,
       jump
     });
-  });
+    });
 
-  const result = {
-    cdpUrl,
-    visibleHits: args.visibleHits,
-    largeHits: args.largeHits,
-    searchDelayMs: args.searchDelayMs,
-    thresholdMs,
-    backendThresholdMs,
-    inputThresholdMs,
-    viewports,
-    status: "passed"
-  };
-  result.artifactContract = await assertSearchUiArtifactContract(result, {
-    expectedViewportNames: expectedViewports.map((viewport) => viewport.name)
+    const result = {
+      cdpUrl,
+      visibleHits: args.visibleHits,
+      largeHits: args.largeHits,
+      searchDelayMs: args.searchDelayMs,
+      thresholdMs,
+      backendThresholdMs,
+      inputThresholdMs,
+      viewports,
+      status: "passed"
+    };
+    result.artifactContract = await assertSearchUiArtifactContract(result, {
+      expectedViewportNames: expectedViewports.map((viewport) => viewport.name),
+      requiredPerceptualBaselineViewportNames: expectedViewports
+        .map((viewport) => viewport.name)
+        .filter((viewportName) => process.env.LOTION_SEARCH_UI_SKIP_BASELINE !== "1"
+          && ["desktop", "compact", "wide"].includes(viewportName))
+    });
+    return result;
   });
-  return result;
 });
 
 assertHarnessViewportCoverage(summary);
@@ -149,22 +184,51 @@ async function openGlobalSearch(page) {
 async function installLargeSearchResultHarness(page, { delayMs, largeHits, query }) {
   await page.evaluate(({ delayMs, largeHits, query }) => {
     const original = window.lotion.search.query.bind(window.lotion.search);
+    const cachedHits = new Map();
+    const diagnostics = {
+      generationCounts: {},
+      queryCounts: {},
+      queryTimings: []
+    };
     const amplifiedQuery = async (pattern, options) => {
+      const startedAt = performance.now();
       const result = await original(pattern, options);
+      const originalCompleteAt = performance.now();
       if (pattern.trim() !== query || result.hits.length === 0) return result;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
-      const hits = Array.from({ length: largeHits }, (_unused, index) => {
-        const source = result.hits[index % result.hits.length];
-        return {
-          ...source,
-          line: source.line + index,
-          path: `${source.path}#large-${index}`,
-          text: `${source.text} · large result ${index + 1}`
-        };
+      const delayCompleteAt = performance.now();
+      const sortMode = options?.sort ?? "relevance";
+      diagnostics.queryCounts[sortMode] = (diagnostics.queryCounts[sortMode] ?? 0) + 1;
+      let hits = cachedHits.get(sortMode);
+      const cacheHit = Boolean(hits);
+      if (!hits) {
+        hits = Array.from({ length: largeHits }, (_unused, index) => {
+          const source = result.hits[index % result.hits.length];
+          return {
+            ...source,
+            line: source.line + index,
+            path: `${source.path}#large-${index}`,
+            text: `${source.text} · large result ${index + 1}`
+          };
+        });
+        cachedHits.set(sortMode, hits);
+        diagnostics.generationCounts[sortMode] = (diagnostics.generationCounts[sortMode] ?? 0) + 1;
+      }
+      // Preserve a new result-array identity so React repeats all 10k-result
+      // derivations while excluding synthetic fixture object construction.
+      const resultHits = hits.slice();
+      const completedAt = performance.now();
+      diagnostics.queryTimings.push({
+        cacheHit,
+        delayMs: Number((delayCompleteAt - originalCompleteAt).toFixed(1)),
+        originalMs: Number((originalCompleteAt - startedAt).toFixed(1)),
+        prepareMs: Number((completedAt - delayCompleteAt).toFixed(1)),
+        sortMode,
+        totalMs: Number((completedAt - startedAt).toFixed(1))
       });
-      return { hits, truncated: true };
+      return { hits: resultHits, truncated: true };
     };
-    window.__lotionSearchUiHarness = { query: amplifiedQuery };
+    window.__lotionSearchUiHarness = { diagnostics, query: amplifiedQuery };
   }, { delayMs, largeHits, query });
 }
 
@@ -302,13 +366,34 @@ async function assertSearchSortControls(page, fixture, viewportName) {
 
   const geometry = await page.evaluate(() => {
     const dialog = document.querySelector(".global-search");
+    const filters = document.querySelector(".global-search-filters");
+    const sortLabel = document.querySelector(".global-search-sort-control");
     const sortControl = document.querySelector('select[aria-label="搜索排序"]');
     const active = document.activeElement === sortControl;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const rect = sortControl?.getBoundingClientRect();
+    const labelRect = sortLabel?.getBoundingClientRect();
+    const filtersRect = filters?.getBoundingClientRect();
     const dialogRect = dialog?.getBoundingClientRect();
+    const buttonRects = Array.from(filters?.querySelectorAll("button") ?? [])
+      .map((button) => button.getBoundingClientRect());
+    const contains = (outer, inner, tolerance = 1) => Boolean(
+      outer && inner &&
+      inner.left >= outer.left - tolerance &&
+      inner.top >= outer.top - tolerance &&
+      inner.right <= outer.right + tolerance &&
+      inner.bottom <= outer.bottom + tolerance
+    );
+    const overlaps = (left, right, tolerance = 1) => Boolean(
+      left && right &&
+      left.left < right.right - tolerance &&
+      left.right > right.left + tolerance &&
+      left.top < right.bottom - tolerance &&
+      left.bottom > right.top + tolerance
+    );
     return {
       active,
+      controlCount: buttonRects.length,
       dialogInsideViewport: Boolean(
         dialogRect &&
         dialogRect.left >= 0 &&
@@ -322,10 +407,41 @@ async function assertSearchSortControls(page, fixture, viewportName) {
         rect.top >= 0 &&
         rect.right <= viewport.width &&
         rect.bottom <= viewport.height
-      )
+      ),
+      filtersInsideDialog: contains(dialogRect, filtersRect),
+      sortInsideDialog: contains(dialogRect, labelRect) && contains(dialogRect, rect),
+      sortInsideFilters: contains(filtersRect, labelRect) && contains(filtersRect, rect),
+      sortOverlapsFilter: buttonRects.some((buttonRect) => overlaps(buttonRect, labelRect)),
+      filtersOverflowX: filters instanceof HTMLElement
+        ? Math.max(0, filters.scrollWidth - filters.clientWidth)
+        : Number.NaN,
+      dialog: dialogRect ? rectObject(dialogRect) : null,
+      filters: filtersRect ? rectObject(filtersRect) : null,
+      sortLabel: labelRect ? rectObject(labelRect) : null,
+      sortSelect: rect ? rectObject(rect) : null
     };
+
+    function rectObject(box) {
+      return {
+        top: box.top,
+        right: box.right,
+        bottom: box.bottom,
+        left: box.left,
+        width: box.width,
+        height: box.height
+      };
+    }
   });
-  if (!geometry.active || !geometry.dialogInsideViewport || !geometry.sortInsideViewport) {
+  if (
+    !geometry.active ||
+    !geometry.dialogInsideViewport ||
+    !geometry.sortInsideViewport ||
+    !geometry.filtersInsideDialog ||
+    !geometry.sortInsideDialog ||
+    !geometry.sortInsideFilters ||
+    geometry.sortOverlapsFilter ||
+    geometry.filtersOverflowX > 1
+  ) {
     throw new Error(`Search sort control geometry/focus failed for ${viewportName}: ${JSON.stringify(geometry)}`);
   }
   await assertNoDocumentHorizontalOverflow(page, `search sort ${viewportName}`, 8);
@@ -406,34 +522,152 @@ async function captureSearchLatencySnapshot({
     { timeout: 5_000 }
   );
   const renderOverflow = await assertNoDocumentHorizontalOverflow(page, `search latency snapshot ${viewport.name}`, 8);
+  await stabilizeSearchSnapshot(page);
+  const layout = await collectSearchLayout(page);
   const rows = await collectVisibleSearchRows(page);
-  const visualSnapshot = await captureElementSnapshot({
-    artifactRoot,
-    locator: page.locator(".global-search").first(),
-    metadata: {
-      phase: "search-latency",
-      query,
-      visibleHitCount: rows.length,
-      firstVisibleTitle: rows[0]?.title ?? "",
-      firstRenderMs,
-      repeatedRenderMs,
-      inputMaxMs: inputLatency.maxMs,
-      rows: rows.slice(0, 8)
-    },
-    name: `Search Latency ${viewport.name}`,
-    page,
-    viewport
-  });
+  let visualSnapshot;
+  try {
+    visualSnapshot = await captureElementSnapshot({
+      artifactRoot,
+      locator: page.locator(".global-search").first(),
+      metadata: {
+        phase: "search-latency",
+        query,
+        visibleHitCount: rows.length,
+        firstVisibleTitle: rows[0]?.title ?? "",
+        firstRenderMs,
+        repeatedRenderMs,
+        inputMaxMs: inputLatency.maxMs,
+        layout,
+        rows: rows.slice(0, 8)
+      },
+      name: `Search Latency ${viewport.name}`,
+      page,
+      viewport
+    });
+  } finally {
+    await page.evaluate(() => {
+      for (const style of document.querySelectorAll("[data-search-snapshot-style]")) style.remove();
+    });
+  }
   await assertElementSnapshotBaseline(visualSnapshot, {
     label: `search latency ${viewport.name}`,
     rect: {
       height: { min: 180 },
       width: { min: viewport.name === "compact" ? 420 : 620 }
     },
-    requiredMetadataKeys: ["query", "visibleHitCount", "firstRenderMs", "repeatedRenderMs", "inputMaxMs"],
+    requiredMetadataKeys: ["query", "visibleHitCount", "firstRenderMs", "repeatedRenderMs", "inputMaxMs", "layout"],
     viewportName: viewport.name
   });
   return { renderOverflow, visualSnapshot };
+}
+
+async function stabilizeSearchSnapshot(page) {
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.setAttribute("data-search-snapshot-style", "true");
+    style.textContent = `
+      .global-search,
+      .global-search * {
+        -webkit-font-smoothing: antialiased !important;
+        font-feature-settings: normal !important;
+        font-kerning: none !important;
+        font-optical-sizing: none !important;
+        font-variant-ligatures: none !important;
+        text-rendering: geometricPrecision !important;
+      }
+      .global-search-results {
+        scrollbar-width: none !important;
+      }
+      .global-search-results::-webkit-scrollbar {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  });
+  const firstHit = page.locator(".global-search-hit").first();
+  await firstHit.hover();
+  await page.mouse.move(0, 0);
+  await page.waitForFunction(() => {
+    const first = document.querySelector(".global-search-hit");
+    return Boolean(first?.classList.contains("active"));
+  }, null, { timeout: 2_000 });
+  await page.locator(".global-search").evaluate(async (root) => {
+    if (root.contains(document.activeElement) && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    await Promise.all(root.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
+async function collectSearchLayout(page) {
+  return page.locator(".global-search").evaluate((root) => {
+    const rect = (node) => {
+      if (!(node instanceof Element)) return null;
+      const box = node.getBoundingClientRect();
+      return {
+        top: box.top,
+        right: box.right,
+        bottom: box.bottom,
+        left: box.left,
+        width: box.width,
+        height: box.height
+      };
+    };
+    const contains = (outer, inner, tolerance = 1) => Boolean(
+      outer && inner &&
+      inner.left >= outer.left - tolerance &&
+      inner.top >= outer.top - tolerance &&
+      inner.right <= outer.right + tolerance &&
+      inner.bottom <= outer.bottom + tolerance
+    );
+    const overlaps = (left, right, tolerance = 1) => Boolean(
+      left && right &&
+      left.left < right.right - tolerance &&
+      left.right > right.left + tolerance &&
+      left.top < right.bottom - tolerance &&
+      left.bottom > right.top + tolerance
+    );
+    const panel = rect(root);
+    const filtersNode = root.querySelector(".global-search-filters");
+    const filters = rect(filtersNode);
+    const sortLabel = rect(root.querySelector(".global-search-sort-control"));
+    const sortSelect = rect(root.querySelector('select[aria-label="搜索排序"]'));
+    const resultsNode = root.querySelector(".global-search-results");
+    const results = rect(resultsNode);
+    const filterButtons = Array.from(root.querySelectorAll(".global-search-filters button"))
+      .map((button) => ({
+        label: button.textContent?.trim() ?? "",
+        rect: rect(button)
+      }));
+    const visibleRows = Array.from(root.querySelectorAll(".global-search-hit"))
+      .slice(0, 8)
+      .map((row) => {
+        const rowRect = rect(row);
+        return {
+          title: row.querySelector(".gs-title")?.textContent?.trim() ?? "",
+          rect: rowRect,
+          fullyVisible: contains(results, rowRect)
+        };
+      });
+    return {
+      panel,
+      filters,
+      sortLabel,
+      sortSelect,
+      results,
+      filterButtons,
+      visibleRows,
+      filterCount: filterButtons.length,
+      filtersOverflowX: filtersNode instanceof HTMLElement
+        ? Math.max(0, filtersNode.scrollWidth - filtersNode.clientWidth)
+        : Number.NaN,
+      sortInsidePanel: contains(panel, sortLabel) && contains(panel, sortSelect),
+      sortInsideFilters: contains(filters, sortLabel) && contains(filters, sortSelect),
+      sortOverlapsFilter: filterButtons.some((button) => overlaps(button.rect, sortLabel))
+    };
+  });
 }
 
 async function collectVisibleSearchRows(page) {

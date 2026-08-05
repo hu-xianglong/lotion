@@ -1,6 +1,8 @@
 # Advanced Search Artifact Contract And Regression Lane
 
-Status: wip
+Status: done
+
+Verification status: verified
 
 ## Why
 

@@ -3,6 +3,29 @@ import type { NotionAuditItem, NotionAuditResult } from "../../shared/types";
 
 type AuditStage = "idle" | "running" | "done" | "error";
 
+export type NotionAuditRunOutcome =
+  | { status: "success"; result: NotionAuditResult }
+  | { status: "error"; error: string }
+  | { status: "ignored" };
+
+export function createNotionAuditRunController() {
+  let running = false;
+  return {
+    isRunning: () => running,
+    async run(operation: () => Promise<NotionAuditResult>): Promise<NotionAuditRunOutcome> {
+      if (running) return { status: "ignored" };
+      running = true;
+      try {
+        return { status: "success", result: await operation() };
+      } catch (caught) {
+        return { status: "error", error: caught instanceof Error ? caught.message : String(caught) };
+      } finally {
+        running = false;
+      }
+    }
+  };
+}
+
 export function NotionAuditPanel() {
   const [stage, setStage] = useState<AuditStage>("idle");
   const [sourcePath, setSourcePath] = useState("");
@@ -13,6 +36,8 @@ export function NotionAuditPanel() {
   const [result, setResult] = useState<NotionAuditResult | null>(null);
   const [error, setError] = useState("");
   const resultRef = useRef<HTMLDivElement | null>(null);
+  const runControllerRef = useRef<ReturnType<typeof createNotionAuditRunController> | null>(null);
+  if (!runControllerRef.current) runControllerRef.current = createNotionAuditRunController();
 
   const canRun = sourcePath.trim().length > 0 && stage !== "running";
   const csvFilterList = useMemo(() => splitFilters(csvFilters), [csvFilters]);
@@ -33,22 +58,25 @@ export function NotionAuditPanel() {
   }
 
   async function runAudit() {
-    if (!canRun) return;
+    const controller = runControllerRef.current;
+    if (!canRun || !controller || controller.isRunning()) return;
     setStage("running");
     setError("");
     setResult(null);
-    try {
-      const audit = await window.lotion.notion.audit({
+    const outcome = await controller.run(() =>
+      window.lotion.notion.audit({
         sourcePaths: [sourcePath],
         csvFilters: csvFilterList,
         htmlFilters: htmlFilterList,
         auditAllHtml,
         keepEmptyRows
-      });
-      setResult(audit);
+      })
+    );
+    if (outcome.status === "success") {
+      setResult(outcome.result);
       setStage("done");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+    } else if (outcome.status === "error") {
+      setError(outcome.error);
       setStage("error");
     }
   }

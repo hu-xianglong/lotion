@@ -1,8 +1,8 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DEFAULT_VIEW_ID, PAGES_DATABASE_ID } from "../../shared/constants.js";
 import { parsePathValue, serializePathValue } from "../../shared/path-values.js";
 import type { DatabaseRecord, DatabaseSchema, FieldSchema, PageMeta, RecordValue, TableView } from "../../shared/types.js";
-import { readCsvFile, readCsvFileByFieldValues, writeCsvFile } from "../storage/csv-file.js";
+import { appendCsvRecord, readCsvFile, writeCsvFile } from "../storage/csv-file.js";
 import { readJsonFile, writeJsonFile } from "../storage/json-file.js";
 import type { WorkspacePaths } from "../storage/paths.js";
 import type { WorkspaceService } from "./workspace-service.js";
@@ -52,6 +52,18 @@ export interface PageRecordInput {
   pageFile?: string;
 }
 
+export interface StartupPageRecordSnapshot {
+  meta: PageMeta;
+  bodyPath?: string;
+  databaseId?: string;
+  pageFile?: string;
+}
+
+export interface StartupPageRecordsMutation {
+  upserts: StartupPageRecordSnapshot[];
+  deletedIds: string[];
+}
+
 /**
  * System database that owns page metadata. Markdown files are body-only;
  * every mutable page setting lives in `databases/system/pages--db_pages/data.csv`.
@@ -63,8 +75,37 @@ export class PagesDatabaseService {
   private schemaCache?: DatabaseSchema;
   private recordsCache?: DatabaseRecord[];
   private cacheSignature?: string;
+  private startupSnapshotsRoot?: string;
+  private startupSnapshots = new Map<string, StartupPageRecordSnapshot>();
+  private startupSnapshotLookup?: (
+    id: string
+  ) => StartupPageRecordSnapshot | undefined | Promise<StartupPageRecordSnapshot | undefined>;
+  private readonly startupMutationListeners = new Set<(mutation: StartupPageRecordsMutation) => void | Promise<void>>();
 
   constructor(private readonly workspace: WorkspaceService) {}
+
+  primeStartupSnapshots(snapshots: StartupPageRecordSnapshot[]): void {
+    this.startupSnapshotsRoot = this.workspace.requirePaths().root;
+    this.startupSnapshots = new Map(snapshots.map((snapshot) => [snapshot.meta.id, snapshot]));
+    this.startupSnapshotLookup = undefined;
+  }
+
+  primeStartupSnapshotLookup(
+    lookup: (
+      id: string
+    ) => StartupPageRecordSnapshot | undefined | Promise<StartupPageRecordSnapshot | undefined>
+  ): void {
+    this.startupSnapshotsRoot = this.workspace.requirePaths().root;
+    this.startupSnapshots.clear();
+    this.startupSnapshotLookup = lookup;
+  }
+
+  subscribeStartupMutations(
+    listener: (mutation: StartupPageRecordsMutation) => void | Promise<void>
+  ): () => void {
+    this.startupMutationListeners.add(listener);
+    return () => this.startupMutationListeners.delete(listener);
+  }
 
   async ensure(): Promise<void> {
     const paths = this.workspace.requirePaths();
@@ -99,7 +140,10 @@ export class PagesDatabaseService {
 
     const hasData = await pathExists(paths.data(PAGES_DATABASE_ID));
     const existingRecords = hasData ? await readCsvFile(paths.data(PAGES_DATABASE_ID)) : undefined;
-    const normalized = existingRecords
+    const shouldNormalizeRecords = existingRecords && (
+      schemaChanged || existingRecords.some(recordNeedsDefaultPageFileRecovery)
+    );
+    const normalized = shouldNormalizeRecords
       ? await normalizePagesRecords(paths, schema, existingRecords)
       : undefined;
     if (schemaChanged) {
@@ -126,55 +170,86 @@ export class PagesDatabaseService {
     this.schemaCache = schema;
     this.recordsCache = normalized?.records ?? existingRecords ?? [];
     this.cacheSignature = await pagesDatabaseSignature(paths);
+    this.clearStartupSnapshots();
   }
 
   async listMetas(ids?: string[]): Promise<PageMeta[]> {
-    if (ids) {
-      const paths = this.workspace.requirePaths();
-      const records = await readCsvFileByFieldValues(
-        paths.data(PAGES_DATABASE_ID),
-        "id",
-        ids
-      );
-      let pageFilesById: Map<string, string> | undefined;
-      const recoveredRecords: DatabaseRecord[] = [];
-      for (const record of records) {
-        const id = stringValue(record.id);
-        const needsRecovery = !optionalStringValue(record[BODY_PATH_FIELD]) || stringValue(record.title) === "Untitled";
-        if (!id || !needsRecovery) {
-          recoveredRecords.push(record);
-          continue;
-        }
-        pageFilesById ??= await readDefaultPageFileIndex(paths);
-        recoveredRecords.push(await recoverDefaultPageRecord(paths, id, record, pageFilesById));
-      }
-      const byId = new Map(recoveredRecords.map((record) => [String(record.id ?? ""), record]));
-      return ids
-        .map((id) => byId.get(id))
-        .filter(Boolean)
-        .map((record) => recordToPageMeta(record as DatabaseRecord));
-    }
     const records = await this.readRecords();
-    return records.filter(isDefaultPageRecord).map((record) => recordToPageMeta(record));
+    const byId = new Map(records.map((record) => [String(record.id ?? ""), record]));
+    const ordered = ids
+      ? ids.map((id) => byId.get(id)).filter(Boolean)
+      : records.filter(isDefaultPageRecord);
+    return ordered.map((record) => recordToPageMeta(record as DatabaseRecord));
   }
 
   async getMeta(id: string): Promise<PageMeta | null> {
-    const paths = this.workspace.requirePaths();
-    const record = await this.findRecordById(id);
-    if (!record) return null;
-    const needsRecovery = !optionalStringValue(record[BODY_PATH_FIELD]) || stringValue(record.title) === "Untitled";
-    const recovered = needsRecovery
-      ? await recoverDefaultPageRecord(paths, id, record, await readDefaultPageFileIndex(paths))
-      : record;
-    return recordToPageMeta(recovered);
+    const startupSnapshot = await this.startupSnapshot(id);
+    if (startupSnapshot) return startupSnapshot.meta;
+    const records = await this.readRecords();
+    const record = records.find((item) => String(item.id ?? "") === id);
+    return record ? recordToPageMeta(record) : null;
   }
 
   async getBodyPath(id: string): Promise<string | undefined> {
-    const record = await this.findRecordById(id);
+    const startupSnapshot = await this.startupSnapshot(id);
+    if (startupSnapshot) return startupSnapshot.bodyPath;
+    const records = await this.readRecords();
+    const record = records.find((item) => String(item.id ?? "") === id);
     const bodyPath = record ? optionalStringValue(record[BODY_PATH_FIELD]) : undefined;
     if (bodyPath) return bodyPath;
     const fileName = await findDefaultPageFileById(this.workspace.requirePaths(), id);
     return fileName ? defaultPageBodyPath(fileName) : undefined;
+  }
+
+  async getSnapshots(ids: Iterable<string>): Promise<Map<string, { meta: PageMeta; bodyPath?: string }>> {
+    const requested = new Set(ids);
+    if (requested.size === 0) return new Map();
+    if (this.startupSnapshotsRoot === this.workspace.requirePaths().root) {
+      const startupSnapshots = new Map<string, { meta: PageMeta; bodyPath?: string }>();
+      const resolved = await Promise.all([...requested].map(async (id) => ({
+        id,
+        snapshot: await this.startupSnapshot(id)
+      })));
+      for (const { id, snapshot } of resolved) {
+        if (snapshot) startupSnapshots.set(id, { meta: snapshot.meta, bodyPath: snapshot.bodyPath });
+      }
+      if (startupSnapshots.size === requested.size) return startupSnapshots;
+    }
+    const records = await this.readRecords();
+    const snapshots = new Map<string, { meta: PageMeta; bodyPath?: string }>();
+    for (const record of records) {
+      const id = String(record.id ?? "");
+      if (!requested.has(id)) continue;
+      snapshots.set(id, {
+        meta: recordToPageMeta(record),
+        bodyPath: optionalStringValue(record[BODY_PATH_FIELD])
+      });
+    }
+    return snapshots;
+  }
+
+  async getStartupSnapshots(): Promise<StartupPageRecordSnapshot[]> {
+    return (await this.readRecords()).map(recordToStartupSnapshot);
+  }
+
+  async listRowPageFilesByDatabase(databaseIds: Iterable<string>): Promise<Map<string, string[]>> {
+    const requested = new Set(databaseIds);
+    const files = new Map<string, Set<string>>();
+    for (const databaseId of requested) files.set(databaseId, new Set());
+    if (requested.size === 0) return new Map();
+
+    for (const record of await this.readRecords()) {
+      const databaseId = optionalStringValue(record[DATABASE_ID_FIELD]);
+      if (!databaseId || !requested.has(databaseId)) continue;
+      const bodyPath = optionalStringValue(record[BODY_PATH_FIELD]);
+      const fileName = optionalStringValue(record[PAGE_FILE_FIELD])
+        ?? (bodyPath ? basename(bodyPath) : undefined);
+      if (fileName?.endsWith(".md")) files.get(databaseId)?.add(fileName);
+    }
+
+    return new Map(
+      [...files].map(([databaseId, names]) => [databaseId, [...names].sort()])
+    );
   }
 
   async setBodyPath(id: string, bodyPath: string): Promise<void> {
@@ -193,6 +268,8 @@ export class PagesDatabaseService {
     await writeCsvFile(this.workspace.requirePaths().data(PAGES_DATABASE_ID), schema.fields.map((field) => field.id), nextRecords);
     this.recordsCache = nextRecords;
     this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
+    this.clearStartupSnapshots();
+    await this.emitStartupMutation({ upserts: [recordToStartupSnapshot(next)], deletedIds: [] });
   }
 
   async delete(id: string): Promise<void> {
@@ -204,6 +281,23 @@ export class PagesDatabaseService {
     await writeCsvFile(this.workspace.requirePaths().data(PAGES_DATABASE_ID), schema.fields.map((field) => field.id), nextRecords);
     this.recordsCache = nextRecords;
     this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
+    this.clearStartupSnapshots();
+    await this.emitStartupMutation({ upserts: [], deletedIds: [id] });
+  }
+
+  async deleteMany(ids: Iterable<string>): Promise<void> {
+    const doomed = new Set(ids);
+    if (doomed.size === 0) return;
+    await this.ensure();
+    const schema = await this.readSchema();
+    const records = await this.readRecords();
+    const nextRecords = records.filter((record) => !doomed.has(String(record.id ?? "")));
+    if (nextRecords.length === records.length) return;
+    await writeCsvFile(this.workspace.requirePaths().data(PAGES_DATABASE_ID), schema.fields.map((field) => field.id), nextRecords);
+    this.recordsCache = nextRecords;
+    this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
+    this.clearStartupSnapshots();
+    await this.emitStartupMutation({ upserts: [], deletedIds: [...doomed] });
   }
 
   async upsert(input: PageRecordInput): Promise<PageMeta> {
@@ -215,46 +309,27 @@ export class PagesDatabaseService {
     if (existing && recordsEquivalentForSchema(schema, existing, next)) {
       return recordToPageMeta(existing);
     }
-    const nextRecords = existing
-      ? records.map((record) => (String(record.id ?? "") === input.meta.id ? next : record))
-      : [...records, next];
+    if (!existing) {
+      await appendCsvRecord(
+        this.workspace.requirePaths().data(PAGES_DATABASE_ID),
+        schema.fields.map((field) => field.id),
+        next
+      );
+      this.recordsCache = [...records, next];
+      this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
+      this.clearStartupSnapshots();
+      await this.emitStartupMutation({ upserts: [recordToStartupSnapshot(next)], deletedIds: [] });
+      return recordToPageMeta(next);
+    }
+    const nextRecords = records.map((record) => (
+      String(record.id ?? "") === input.meta.id ? next : record
+    ));
     await writeCsvFile(this.workspace.requirePaths().data(PAGES_DATABASE_ID), schema.fields.map((field) => field.id), nextRecords);
     this.recordsCache = nextRecords;
     this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
+    this.clearStartupSnapshots();
+    await this.emitStartupMutation({ upserts: [recordToStartupSnapshot(next)], deletedIds: [] });
     return recordToPageMeta(next);
-  }
-
-  async upsertMany(inputs: PageRecordInput[]): Promise<PageMeta[]> {
-    if (inputs.length === 0) return [];
-    await this.ensure();
-    const schema = await this.readSchema();
-    const records = await this.readRecords();
-    const nextRecords = [...records];
-    const indexById = new Map(nextRecords.map((record, index) => [String(record.id ?? ""), index]));
-    const metas: PageMeta[] = [];
-    let changed = false;
-
-    for (const input of inputs) {
-      const existingIndex = indexById.get(input.meta.id);
-      const existing = existingIndex === undefined ? undefined : nextRecords[existingIndex];
-      const next = withSchemaDefaults(schema, pageInputToRecord(input, existing));
-      metas.push(recordToPageMeta(next));
-      if (existing && recordsEquivalentForSchema(schema, existing, next)) continue;
-      changed = true;
-      if (existingIndex === undefined) {
-        indexById.set(input.meta.id, nextRecords.length);
-        nextRecords.push(next);
-      } else {
-        nextRecords[existingIndex] = next;
-      }
-    }
-
-    if (changed) {
-      await writeCsvFile(this.workspace.requirePaths().data(PAGES_DATABASE_ID), schema.fields.map((field) => field.id), nextRecords);
-      this.recordsCache = nextRecords;
-      this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
-    }
-    return metas;
   }
 
   async patch(id: string, patch: PageMetaPatch): Promise<PageMeta> {
@@ -285,6 +360,8 @@ export class PagesDatabaseService {
     await writeCsvFile(this.workspace.requirePaths().data(PAGES_DATABASE_ID), schema.fields.map((field) => field.id), nextRecords);
     this.recordsCache = nextRecords;
     this.cacheSignature = await pagesDatabaseSignature(this.workspace.requirePaths());
+    this.clearStartupSnapshots();
+    await this.emitStartupMutation({ upserts: [recordToStartupSnapshot(merged)], deletedIds: [] });
     return recordToPageMeta(merged);
   }
 
@@ -314,13 +391,29 @@ export class PagesDatabaseService {
     return schema;
   }
 
-  private async findRecordById(id: string): Promise<DatabaseRecord | undefined> {
-    const paths = this.workspace.requirePaths();
-    if (this.cacheRoot === paths.root && this.recordsCache) {
-      return this.recordsCache.find((record) => String(record.id ?? "") === id);
+  private async startupSnapshot(id: string): Promise<StartupPageRecordSnapshot | undefined> {
+    if (this.startupSnapshotsRoot !== this.workspace.requirePaths().root) return undefined;
+    const cached = this.startupSnapshots.get(id);
+    if (cached) return cached;
+    const loaded = await this.startupSnapshotLookup?.(id);
+    if (loaded) this.startupSnapshots.set(id, loaded);
+    return loaded;
+  }
+
+  private clearStartupSnapshots(): void {
+    this.startupSnapshotsRoot = undefined;
+    this.startupSnapshots.clear();
+    this.startupSnapshotLookup = undefined;
+  }
+
+  private async emitStartupMutation(mutation: StartupPageRecordsMutation): Promise<void> {
+    for (const listener of this.startupMutationListeners) {
+      try {
+        await listener(mutation);
+      } catch (error) {
+        console.warn("[lotion startup cache] failed to record page mutation", error);
+      }
     }
-    const records = await readCsvFileByFieldValues(paths.data(PAGES_DATABASE_ID), "id", [id]);
-    return records[0];
   }
 }
 
@@ -439,6 +532,15 @@ export function recordToPageMeta(record: DatabaseRecord): PageMeta {
   return meta;
 }
 
+function recordToStartupSnapshot(record: DatabaseRecord): StartupPageRecordSnapshot {
+  return {
+    meta: recordToPageMeta(record),
+    bodyPath: optionalStringValue(record[BODY_PATH_FIELD]),
+    databaseId: optionalStringValue(record[DATABASE_ID_FIELD]),
+    pageFile: optionalStringValue(record[PAGE_FILE_FIELD])
+  };
+}
+
 export function pageBodyPath(id: string, title?: string): string {
   return join(rowPagesWorkspacePath(PAGES_DATABASE_ID, true, "pages"), pageFileName(id, title)).replace(/\\/g, "/");
 }
@@ -497,7 +599,10 @@ async function normalizePagesRecords(
   records: DatabaseRecord[]
 ): Promise<{ records: DatabaseRecord[]; changed: boolean }> {
   let changed = false;
-  const pageFilesById = await readDefaultPageFileIndex(paths);
+  const needsFileRecovery = records.some(recordNeedsDefaultPageFileRecovery);
+  const pageFilesById = needsFileRecovery
+    ? await readDefaultPageFileIndex(paths)
+    : new Map<string, string>();
   const next: DatabaseRecord[] = [];
   for (const record of records) {
     const id = stringValue(record.id);
@@ -518,17 +623,15 @@ async function normalizePagesRecords(
       pageFile: optionalStringValue(recovered[PAGE_FILE_FIELD])
     }, recovered));
     if (recordsDifferForSchema(schema, record, normalized)) changed = true;
-    const bodyPath = optionalStringValue(normalized[BODY_PATH_FIELD]);
-    if (
-      isDefaultPageRecord(record) &&
-      bodyPath &&
-      await migrateDefaultPageBody(paths, id, bodyPath, optionalStringValue(recovered[BODY_PATH_FIELD]))
-    ) {
-      changed = true;
-    }
     next.push(normalized);
   }
   return { records: next, changed };
+}
+
+function recordNeedsDefaultPageFileRecovery(record: DatabaseRecord): boolean {
+  if (!stringValue(record.id)) return false;
+  const title = stringValue(record.title);
+  return !optionalStringValue(record[BODY_PATH_FIELD]) || !title || title === "Untitled";
 }
 
 async function recoverDefaultPageRecord(
@@ -602,10 +705,12 @@ export function titleFromPageFileName(fileName: string, id: string): string | un
 }
 
 function isDefaultPageRecord(record: DatabaseRecord): boolean {
+  const kind = optionalStringValue(record[KIND_FIELD]);
   const databaseId = optionalStringValue(record[DATABASE_ID_FIELD]);
   const bodyPath = optionalStringValue(record[BODY_PATH_FIELD]);
   return !databaseId ||
     databaseId === PAGES_DATABASE_ID ||
+    kind === "page" ||
     /^pages\/page_[^/]+\.md$/i.test(bodyPath ?? "") ||
     /^system\/pages\/db_pages\/page_[^/]+\.md$/i.test(bodyPath ?? "");
 }
@@ -621,31 +726,6 @@ function recordsEquivalentForSchema(schema: DatabaseSchema, a: DatabaseRecord, b
     }
     return String(a[field.id] ?? "") === String(b[field.id] ?? "");
   });
-}
-
-async function migrateDefaultPageBody(
-  paths: WorkspacePaths,
-  id: string,
-  nextRel: string,
-  previousBodyPath: string | undefined
-): Promise<boolean> {
-  const nextAbs = join(paths.root, nextRel);
-  if (await pathExists(nextAbs)) return false;
-
-  const candidates = [
-    previousBodyPath,
-    join("pages", pageFileName(id)).replace(/\\/g, "/"),
-    join("pages", `page_${id}.md`).replace(/\\/g, "/"),
-    join("system", "pages", `db_${PAGES_DATABASE_ID}`, `page_${id}.md`).replace(/\\/g, "/")
-  ].filter((candidate): candidate is string => Boolean(candidate && candidate !== nextRel));
-
-  for (const rel of candidates) {
-    const previousAbs = join(paths.root, rel);
-    if (!(await pathExists(previousAbs))) continue;
-    await fileService.rename(previousAbs, nextAbs);
-    return true;
-  }
-  return false;
 }
 
 function parseTags(value: RecordValue | undefined): string[] {
@@ -695,7 +775,7 @@ function optionalStringValue(value: RecordValue | undefined): string | undefined
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await fileService.readText(path);
+    await fileService.stat(path);
     return true;
   } catch (error) {
     if (isNotFoundError(error)) return false;
@@ -714,7 +794,7 @@ async function pagesDatabaseSignature(paths: WorkspacePaths): Promise<string> {
 async function fileSignature(path: string): Promise<string> {
   try {
     const info = await fileService.stat(path);
-    return `${info.size}:${info.mtimeMs}`;
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${fileService.revision(path)}`;
   } catch (error) {
     if (isNotFoundError(error)) return "missing";
     throw error;
@@ -724,3 +804,23 @@ async function fileSignature(path: string): Promise<string> {
 function isNotFoundError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
+
+// Page index normalization helpers are exposed only as an internal test
+// contract. PagesDatabaseService remains the production API.
+export const pagesDatabaseTestInternals = {
+  recordToStartupSnapshot,
+  normalizePagesSchema,
+  withSchemaDefaults,
+  recordNeedsDefaultPageFileRecovery,
+  defaultPageBodyPath,
+  firstMarkdownHeading,
+  isDefaultPageRecord,
+  recordsDifferForSchema,
+  recordsEquivalentForSchema,
+  parseTags,
+  parsePath,
+  parseParentRef,
+  parseBoolean,
+  stringValue,
+  optionalStringValue
+};

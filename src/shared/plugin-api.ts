@@ -42,9 +42,15 @@ import type {
   CreatePageInput,
   CreateDatabaseInput,
   CreateViewInput,
+  PatchViewInput,
+  PatchViewResult,
+  ReorderViewsInput,
   UpdateViewInput
 } from "./types.js";
 export type { AttachmentRef } from "./attachments.js";
+export { evaluateFilterExpression, filterConditionError, filterOperatorsForField, legacyFiltersToExpression, normalizeFilterExpression } from "./filter-expression.js";
+export { compareFieldValues, defaultSortDirection, sortDatabaseRecords, sortDirectionLabels } from "./database-sort.js";
+export { EMPTY_GROUP_KEY, groupDatabaseRecords, groupKeyAndLabel, normalizeViewGroups } from "./database-grouping.js";
 import type { AttachmentRef } from "./attachments.js";
 
 // ── Lifecycle primitives ──────────────────────────────────────────────
@@ -187,6 +193,8 @@ export interface ViewRenderContext {
   bundle: DatabaseBundle;
   view: TableView;
   container: HTMLElement;
+  /** Ask the host to open a row using this saved view's page-open mode. */
+  openRow?(rowId: ID, origin?: HTMLElement): void;
   /** Scoped workspace API the view should use for edits. Routing
    *  through this lets the host re-render dependent views when one
    *  view mutates a cell. */
@@ -441,7 +449,7 @@ export interface WorkspaceAPI {
 
   // Rows / cells
   getRowPage(databaseId: ID, rowId: ID): Promise<PageDocument>;
-  addRow(databaseId: ID): Promise<DatabaseBundle>;
+  addRow(databaseId: ID, initialValues?: Record<string, RecordValue>): Promise<DatabaseBundle>;
   updateCell(input: UpdateCellInput): Promise<DatabaseBundle>;
   deleteRow(databaseId: ID, rowId: ID): Promise<DatabaseBundle>;
 
@@ -449,6 +457,8 @@ export interface WorkspaceAPI {
   createView(input: CreateViewInput): Promise<DatabaseBundle>;
   duplicateView(databaseId: ID, viewId: ID, name?: string): Promise<DatabaseBundle>;
   updateView(input: UpdateViewInput): Promise<DatabaseBundle>;
+  patchView(input: PatchViewInput): Promise<PatchViewResult>;
+  reorderViews(input: ReorderViewsInput): Promise<DatabaseBundle>;
   deleteView(databaseId: ID, viewId: ID): Promise<DatabaseBundle>;
   setDefaultView(databaseId: ID, viewId: ID): Promise<DatabaseBundle>;
 

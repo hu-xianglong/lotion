@@ -2,7 +2,7 @@
   "id": "pages",
   "name": "pages",
   "created_time": "2026-05-28T21:46:11.120Z",
-  "updated_time": "2026-05-28T21:46:11.120Z",
+  "updated_time": "2026-07-16T22:48:17.051Z",
   "fields": [
     {
       "id": "id",
@@ -95,6 +95,21 @@
       "type": "text",
       "system": true,
       "hidden": true
+    },
+    {
+      "id": "path",
+      "name": "Path",
+      "type": "text"
+    },
+    {
+      "id": "parent_id",
+      "name": "Parent entity",
+      "type": "entity_ref"
+    },
+    {
+      "id": "small_text",
+      "name": "Small text",
+      "type": "checkbox"
     }
   ],
   "defaultViewId": "view_default"

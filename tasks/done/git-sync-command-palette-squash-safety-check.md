@@ -4,7 +4,7 @@ Status: done
 
 ## Source
 
-Split from `tasks/todo/git-sync-plugin.md` history compaction safety notes.
+Split from `tasks/done/git-sync-plugin.md` history compaction safety notes.
 
 ## Goal
 

@@ -16,14 +16,14 @@
   ],
   "fieldOrder": [
     "title",
-    "count",
-    "status",
+    "reference_url",
+    "updated_time",
     "labels",
     "target_date",
-    "reference_url",
+    "status",
     "enabled",
     "computed_count",
-    "updated_time"
+    "count"
   ],
   "sorts": [
     {

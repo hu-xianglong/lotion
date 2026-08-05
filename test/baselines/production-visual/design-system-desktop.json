@@ -1,0 +1,24 @@
+{
+  "kind": "lotion-production-visual-baseline-policy",
+  "surface": "design-system",
+  "theme": "light",
+  "viewport": {
+    "name": "desktop",
+    "width": 1440,
+    "height": 1000
+  },
+  "image": {
+    "path": "test/baselines/production-visual/design-system-desktop.png",
+    "sha256": "db1efc661a9585cc93f94dadf2d79440bdd801a3c14e9e4c2cacb19d99924621",
+    "width": 912,
+    "height": 907
+  },
+  "comparison": {
+    "threshold": 0.1,
+    "includeAA": false,
+    "maxDiffPixels": 0,
+    "maxDiffRatio": 0
+  },
+  "verifiedAt": "2026-07-23",
+  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+}

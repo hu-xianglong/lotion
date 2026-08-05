@@ -132,18 +132,21 @@ function normalizeGeneratedMarkdown(markdown: string): string {
 
 function readCurrentSelectionText(): string {
   if (typeof window === "undefined") return "";
-  const liveText = window.getSelection()?.toString() ?? "";
+  const liveText = normalizeSelectionText(window.getSelection()?.toString() ?? "");
   const cachedText = typeof window.__lotionEditorSelectionText === "string"
     && typeof window.__lotionEditorSelectionUpdatedAt === "number"
     && Date.now() - window.__lotionEditorSelectionUpdatedAt < 30_000
-    ? window.__lotionEditorSelectionText
+    ? normalizeSelectionText(window.__lotionEditorSelectionText)
     : "";
   delete window.__lotionEditorSelectionText;
   delete window.__lotionEditorSelectionUpdatedAt;
-  return (liveText || cachedText)
+  return (liveText || cachedText).slice(0, 8000);
+}
+
+function normalizeSelectionText(value: string): string {
+  return value
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, 8000);
+    .trim();
 }

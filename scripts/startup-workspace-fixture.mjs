@@ -9,9 +9,10 @@ import { databaseFolderName, pageMarkdownFileName } from "../dist-electron/share
 export async function createStartupWorkspaceFixture(options = {}) {
   const safeName = String(options.name ?? "startup").replace(/[^a-z0-9_-]+/gi, "_");
   const pageCount = Math.max(1, Math.floor(options.pageCount ?? 80));
+  const pageIndexRecordCount = Math.max(pageCount, Math.floor(options.pageIndexRecordCount ?? pageCount));
   const databaseCount = Math.max(0, Math.floor(options.databaseCount ?? 3));
   const rowsPerDatabase = Math.max(0, Math.floor(options.rowsPerDatabase ?? 160));
-  const extraDatabaseFields = Array.isArray(options.extraDatabaseFields) ? options.extraDatabaseFields : [];
+  const sparsePageBodies = options.sparsePageBodies === true;
   const root = await mkdtemp(join(tmpdir(), `lotion-first-launch-${safeName}-`));
   const now = "2026-06-12T12:00:00.000Z";
   const pagesFolder = databaseFolderName(PAGES_DATABASE_ID, "pages");
@@ -19,9 +20,22 @@ export async function createStartupWorkspaceFixture(options = {}) {
   const targetPageId = `pg_startup_target_${safeName}`;
   const targetTitle = `Startup Visible Target ${safeName}`;
   const otherPageIds = Array.from({ length: pageCount - 1 }, (_unused, index) => `pg_startup_${safeName}_${index + 1}`);
-  const pageIds = [targetPageId, ...otherPageIds];
-  const targetBodyPath = workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(targetPageId, targetTitle));
   const databaseIds = Array.from({ length: databaseCount }, (_unused, index) => `db_startup_${safeName}_${index + 1}`);
+  const targetRowPageId = databaseCount > 0 && rowsPerDatabase > 0 && pageIndexRecordCount > pageCount
+    ? "row_startup_1"
+    : undefined;
+  const targetRowPageTitle = targetRowPageId ? "Startup Records 1 row 1" : undefined;
+  const pageIds = [targetPageId, ...otherPageIds];
+  const indexedOnlyPageIds = Array.from(
+    { length: pageIndexRecordCount - pageCount },
+    (_unused, index) => index === 0 && targetRowPageId
+      ? targetRowPageId
+      : `row_startup_index_${safeName}_${index + 1}`
+  );
+  const targetBodyPath = workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(targetPageId, targetTitle));
+  const targetRowPageBodyPath = targetRowPageId && targetRowPageTitle
+    ? workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(targetRowPageId, targetRowPageTitle))
+    : undefined;
 
   await mkdir(join(pagesDir, "pages"), { recursive: true });
   await mkdir(join(pagesDir, "views"), { recursive: true });
@@ -44,9 +58,22 @@ export async function createStartupWorkspaceFixture(options = {}) {
       icon: "emoji:🚦",
       path: ["Startup Smoke", targetTitle],
       bodyPath: targetBodyPath,
-      tags: "startup, benchmark"
+      tags: "startup;benchmark"
     }),
-    ...otherPageIds.map((id, index) => {
+    ...[...otherPageIds, ...indexedOnlyPageIds].map((id, index) => {
+      if (id === targetRowPageId && targetRowPageTitle && targetRowPageBodyPath) {
+        return pageRecord({
+          id,
+          title: targetRowPageTitle,
+          now,
+          icon: "emoji:📝",
+          path: ["Startup Records 1", targetRowPageTitle],
+          bodyPath: targetRowPageBodyPath,
+          databaseId: databaseIds[0],
+          parentId: databaseIds[0],
+          tags: "startup;row-page"
+        });
+      }
       const title = `Startup Fixture Page ${index + 1}`;
       return pageRecord({
         id,
@@ -57,32 +84,28 @@ export async function createStartupWorkspaceFixture(options = {}) {
         bodyPath: workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(id, title)),
         tags: index % 2 === 0 ? "startup" : "background"
       });
-    }),
-    ...databaseIds.flatMap((databaseId, databaseIndex) => (
-      Array.from({ length: rowsPerDatabase }, (_unused, rowIndex) => rowPageRecord({
-        databaseId,
-        databaseName: `Startup Records ${databaseIndex + 1}`,
-        rowIndex,
-        now
-      }))
-    ))
+    })
   ]);
   await writeFile(join(root, targetBodyPath), startupTargetMarkdown(targetTitle, databaseIds), "utf8");
-  for (let index = 0; index < otherPageIds.length; index += 1) {
-    const id = otherPageIds[index];
-    const title = `Startup Fixture Page ${index + 1}`;
-    const bodyPath = workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(id, title));
-    await writeFile(
-      join(root, bodyPath),
-      `# ${title}\n\nBackground page ${index + 1} links to [${targetTitle}](${targetBodyPath}) for startup backlink work.\n`,
-      "utf8"
-    );
+  if (targetRowPageBodyPath && targetRowPageTitle) {
+    await writeFile(join(root, targetRowPageBodyPath), `# ${targetRowPageTitle}\n\nCached row-page startup body.\n`, "utf8");
+  }
+  if (!sparsePageBodies) {
+    for (let index = 0; index < otherPageIds.length; index += 1) {
+      const id = otherPageIds[index];
+      const title = `Startup Fixture Page ${index + 1}`;
+      const bodyPath = workspacePath("system", pagesFolder, "pages", pageMarkdownFileName(id, title));
+      await writeFile(
+        join(root, bodyPath),
+        `# ${title}\n\nBackground page ${index + 1} links to [${targetTitle}](${targetBodyPath}) for startup backlink work.\n`,
+        "utf8"
+      );
+    }
   }
 
   for (let index = 0; index < databaseIds.length; index += 1) {
     await writeStartupDatabase(root, {
       databaseId: databaseIds[index],
-      extraFields: extraDatabaseFields,
       name: `Startup Records ${index + 1}`,
       now,
       rows: rowsPerDatabase
@@ -94,9 +117,13 @@ export async function createStartupWorkspaceFixture(options = {}) {
     targetPageId,
     targetTitle,
     pageCount,
+    pageIndexRecordCount,
     databaseCount,
     rowsPerDatabase,
-    databaseIds
+    databaseIds,
+    targetRowPageId,
+    targetRowPageTitle,
+    targetRowPageBodyPath
   };
 }
 
@@ -123,7 +150,7 @@ function startupTargetMarkdown(title, databaseIds) {
   return `${lines.join("\n")}\n`;
 }
 
-async function writeStartupDatabase(root, { databaseId, extraFields, name, now, rows }) {
+async function writeStartupDatabase(root, { databaseId, name, now, rows }) {
   const folder = databaseFolderName(databaseId, name);
   const dir = join(root, "databases", "user", folder);
   await mkdir(join(dir, "pages"), { recursive: true });
@@ -141,26 +168,21 @@ async function writeStartupDatabase(root, { databaseId, extraFields, name, now, 
       { id: "title", name: "Name", type: "text" },
       { id: "status", name: "Status", type: "select", options: [{ id: "todo", name: "Todo", color: "gray" }, { id: "done", name: "Done", color: "green" }] },
       { id: "score", name: "Score", type: "number" },
-      { id: "notes", name: "Notes", type: "text" },
-      ...extraFields.map(({ values: _values, ...field }) => field)
+      { id: "notes", name: "Notes", type: "text" }
     ]
   });
-  await writeJson(
-    join(dir, "views", `${DEFAULT_VIEW_ID}.json`),
-    defaultView(databaseId, ["title", "notes", "status", "score", ...extraFields.map((field) => field.id)])
-  );
+  await writeJson(join(dir, "views", `${DEFAULT_VIEW_ID}.json`), defaultView(databaseId, ["title", "notes", "status", "score"]));
   await writeCsv(
     join(dir, "data.csv"),
-    ["id", "created_time", "updated_time", "title", "status", "score", "notes", ...extraFields.map((field) => field.id)],
+    ["id", "created_time", "updated_time", "title", "status", "score", "notes"],
     Array.from({ length: rows }, (_unused, index) => ({
-      id: startupRowId(databaseId, index),
+      id: `row_startup_${index + 1}`,
       created_time: now,
       updated_time: now,
       title: `${name} row ${index + 1}`,
       status: index % 3 === 0 ? "Done" : "Todo",
       score: String(index + 1),
-      notes: `Startup database note ${index + 1} with enough text to make column loading non-trivial.`,
-      ...Object.fromEntries(extraFields.map((field) => [field.id, String(field.values?.[index] ?? "")]))
+      notes: `Startup database note ${index + 1} with enough text to make column loading non-trivial.`
     }))
   );
 }
@@ -182,13 +204,24 @@ function pagesFieldIds() {
     "date",
     "url",
     "full_width",
+    "small_text",
     "database_id",
     "row_id",
     "page_file"
   ];
 }
 
-function pageRecord({ id, title, now, icon, path, bodyPath, tags = "" }) {
+function pageRecord({
+  id,
+  title,
+  now,
+  icon,
+  path,
+  bodyPath,
+  databaseId = PAGES_DATABASE_ID,
+  parentId,
+  tags = ""
+}) {
   return {
     id,
     created_time: now,
@@ -198,48 +231,18 @@ function pageRecord({ id, title, now, icon, path, bodyPath, tags = "" }) {
     body_path: bodyPath,
     icon,
     cover: "",
-    cover_offset: "",
+    cover_offset: 0,
     path: serializePathValue(path),
-    parent_id: "",
+    parent_id: parentId ? JSON.stringify([{ entityId: parentId, kind: "database" }]) : "",
     tags,
     date: "",
     url: "",
-    full_width: "",
-    database_id: PAGES_DATABASE_ID,
+    full_width: false,
+    small_text: false,
+    database_id: databaseId,
     row_id: id,
     page_file: ""
   };
-}
-
-function rowPageRecord({ databaseId, databaseName, rowIndex, now }) {
-  const id = startupRowId(databaseId, rowIndex);
-  const title = `${databaseName} row ${rowIndex + 1}`;
-  const databaseFolder = databaseFolderName(databaseId, databaseName);
-  const pageFile = pageMarkdownFileName(id, title);
-  return {
-    id,
-    created_time: now,
-    updated_time: now,
-    title,
-    kind: "row_page",
-    body_path: workspacePath("databases", "user", databaseFolder, "pages", pageFile),
-    icon: "",
-    cover: "",
-    cover_offset: "",
-    path: serializePathValue([databaseName, title]),
-    parent_id: JSON.stringify([{ entityId: databaseId, kind: "database" }]),
-    tags: "",
-    date: "",
-    url: "",
-    full_width: "",
-    database_id: databaseId,
-    row_id: id,
-    page_file: pageFile
-  };
-}
-
-function startupRowId(databaseId, rowIndex) {
-  return `row_startup_${databaseId}_${rowIndex + 1}`;
 }
 
 function pagesSchema(now) {
@@ -265,6 +268,7 @@ function pagesSchema(now) {
       { id: "date", name: "Date", type: "text" },
       { id: "url", name: "URL", type: "url" },
       { id: "full_width", name: "Full width", type: "checkbox" },
+      { id: "small_text", name: "Small text", type: "checkbox" },
       { id: "database_id", name: "Database ID", type: "text", system: true, hidden: true },
       { id: "row_id", name: "Row ID", type: "text", system: true, hidden: true },
       { id: "page_file", name: "Page file", type: "text", system: true, hidden: true }

@@ -17,15 +17,14 @@ export class BrowserPluginSettings implements PluginSettings {
   }
 
   async set<T = unknown>(key: string, value: T): Promise<void> {
-    this.cache = { ...this.cache, [key]: value };
-    this.save();
+    const next = { ...this.cache, [key]: value };
+    this.cache = this.save(next);
   }
 
   async delete(key: string): Promise<void> {
     const next = { ...this.cache };
     delete next[key];
-    this.cache = next;
-    this.save();
+    this.cache = this.save(next);
   }
 
   all(): Record<string, unknown> {
@@ -44,7 +43,15 @@ export class BrowserPluginSettings implements PluginSettings {
     }
   }
 
-  private save(): void {
-    window.localStorage.setItem(this.storageKey, JSON.stringify(this.cache));
+  private save(next: Record<string, unknown>): Record<string, unknown> {
+    if (typeof next.toJSON === "function") {
+      throw new TypeError('Plugin setting key "toJSON" cannot contain a function.');
+    }
+    const serialized = JSON.stringify(next);
+    if (serialized === undefined) {
+      throw new TypeError("Plugin settings must be JSON-serializable.");
+    }
+    window.localStorage.setItem(this.storageKey, serialized);
+    return JSON.parse(serialized) as Record<string, unknown>;
   }
 }

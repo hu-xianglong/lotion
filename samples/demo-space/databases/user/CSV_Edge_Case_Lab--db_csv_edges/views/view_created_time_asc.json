@@ -1,0 +1,34 @@
+{
+  "id": "view_created_time_asc",
+  "databaseId": "db_csv_edges",
+  "name": "Created date asc",
+  "type": "table",
+  "visibleFieldIds": [
+    "title",
+    "created_time",
+    "note",
+    "checked",
+    "amount"
+  ],
+  "fieldOrder": [
+    "title",
+    "created_time",
+    "note",
+    "checked",
+    "amount"
+  ],
+  "wrapFieldIds": [
+    "title",
+    "created_time",
+    "note",
+    "checked",
+    "amount"
+  ],
+  "sorts": [
+    {
+      "fieldId": "created_time",
+      "direction": "asc"
+    }
+  ],
+  "filters": []
+}
