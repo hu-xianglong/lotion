@@ -184,6 +184,11 @@ assert.equal(
 
 const emptyCollectionHtml = `<div id="11111111-2222-3333-4444-555555555555" class="collection-content"><h4 class="collection-title">收集箱</h4><div class="collection-content-wrapper"><table class="collection-content"><thead><tr><th><span class="icon property-icon"><img src="https://www.notion.so/icons/font_gray.svg"/></span>Name</th><th>Status</th></tr></thead><tbody></tbody></table></div></div>`;
 const emptyCollectionParsed = parseNotionHtml(page(emptyCollectionHtml), { convertBody: false });
+assert.equal(
+  parseNotionHtml(page(`<p></p>${emptyCollectionHtml}<p><br/></p>`), { convertBody: false }).isCollectionWrapperOnly,
+  true,
+  "Empty paragraphs around a sole collection should not turn a database wrapper into a material page"
+);
 assert.deepEqual(
   emptyCollectionParsed.collectionViews,
   [{

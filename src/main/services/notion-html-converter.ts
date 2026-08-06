@@ -254,7 +254,11 @@ function parseBodyElement(
     const tag = (n as { tagName?: string }).tagName?.toLowerCase();
     const raw = (n as { rawText?: string }).rawText ?? "";
     if (!tag) return raw.trim().length === 0; // text node with only whitespace
-    return tag === "br";
+    if (tag === "br") return true;
+    if (tag !== "p" || raw.trim().length > 0) return false;
+    const element = n as NhpElement;
+    return !["img", "video", "audio", "iframe", "figure", "table", "ul", "ol", "pre"]
+      .some((selector) => Boolean(element.querySelector(selector)));
   };
   const isCollectionChild = (n: unknown): boolean => {
     const tag = (n as { tagName?: string }).tagName?.toLowerCase();

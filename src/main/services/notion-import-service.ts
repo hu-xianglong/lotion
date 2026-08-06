@@ -1265,6 +1265,7 @@ interface LinkToPageHint {
   title: string;
   hash: string;
   icon?: string;
+  sourcePath: string;
 }
 
 interface SyntheticInlineRow extends NotionCollectionRow {
@@ -1287,10 +1288,12 @@ async function collectLinkToPageHints(
   byHash: Map<string, LinkToPageHint>;
   bySource: Map<string, LinkToPageHint[]>;
   ambiguousIconHashes: Set<string>;
+  iconClaimsByHash: Map<string, LinkToPageHint[]>;
 }> {
   const byHash = new Map<string, LinkToPageHint>();
   const bySource = new Map<string, LinkToPageHint[]>();
   const ambiguousIconHashes = new Set<string>();
+  const iconClaimsByHash = new Map<string, LinkToPageHint[]>();
 
   for (const entry of inventory.pagesByHash.values()) {
     if (!entry.sourcePath.endsWith(".html")) continue;
@@ -1318,9 +1321,15 @@ async function collectLinkToPageHints(
       const hint: LinkToPageHint = {
         title: titleFromAnchor || stripHash(decoded.slice(0, decoded.lastIndexOf("."))).title,
         hash,
-        icon: anchor ? resolveElementIcon(anchor, sourceDir, resolveIcon) : undefined
+        icon: anchor ? resolveElementIcon(anchor, sourceDir, resolveIcon) : undefined,
+        sourcePath: entry.sourcePath
       };
       hints.push(hint);
+      if (hint.icon) {
+        const claims = iconClaimsByHash.get(hash) ?? [];
+        claims.push(hint);
+        iconClaimsByHash.set(hash, claims);
+      }
       const existing = byHash.get(hash);
       if (!existing) {
         byHash.set(hash, hint);
@@ -1339,7 +1348,7 @@ async function collectLinkToPageHints(
     if (hints.length > 0) bySource.set(entry.sourcePath, hints);
   }
 
-  return { byHash, bySource, ambiguousIconHashes };
+  return { byHash, bySource, ambiguousIconHashes, iconClaimsByHash };
 }
 
 function resolveElementIcon(
@@ -1513,6 +1522,31 @@ interface ImportReportDuplicateRowSummary {
   sampleValues: string;
 }
 
+type EntityIconOwnershipStatus = "resolved" | "transferred" | "ambiguous" | "unassigned";
+type EntityIconOwnerKind = "page" | "database" | "row_page";
+
+interface EntityIconOwnershipRecord {
+  status: EntityIconOwnershipStatus;
+  evidence: "page-header" | "database-header" | "row-header" | "link-target" | "wrapper-transfer";
+  icon: string;
+  source: string;
+  sourceHash?: string;
+  targetKind?: EntityIconOwnerKind;
+  targetHash?: string;
+  targetId?: string;
+  targetTitle?: string;
+  reason: string;
+}
+
+interface EntityIconOwnershipReport {
+  path: string;
+  records: EntityIconOwnershipRecord[];
+  resolved: number;
+  transferred: number;
+  ambiguous: number;
+  unassigned: number;
+}
+
 interface ImportReviewArtifacts {
   databaseId: string;
   databaseName: string;
@@ -1551,6 +1585,7 @@ interface BuildImportReportInput {
   emptyStandalonePages: ImportReportPageDetail[];
   emptyRowPages: ImportReportRowDetail[];
   duplicateRows: ImportReportDuplicateRowSummary[];
+  iconOwnership: EntityIconOwnershipReport;
 }
 
 function buildImportReportMarkdown(input: BuildImportReportInput): string {
@@ -1640,6 +1675,36 @@ function buildImportReportMarkdown(input: BuildImportReportInput): string {
         ["Inline empty databases", reportNumber(input.inlineEmptyDatabases)]
       ]
     ),
+    "",
+    "## Entity Icon Ownership",
+    "",
+    `Full machine-readable report: ${markdownInlineCode(input.iconOwnership.path)}`,
+    "",
+    formatMarkdownTable(
+      ["Status", "Entity icon evidence"],
+      [
+        ["Resolved directly", reportNumber(input.iconOwnership.resolved)],
+        ["Transferred with redirected wrappers", reportNumber(input.iconOwnership.transferred)],
+        ["Ambiguous", reportNumber(input.iconOwnership.ambiguous)],
+        ["Unassigned", reportNumber(input.iconOwnership.unassigned)],
+        ["Total", reportNumber(input.iconOwnership.records.length)]
+      ]
+    ),
+    "",
+    input.iconOwnership.ambiguous + input.iconOwnership.unassigned > 0
+      ? formatMarkdownTable(
+          ["Status", "Source", "Target", "Reason"],
+          input.iconOwnership.records
+            .filter((record) => record.status === "ambiguous" || record.status === "unassigned")
+            .slice(0, 64)
+            .map((record) => [
+              record.status,
+              record.source,
+              record.targetTitle || record.targetHash || "Unresolved",
+              record.reason
+            ])
+        )
+      : "_Every extracted entity-level icon has an owner._",
     "",
     "## Skipped Items",
     "",
@@ -2329,7 +2394,24 @@ async function emitWorkspace(
   // Map of dbHash → workspace-relative icon path, populated when we
   // skip a phantom standalone-DB page that had an icon set.
   const dbIconByHash = new Map<string, string>();
+  const dbIconOwnershipByHash = new Map<string, EntityIconOwnershipRecord>();
   const dbCoverByHash = new Map<string, { cover: string; coverOffset?: number }>();
+  const setDatabaseIcon = (
+    hash: string,
+    icon: string,
+    ownership: Omit<EntityIconOwnershipRecord, "icon" | "targetKind" | "targetHash" | "targetId" | "targetTitle">
+  ): void => {
+    const database = inventory.databasesByHash.get(hash);
+    dbIconByHash.set(hash, icon);
+    dbIconOwnershipByHash.set(hash, {
+      ...ownership,
+      icon,
+      targetKind: "database",
+      targetHash: hash,
+      targetId: databaseIdByHash.get(hash),
+      targetTitle: database?.title
+    });
+  };
 
   // Map absolute source path → `attachments/<type>/<file>` for use
   // by both `resolveIcon` above and the standard link rewriter below.
@@ -2421,8 +2503,16 @@ async function emitWorkspace(
   const linkToPageHints = await collectLinkToPageHints(inventory, resolveIcon);
   for (const hash of keptDbHashes) {
     if (linkToPageHints.ambiguousIconHashes.has(hash)) continue;
-    const hintedIcon = linkToPageHints.byHash.get(hash)?.icon;
-    if (hintedIcon) dbIconByHash.set(hash, hintedIcon);
+    const hint = linkToPageHints.byHash.get(hash);
+    if (hint?.icon) {
+      setDatabaseIcon(hash, hint.icon, {
+        status: "resolved",
+        evidence: "link-target",
+        source: hint.sourcePath,
+        sourceHash: notionFileHash(hint.sourcePath) ?? undefined,
+        reason: "explicit Notion link target identified the database owner"
+      });
+    }
   }
   const inlineDatabases = new Map<string, SyntheticEmptyDatabase>();
 
@@ -2446,11 +2536,27 @@ async function emitWorkspace(
       const parsed = parseNotionHtmlMetadata(headerRead.headerHtml);
       const icon = resolveParsedIcon(parsed, dirname(sourcePath));
       const cover = resolveParsedCover(parsed, dirname(sourcePath));
-      if (icon) dbIconByHash.set(hash, icon);
+      if (icon) {
+        setDatabaseIcon(hash, icon, {
+          status: "resolved",
+          evidence: "database-header",
+          source: sourcePath,
+          sourceHash: hash,
+          reason: "HTML document identity exactly matched the database"
+        });
+      }
       if (cover.cover) dbCoverByHash.set(hash, { cover: cover.cover, coverOffset: cover.coverOffset });
     } else {
       const icon = await resolveMarkdownIcon(sourcePath);
-      if (icon) dbIconByHash.set(hash, icon);
+      if (icon) {
+        setDatabaseIcon(hash, icon, {
+          status: "resolved",
+          evidence: "database-header",
+          source: sourcePath,
+          sourceHash: hash,
+          reason: "Markdown document identity exactly matched the database"
+        });
+      }
     }
   }
 
@@ -2521,12 +2627,29 @@ async function emitWorkspace(
       // a database with the same title in the sidebar. We carry the
       // page's icon forward to the database so the DB sidebar entry
       // doesn't end up iconless.
+      const stableCollectionTargets = [...new Set(
+        parsed.collectionViews
+          .map((view) => view.hash.toLowerCase())
+          .filter((viewHash) => keptDbHashes.has(viewHash))
+      )];
       const targetHashForLink = databaseIdByHash.has(hash)
         ? hash
-        : dbHashByRawTitle.get(entry.title) ?? dbHashByTitle.get(entry.title);
+        : stableCollectionTargets.length === 1
+          ? stableCollectionTargets[0]
+          : stableCollectionTargets.length === 0
+            ? dbHashByRawTitle.get(entry.title) ?? dbHashByTitle.get(entry.title)
+            : undefined;
       if (parsed.isCollectionWrapperOnly && targetHashForLink) {
         if (icon && !dbIconByHash.has(targetHashForLink)) {
-          dbIconByHash.set(targetHashForLink, icon);
+          setDatabaseIcon(targetHashForLink, icon, {
+            status: "transferred",
+            evidence: "wrapper-transfer",
+            source: entry.sourcePath,
+            sourceHash: hash,
+            reason: stableCollectionTargets.length === 1
+              ? "single-database wrapper redirected by stable collection ID"
+              : "single-database wrapper redirected by unique title fallback"
+          });
         }
         if (cover && !dbCoverByHash.has(targetHashForLink)) {
           dbCoverByHash.set(targetHashForLink, { cover, coverOffset });
@@ -2551,7 +2674,7 @@ async function emitWorkspace(
       const fullSampleHasNoBody =
         headerRead.bytesRead >= headerRead.fileSize &&
         !hasNotionPageBodyContent(headerRead.sampleHtml);
-      if (importOptions.skipEmptyRowsAndPages && (bodyHint === false || fullSampleHasNoBody)) {
+      if (importOptions.skipEmptyRowsAndPages && !icon && (bodyHint === false || fullSampleHasNoBody)) {
         pageIdByHash.delete(hash);
         preSkippedEmptyStandalonePageDetails.push({
           title: title.trim() || "Untitled",
@@ -2575,7 +2698,13 @@ async function emitWorkspace(
       const targetHashForLink = markdownWrapperTargetDbHash(rawMarkdown, entry.sourcePath);
       if (targetHashForLink) {
         if (icon && !dbIconByHash.has(targetHashForLink)) {
-          dbIconByHash.set(targetHashForLink, icon);
+          setDatabaseIcon(targetHashForLink, icon, {
+            status: "transferred",
+            evidence: "wrapper-transfer",
+            source: entry.sourcePath,
+            sourceHash: hash,
+            reason: "Markdown database wrapper redirected by stable CSV target"
+          });
         }
         phantomPageRedirects.set(normalizeAbs(entry.sourcePath), targetHashForLink);
         dedupedPageDetails.push({
@@ -3611,7 +3740,7 @@ async function emitWorkspace(
     originalSourceArchive.files.length +
     pagePlans.length +
     dbPlans.reduce((sum, plan) => sum + plan.rowPlans.length + 3, 0) +
-    14; // three system DBs + import review DB (schema/data/view each) + import report + manifest
+    15; // three system DBs + import review DB (schema/data/view each) + icon report + import report + manifest
   let writeCurrent = 0;
   const tWrite = Date.now();
   const markWrite = (message: string, amount = 1) => {
@@ -3882,6 +4011,129 @@ async function emitWorkspace(
     includeInManifest: dbPlan.includeInManifest !== false
   }));
   const duplicateRows = buildDuplicateRowSummaries(dbPlans);
+  const pagePlanByHash = new Map(pagePlans.map((plan) => [plan.hash, plan]));
+  const dbPlanByHash = new Map(
+    dbPlans.flatMap((plan) => plan.sourceHash ? [[plan.sourceHash, plan] as const] : [])
+  );
+  const rowPlanByHash = new Map<string, { database: DbPlan; row: RowPlan }>();
+  for (const database of dbPlans) {
+    for (const row of database.rowPlans) {
+      if (row.hash && !rowPlanByHash.has(row.hash)) rowPlanByHash.set(row.hash, { database, row });
+    }
+  }
+  const iconOwnershipRecords: EntityIconOwnershipRecord[] = [...dbIconOwnershipByHash.values()];
+  for (const page of pagePlans) {
+    if (!page.icon) continue;
+    iconOwnershipRecords.push({
+      status: "resolved",
+      evidence: "page-header",
+      icon: page.icon,
+      source: page.sourcePath,
+      sourceHash: page.hash,
+      targetKind: "page",
+      targetHash: page.hash,
+      targetId: page.id,
+      targetTitle: page.title,
+      reason: "page header icon retained on the emitted page"
+    });
+  }
+  for (const database of dbPlans) {
+    if (database.icon && database.sourceHash && !dbIconOwnershipByHash.has(database.sourceHash)) {
+      iconOwnershipRecords.push({
+        status: "resolved",
+        evidence: "link-target",
+        icon: database.icon,
+        source: database.csvPath ?? `synthetic:${database.sourceHash}`,
+        sourceHash: database.sourceHash,
+        targetKind: "database",
+        targetHash: database.sourceHash,
+        targetId: database.id,
+        targetTitle: database.name,
+        reason: "source-backed icon retained on an emitted synthetic or inline database"
+      });
+    }
+    for (const row of database.rowPlans) {
+      if (!row.icon) continue;
+      iconOwnershipRecords.push({
+        status: "resolved",
+        evidence: "row-header",
+        icon: row.icon,
+        source: row.sourcePath ?? "",
+        sourceHash: row.hash,
+        targetKind: "row_page",
+        targetHash: row.hash,
+        targetId: row.rowId,
+        targetTitle: row.title,
+        reason: "row page header icon retained on the emitted database row page"
+      });
+    }
+  }
+  for (const [hash, claims] of linkToPageHints.iconClaimsByHash) {
+    const redirectedDatabaseHash = inventory.pagesByHash.get(hash)?.sourcePath
+      ? phantomPageRedirects.get(normalizeAbs(inventory.pagesByHash.get(hash)!.sourcePath))
+      : undefined;
+    const database = dbPlanByHash.get(hash)
+      ?? (redirectedDatabaseHash ? dbPlanByHash.get(redirectedDatabaseHash) : undefined);
+    const page = pagePlanByHash.get(hash);
+    const rowOwner = rowPlanByHash.get(hash);
+    const ambiguous = linkToPageHints.ambiguousIconHashes.has(hash);
+    for (const claim of claims) {
+      iconOwnershipRecords.push({
+        status: ambiguous
+          ? "ambiguous"
+          : redirectedDatabaseHash && database
+            ? "transferred"
+            : database || page || rowOwner
+              ? "resolved"
+              : "unassigned",
+        evidence: "link-target",
+        icon: claim.icon ?? "",
+        source: claim.sourcePath,
+        sourceHash: notionFileHash(claim.sourcePath) ?? undefined,
+        targetKind: database ? "database" : page ? "page" : rowOwner ? "row_page" : undefined,
+        targetHash: redirectedDatabaseHash && database ? redirectedDatabaseHash : hash,
+        targetId: database?.id ?? page?.id ?? rowOwner?.row.rowId,
+        targetTitle: database?.name ?? page?.title ?? rowOwner?.row.title ?? claim.title,
+        reason: ambiguous
+          ? "conflicting link icons target the same Notion entity; no arbitrary winner was selected"
+          : redirectedDatabaseHash && database
+            ? "explicit link targeted a wrapper page redirected to its canonical database"
+          : database || page || rowOwner
+            ? "explicit Notion link target identified the entity owner"
+            : "link icon target was not emitted as a page, database, or row page"
+      });
+    }
+  }
+  const uniqueIconOwnershipRecords = [...new Map(iconOwnershipRecords.map((record) => [
+    [record.status, record.evidence, record.icon, record.source, record.targetKind, record.targetHash].join("\u0000"),
+    record
+  ])).values()].sort((left, right) =>
+    left.status.localeCompare(right.status) || left.source.localeCompare(right.source) || left.icon.localeCompare(right.icon)
+  );
+  const iconOwnershipPath = "reports/notion-icon-ownership.json";
+  const iconOwnership: EntityIconOwnershipReport = {
+    path: iconOwnershipPath,
+    records: uniqueIconOwnershipRecords,
+    resolved: uniqueIconOwnershipRecords.filter((record) => record.status === "resolved").length,
+    transferred: uniqueIconOwnershipRecords.filter((record) => record.status === "transferred").length,
+    ambiguous: uniqueIconOwnershipRecords.filter((record) => record.status === "ambiguous").length,
+    unassigned: uniqueIconOwnershipRecords.filter((record) => record.status === "unassigned").length
+  };
+  await fileService.ensureDir(join(target, "reports"));
+  await writeJson(join(target, iconOwnershipPath), {
+    generatedAt: now,
+    sourceRoots: sources,
+    scope: "Entity-level page headers, database headers, row headers, and explicit entity-link icons; property, callout, and content decoration icons are excluded.",
+    summary: {
+      total: iconOwnership.records.length,
+      resolved: iconOwnership.resolved,
+      transferred: iconOwnership.transferred,
+      ambiguous: iconOwnership.ambiguous,
+      unassigned: iconOwnership.unassigned
+    },
+    records: iconOwnership.records
+  });
+  markWrite("Writing entity icon ownership report");
   const importReviewIssues = buildImportReviewIssues({
     now,
     dedupedPages: dedupedPageDetails,
@@ -3922,7 +4174,8 @@ async function emitWorkspace(
     dedupedPages: dedupedPageDetails,
     emptyStandalonePages: emptyStandalonePageDetails,
     emptyRowPages: emptyRowPageDetails,
-    duplicateRows
+    duplicateRows,
+    iconOwnership
   });
   await writeText(join(target, reportBodyPath), formatPage(reportMarkdown));
   pageIds.unshift(reportPageId);

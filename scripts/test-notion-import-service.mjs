@@ -65,6 +65,14 @@ const LINK_ICON_PAGE_HASH = "49494949111122223333444455556666";
 const CONFLICT_LINK_DB_HASH = "50505050111122223333444455556666";
 const CONFLICT_LINK_PAGE_HASH_A = "51515151111122223333444455556666";
 const CONFLICT_LINK_PAGE_HASH_B = "52525252111122223333444455556666";
+const WRAPPER_ICON_DB_HASH = "299eb665857142bea489b6cb1d309836";
+const WRAPPER_ICON_PAGE_HASH = "1fdc0912cb344de69e0aea6f868f5c1c";
+const MULTI_WRAPPER_DB_HASH_A = "53535353111122223333444455556666";
+const MULTI_WRAPPER_DB_HASH_B = "54545454111122223333444455556666";
+const MULTI_WRAPPER_PAGE_HASH = "55555555111122223333444455556666";
+const UNASSIGNED_ICON_TARGET_HASH = "59595959111122223333444455556666";
+const UNASSIGNED_ICON_PAGE_HASH = "57575757111122223333444455556666";
+const REDIRECTED_ICON_PAGE_HASH = "58585858111122223333444455556666";
 
 function notionPage(title, body, properties = "", headerPrefix = "", articleAttributes = "") {
   return `<!doctype html><html><body><article class="page sans"${articleAttributes}><header>${headerPrefix}<h1 class="page-title">${title}</h1>${properties}</header><div class="page-body">${body}</div></article></body></html>`;
@@ -229,6 +237,50 @@ try {
     notionPage(
       "Conflicting Link B",
       `<figure class="link-to-page"><a href="Conflicting%20Link%20Database%20${CONFLICT_LINK_DB_HASH}.html"><span class="icon">B</span>Conflicting Link Database</a></figure>`
+    ),
+    "utf8"
+  );
+  await writeFile(join(source, `Wrapped Tasks ${WRAPPER_ICON_DB_HASH}.csv`), "Name\n", "utf8");
+  await writeFile(join(source, "to-do-list.png"), "wrapper icon bytes", "utf8");
+  await writeFile(
+    join(source, `Task Inbox ${WRAPPER_ICON_PAGE_HASH}.html`),
+    notionPage(
+      "Task Inbox",
+      `<p></p><div id="${WRAPPER_ICON_DB_HASH.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5")}" class="collection-content"><h4 class="collection-title">Wrapped Tasks</h4><a href="Wrapped%20Tasks%20${WRAPPER_ICON_DB_HASH}.csv"><code>Wrapped Tasks ${WRAPPER_ICON_DB_HASH}.csv</code></a></div><p><br/></p>`,
+      "",
+      `<div class="page-header-icon"><img class="icon" src="to-do-list.png"/></div>`
+    ),
+    "utf8"
+  );
+  await writeFile(join(source, `Multi Wrapper A ${MULTI_WRAPPER_DB_HASH_A}.csv`), "Name\n", "utf8");
+  await writeFile(join(source, `Multi Wrapper B ${MULTI_WRAPPER_DB_HASH_B}.csv`), "Name\n", "utf8");
+  await writeFile(join(source, "multi-wrapper.png"), "ambiguous wrapper icon bytes", "utf8");
+  await writeFile(
+    join(source, `Multi Wrapper A ${MULTI_WRAPPER_PAGE_HASH}.html`),
+    notionPage(
+      "Multi Wrapper A",
+      [
+        `<div id="${MULTI_WRAPPER_DB_HASH_A}" class="collection-content"><h4 class="collection-title">Multi Wrapper A</h4></div>`,
+        `<div id="${MULTI_WRAPPER_DB_HASH_B}" class="collection-content"><h4 class="collection-title">Multi Wrapper B</h4></div>`
+      ].join(""),
+      "",
+      `<div class="page-header-icon"><img class="icon" src="multi-wrapper.png"/></div>`
+    ),
+    "utf8"
+  );
+  await writeFile(
+    join(source, `Unassigned Icon Index ${UNASSIGNED_ICON_PAGE_HASH}.html`),
+    notionPage(
+      "Unassigned Icon Index",
+      `<figure class="link-to-page"><a href="Missing%20Icon%20Target%20${UNASSIGNED_ICON_TARGET_HASH}.html"><span class="icon">❓</span>Missing Icon Target</a></figure>`
+    ),
+    "utf8"
+  );
+  await writeFile(
+    join(source, `Redirected Icon Index ${REDIRECTED_ICON_PAGE_HASH}.html`),
+    notionPage(
+      "Redirected Icon Index",
+      `<figure class="link-to-page"><a href="Task%20Inbox%20${WRAPPER_ICON_PAGE_HASH}.html"><span class="icon"><img class="icon" src="to-do-list.png"/></span>Task Inbox</a></figure>`
     ),
     "utf8"
   );
@@ -597,6 +649,26 @@ try {
     importedSchemas.find((schema) => schema.notion_source_hash === CONFLICT_LINK_DB_HASH)?.icon,
     undefined,
     "Conflicting link-to-page icons should remain unresolved instead of choosing arbitrarily"
+  );
+  const wrappedTasksSchema = importedSchemas.find((schema) => schema.notion_source_hash === WRAPPER_ICON_DB_HASH);
+  assert.match(
+    wrappedTasksSchema?.icon ?? "",
+    /^attachments\/images\/[0-9a-f]+-to-do-list\.png$/,
+    "A single-database wrapper should transfer its page icon by stable collection ID even when titles differ"
+  );
+  assert.ok(
+    existsSync(join(target, wrappedTasksSchema.icon)),
+    "The transferred wrapper icon attachment should exist"
+  );
+  assert.equal(
+    importedSchemas.find((schema) => schema.notion_source_hash === MULTI_WRAPPER_DB_HASH_A)?.icon,
+    undefined,
+    "A wrapper with multiple stable collection targets must not transfer its icon by title fallback"
+  );
+  assert.equal(
+    importedSchemas.find((schema) => schema.notion_source_hash === MULTI_WRAPPER_DB_HASH_B)?.icon,
+    undefined,
+    "A multi-database wrapper must not assign its icon to an arbitrary collection target"
   );
   assert.deepEqual(
     tasksView.fieldOrder,
@@ -1172,6 +1244,75 @@ try {
   );
   const reportBody = await readFile(join(target, reportPage.body_path), "utf8");
   assert.match(reportBody, /# Notion import report/, "The import report body should be readable");
+  assert.match(reportBody, /## Entity Icon Ownership/, "The import report should summarize entity icon ownership");
+  assert.match(
+    reportBody,
+    /reports\/notion-icon-ownership\.json/,
+    "The import report should link to the complete machine-readable icon ownership report"
+  );
+  const iconOwnership = JSON.parse(
+    await readFile(join(target, "reports", "notion-icon-ownership.json"), "utf8")
+  );
+  assert.ok(iconOwnership.summary.total > 0, "The icon report should count extracted entity icon evidence");
+  for (const status of ["resolved", "transferred", "ambiguous", "unassigned"]) {
+    assert.ok(
+      iconOwnership.summary[status] > 0,
+      `The icon report should count ${status} entity icon evidence`
+    );
+  }
+  assert.ok(
+    iconOwnership.records.some(
+      (record) =>
+        record.status === "transferred" &&
+        record.evidence === "wrapper-transfer" &&
+        record.sourceHash === WRAPPER_ICON_PAGE_HASH &&
+        record.targetHash === WRAPPER_ICON_DB_HASH &&
+        record.targetKind === "database"
+    ),
+    "The icon report should explain the stable-ID wrapper-to-database transfer"
+  );
+  assert.ok(
+    iconOwnership.records.some(
+      (record) =>
+        record.status === "transferred" &&
+        record.evidence === "link-target" &&
+        record.sourceHash === REDIRECTED_ICON_PAGE_HASH &&
+        record.targetHash === WRAPPER_ICON_DB_HASH &&
+        record.targetKind === "database" &&
+        record.reason.includes("wrapper page redirected")
+    ),
+    "The icon report should follow explicit link ownership through a wrapper-page redirect"
+  );
+  assert.ok(
+    iconOwnership.records.some(
+      (record) =>
+        record.status === "ambiguous" &&
+        record.targetHash === CONFLICT_LINK_DB_HASH &&
+        record.targetKind === "database"
+    ),
+    "The icon report should retain conflicting link-icon evidence without selecting a winner"
+  );
+  assert.ok(
+    iconOwnership.records.some(
+      (record) =>
+        record.status === "unassigned" &&
+        record.targetHash === UNASSIGNED_ICON_TARGET_HASH &&
+        record.targetKind === undefined
+    ),
+    "The icon report should retain an icon claim whose target entity was not emitted"
+  );
+  assert.equal(
+    pageRows.some((row) => row.title === "Task Inbox"),
+    false,
+    "The redirected wrapper page should not be emitted alongside its canonical database"
+  );
+  assert.equal(
+    pageRows.some(
+      (row) => row.title === "Multi Wrapper A" && row.notion_original_html.includes(MULTI_WRAPPER_PAGE_HASH)
+    ),
+    true,
+    "A wrapper with multiple stable collection targets should remain a page rather than redirect by title"
+  );
   const importReviewRows = rowsAsObjects(
     await readFile(join(target, "databases", "user", "Import_review--db_import_review", "data.csv"), "utf8")
   );

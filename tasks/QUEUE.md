@@ -773,6 +773,7 @@ surface.
 | 720 | done | Exact database title search ranking | `tasks/done/exact-database-title-search-ranking.md` | exact database ranks first, internal stats row resolves to database identity, 80/80 fast suite, real-workspace installed-app verification |
 | 721 | done | Database parent breadcrumb navigation | `tasks/done/database-parent-breadcrumb-navigation.md` | complete-path ancestor resolution, accessible parent links, focused Electron click regression, installed 52-row real-database verification |
 | 722 | done | Unified entity header breadcrumbs | `tasks/done/unified-entity-header-breadcrumbs.md` | one resolver and renderer across page/database/row-page headers; complete-path duplicate-title safety; focused and broad two-viewport Electron regressions; 80/80 fast suite; packaged and real-workspace installed-app verification |
+| 723 | done | Notion entity icon ownership report | `tasks/done/notion-entity-icon-ownership-report.md` | stable-ID wrapper icon transfer, complete ownership audit, 6,496 real-export icon claims with zero unassigned, full fast suite, package verification, and installed-app replacement |
 
 ## Latency Benchmark Coverage
 
