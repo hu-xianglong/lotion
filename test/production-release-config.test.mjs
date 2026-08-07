@@ -29,6 +29,24 @@ test("release workflow builds both Mac architectures and publishes version tags"
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
 });
 
+test("production packaging uses the project-local locked electron-builder", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8")
+  );
+  const packageLock = JSON.parse(
+    await readFile(new URL("../package-lock.json", import.meta.url), "utf8")
+  );
+  const lockedRoot = packageLock.packages?.[""];
+
+  assert.equal(
+    lockedRoot?.devDependencies?.["electron-builder"],
+    packageJson.devDependencies["electron-builder"]
+  );
+  assert.ok(packageLock.packages?.["node_modules/electron-builder"]);
+  assert.match(packageJson.scripts["package:mac"], /&& electron-builder --config/);
+  assert.doesNotMatch(packageJson.scripts["package:mac"], /\.\.\/\.\.\/node_modules/);
+});
+
 test("package verification only requires native modules published for the target architecture", async () => {
   const verifier = await readFile(
     new URL("../scripts/verify-packaged-macos-app.mjs", import.meta.url),

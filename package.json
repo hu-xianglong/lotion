@@ -150,7 +150,7 @@
     "gate:commit": "node scripts/release-gate.mjs --quick",
     "app:commit": "node scripts/build-commit-app.mjs",
     "build": "tsc -p tsconfig.main.json && vite build",
-    "package:mac": "npm run build && node --experimental-require-module ../../node_modules/electron-builder/cli.js --config electron-builder.config.cjs --mac dmg zip --publish never",
+    "package:mac": "npm run build && electron-builder --config electron-builder.config.cjs --mac dmg zip --publish never",
     "package:mac:verify": "node scripts/verify-packaged-macos-app.mjs",
     "release:test": "node scripts/release-test.mjs",
     "release:test:prechecked": "node scripts/release-test.mjs --prechecked",
