@@ -1273,17 +1273,18 @@ async function initializePageHistoryFixture({ currentMarkdown, root, targetPath 
   await execFileAsync("git", ["add", "."], { cwd: root });
   await execFileAsync("git", ["commit", "-q", "-m", "Historical page details"], {
     cwd: root,
-    env: gitCommitEnvironment("2026-06-11T12:00:00Z")
+    env: gitCommitEnvironment("2026-06-11T05:00:00")
   });
   await writeFile(join(root, targetPath), currentMarkdown, "utf8");
   await execFileAsync("git", ["add", "--", targetPath], { cwd: root });
   await execFileAsync("git", ["commit", "-q", "-m", "Current page details"], {
     cwd: root,
-    env: gitCommitEnvironment("2026-06-12T12:00:00Z")
+    env: gitCommitEnvironment("2026-06-12T05:00:00")
   });
 }
 
 function gitCommitEnvironment(date) {
+  // Git records the runner's local offset so the UI keeps this wall-clock time.
   return {
     ...process.env,
     GIT_AUTHOR_DATE: date,

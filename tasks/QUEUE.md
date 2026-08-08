@@ -783,6 +783,7 @@ surface.
 | 730 | done | Measure embedded-view steady state correctly | `tasks/done/measure-embedded-view-steady-state-correctly.md` | one cold sample, warmed cache rerenders, unchanged performance budgets, remote quality-gate verification |
 | 731 | done | Cross-timezone created-views visual baseline | `tasks/done/cross-timezone-created-views-visual-baseline.md` | UTC vs America/Los_Angeles fixture determinism, strict three-viewport baselines, remote quality-gate verification |
 | 732 | done | Isolate search render performance timing | `tasks/done/isolate-search-render-performance-timing.md` | pending-input behavior, single-query render budget, shared UI suite, remote quality-gate verification |
+| 733 | done | Cross-timezone page-history visual baseline | `tasks/done/cross-timezone-page-history-visual-baseline.md` | timezone-local Git history fixtures, strict three-viewport baselines, remote quality-gate verification |
 
 ## Latency Benchmark Coverage
 

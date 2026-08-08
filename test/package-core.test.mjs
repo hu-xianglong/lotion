@@ -161,6 +161,39 @@ test("packaged ripgrep paths resolve outside app.asar", () => {
   );
 });
 
+test("timezone-local Git fixture dates render at the same wall-clock time", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-git-wall-clock-"));
+  const originalTimezone = process.env.TZ;
+  try {
+    await execFileAsync("git", ["init", "-q"], { cwd: root });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+    await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: root });
+    for (const [index, timezone] of ["UTC", "America/Los_Angeles"].entries()) {
+      await writeFile(join(root, `fixture-${index}.txt`), timezone, "utf8");
+      await execFileAsync("git", ["add", "."], { cwd: root });
+      await execFileAsync("git", ["commit", "-q", "-m", `Fixture ${timezone}`], {
+        cwd: root,
+        env: {
+          ...process.env,
+          TZ: timezone,
+          GIT_AUTHOR_DATE: "2026-06-12T05:00:00",
+          GIT_COMMITTER_DATE: "2026-06-12T05:00:00"
+        }
+      });
+      const { stdout } = await execFileAsync("git", ["log", "-1", "--format=%aI"], { cwd: root });
+      process.env.TZ = timezone;
+      assert.equal(
+        formatDateForField(stdout.trim(), { type: "updated_time" }),
+        "June 12, 2026 5:00 AM"
+      );
+    }
+  } finally {
+    if (originalTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTimezone;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("plugin host scopes providers, events, commands, settings, and inspection", async () => {
   const platform = {
     workspace: { name: "workspace-api" },
