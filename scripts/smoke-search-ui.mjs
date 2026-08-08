@@ -47,12 +47,13 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
     const selected = await chooseSearchQuery(page, { ...args, queries: [fixture.query, ...args.queries] });
     await openGlobalSearch(page);
 
+    const pendingInput = await assertPendingSearchInputEditable(page, selected.query, args.visibleHits, viewport.name, {
+      largeHits: args.largeHits
+    });
     const first = await measureSearchRender(page, selected.query, args.visibleHits, viewport.name, {
-      exercisePendingInput: true,
       largeHits: args.largeHits
     });
     const repeated = await measureSearchRender(page, selected.query, args.visibleHits, viewport.name, {
-      exercisePendingInput: false,
       largeHits: args.largeHits
     });
     const sorting = await assertSearchSortControls(page, fixture, viewport.name);
@@ -116,6 +117,7 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
       hits: selected.hits,
       firstRenderMs: first,
       repeatedRenderMs: repeated,
+      pendingInput,
       harnessCache,
       sorting,
       inputLatency,
@@ -263,34 +265,6 @@ async function measureSearchRender(page, query, visibleHits, viewportName, optio
     .catch(() => undefined);
   const started = await page.evaluate(() => performance.now());
   await input.fill(query);
-  if (options.exercisePendingInput) {
-    await page.waitForSelector('[data-testid="global-search-progress"][data-state="loading"]', { timeout: 2_000 });
-    const pendingState = await page.evaluate((query) => {
-      const input = document.querySelector(".global-search-input");
-      const progress = document.querySelector('[data-testid="global-search-progress"]');
-      return {
-        activeInput: document.activeElement === input,
-        inputValue: input instanceof HTMLInputElement ? input.value : "",
-        state: progress?.getAttribute("data-state") ?? "",
-        text: progress?.textContent ?? ""
-      };
-    }, query);
-    if (!pendingState.activeInput || pendingState.inputValue !== query || !pendingState.text.includes("输入框保持可编辑")) {
-      throw new Error(`Search loading progress/input state mismatch: ${JSON.stringify(pendingState)}`);
-    }
-    await input.type("x");
-    await page.waitForFunction(
-      (expected) => document.querySelector(".global-search-input")?.value === expected,
-      `${query}x`,
-      { timeout: 2_000 }
-    );
-    await input.press("Backspace");
-    await page.waitForFunction(
-      (expected) => document.querySelector(".global-search-input")?.value === expected,
-      query,
-      { timeout: 2_000 }
-    );
-  }
   await page.waitForFunction(
     (visibleHits) => document.querySelectorAll(".global-search-hit").length >= visibleHits,
     visibleHits,
@@ -309,6 +283,47 @@ async function measureSearchRender(page, query, visibleHits, viewportName, optio
   }
   await assertNoDocumentHorizontalOverflow(page, `search render ${viewportName}`, 8);
   return Number((ended - started).toFixed(1));
+}
+
+async function assertPendingSearchInputEditable(page, query, visibleHits, viewportName, options = {}) {
+  const input = page.locator(".global-search-input");
+  await input.fill("");
+  await page.waitForFunction(() => document.querySelectorAll(".global-search-hit").length === 0, null, { timeout: 2_000 })
+    .catch(() => undefined);
+  await input.fill(query);
+  await page.waitForSelector('[data-testid="global-search-progress"][data-state="loading"]', { timeout: 2_000 });
+  const pendingState = await page.evaluate(() => {
+    const input = document.querySelector(".global-search-input");
+    const progress = document.querySelector('[data-testid="global-search-progress"]');
+    return {
+      activeInput: document.activeElement === input,
+      inputValue: input instanceof HTMLInputElement ? input.value : "",
+      state: progress?.getAttribute("data-state") ?? "",
+      text: progress?.textContent ?? ""
+    };
+  });
+  if (!pendingState.activeInput || pendingState.inputValue !== query || !pendingState.text.includes("输入框保持可编辑")) {
+    throw new Error(`Search loading progress/input state mismatch: ${JSON.stringify(pendingState)}`);
+  }
+  await input.type("x");
+  await page.waitForFunction(
+    (expected) => document.querySelector(".global-search-input")?.value === expected,
+    `${query}x`,
+    { timeout: 2_000 }
+  );
+  await input.press("Backspace");
+  await page.waitForFunction(
+    (expected) => document.querySelector(".global-search-input")?.value === expected,
+    query,
+    { timeout: 2_000 }
+  );
+  const completedState = await assertSearchProgressComplete(page, {
+    largeHits: options.largeHits,
+    query,
+    visibleHits,
+    viewportName
+  });
+  return { pendingState, completedState };
 }
 
 async function assertSearchProgressComplete(page, { largeHits, query, visibleHits, viewportName }) {

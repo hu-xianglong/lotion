@@ -50,6 +50,7 @@ function assertSearchEvidence(entry, summary, viewportName) {
   }
   assertTiming(entry.firstRenderMs, summary.thresholdMs, `${viewportName} first render`);
   assertTiming(entry.repeatedRenderMs, summary.thresholdMs, `${viewportName} repeated render`);
+  assertPendingInput(entry.pendingInput, entry.query, summary.visibleHits, viewportName);
   assertSearchHarnessCacheEvidence(entry.harnessCache, viewportName);
   assertSearchInputLatencyEvidence(entry.inputLatency, summary.inputThresholdMs, viewportName);
   assertSorting(entry.sorting, viewportName);
@@ -57,6 +58,30 @@ function assertSearchEvidence(entry, summary, viewportName) {
   assertOverflow(entry.renderOverflow, viewportName, "render");
   assertOverflow(entry.inputOverflow, viewportName, "input");
   assertKeyboard(entry.keyboardNavigation, viewportName);
+}
+
+function assertPendingInput(evidence, query, visibleHits, viewportName) {
+  const pending = evidence?.pendingState;
+  const completed = evidence?.completedState;
+  if (
+    pending?.activeInput !== true ||
+    pending?.inputValue !== query ||
+    pending?.state !== "loading" ||
+    !String(pending?.text ?? "").includes("输入框保持可编辑")
+  ) {
+    throw new Error(`Search UI ${viewportName} missing editable pending-input evidence: ${JSON.stringify(evidence)}`);
+  }
+  if (
+    completed?.inputValue !== query ||
+    completed?.state !== "partial" ||
+    completed?.truncated !== "true" ||
+    completed?.hasMore !== "true" ||
+    !Number.isFinite(completed?.visibleCount) ||
+    completed.visibleCount < visibleHits ||
+    !String(completed?.text ?? "").includes("当前只挂载")
+  ) {
+    throw new Error(`Search UI ${viewportName} missing completed pending-input evidence: ${JSON.stringify(evidence)}`);
+  }
 }
 
 export function assertSearchHarnessCacheEvidence(evidence, viewportName = "unknown") {

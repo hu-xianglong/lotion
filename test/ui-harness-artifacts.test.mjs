@@ -1328,7 +1328,7 @@ test("search UI input latency tolerates one scheduler spike but rejects sustaine
   }, 80, "desktop"), /not responsive/);
 });
 
-test("search UI artifact contract reports missing sort options", async () => {
+test("search UI artifact contract reports missing pending-input evidence and sort options", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-search-ui-contract-fail-"));
   try {
     const desktopImage = join(root, "desktop.png");
@@ -1340,6 +1340,24 @@ test("search UI artifact contract reports missing sort options", async () => {
     await writeSearchUiMetadata(desktopMetadata, "desktop", searchUiMetadata("desktop"));
     await writeSearchUiMetadata(compactMetadata, "compact", searchUiMetadata("compact"));
     const desktopEntry = searchUiContractEntry("desktop", { imagePath: desktopImage, metadataPath: desktopMetadata });
+    const pendingInput = desktopEntry.pendingInput;
+    delete desktopEntry.pendingInput;
+
+    await assert.rejects(
+      () => assertSearchUiArtifactContract({
+        status: "passed",
+        visibleHits: 100,
+        thresholdMs: 1500,
+        inputThresholdMs: 80,
+        viewports: [
+          desktopEntry,
+          searchUiContractEntry("compact", { imagePath: compactImage, metadataPath: compactMetadata })
+        ]
+      }),
+      /missing editable pending-input evidence/
+    );
+
+    desktopEntry.pendingInput = pendingInput;
     desktopEntry.sorting.options = desktopEntry.sorting.options.filter((option) => option.value !== "created_asc");
 
     await assert.rejects(
@@ -8308,6 +8326,24 @@ function searchUiContractEntry(viewportName, visualSnapshot) {
     hits: 140,
     firstRenderMs: 110,
     repeatedRenderMs: 90,
+    pendingInput: {
+      pendingState: {
+        activeInput: true,
+        inputValue: "the",
+        state: "loading",
+        text: "正在搜索，输入框保持可编辑"
+      },
+      completedState: {
+        hasMore: "true",
+        inputValue: "the",
+        state: "partial",
+        text: "当前只挂载 100 条结果",
+        totalCount: 10_000,
+        truncated: "true",
+        visibleCount: 100,
+        renderedRows: 100
+      }
+    },
     harnessCache: {
       generationCounts: { relevance: 1, created_asc: 1, updated_desc: 1 },
       queryCounts: { relevance: 4, created_asc: 1, updated_desc: 2 },
