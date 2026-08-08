@@ -1091,6 +1091,13 @@ async function captureMarkdownPreviewSnapshot({ artifactRoot, fixture, metadata,
       value: node.style.getPropertyValue(property)
     }), selectedLineTranslateProperty)
     : null;
+  const selectedSnapshotClipProperties = ["height", "max-height", "overflow"];
+  const previousSelectedSnapshotClip = metadata.phase === "selected-imported-highlight"
+    ? await editor.evaluate((node, properties) => Object.fromEntries(properties.map((property) => [property, {
+      priority: node.style.getPropertyPriority(property),
+      value: node.style.getPropertyValue(property)
+    }])), selectedSnapshotClipProperties)
+    : null;
   const selectedButton = metadata.phase === "selected-imported-highlight"
     ? editor.locator(".cm-line.cm-md-line-has-selection .cm-md-block-source-edit-widget .cm-md-edit-source").first()
     : null;
@@ -1149,6 +1156,16 @@ async function captureMarkdownPreviewSnapshot({ artifactRoot, fixture, metadata,
         const translateX = Math.round(editorRect.left + 34 - lineRect.left);
         node.style.setProperty(property, `${translateX}px`);
       }, selectedLineTranslateProperty);
+      await editor.evaluate((node, properties) => {
+        const line = node.querySelector(".cm-line.cm-md-line-has-selection");
+        if (!(line instanceof HTMLElement)) throw new Error("Selected Markdown source line disappeared before clipping snapshot.");
+        const editorRect = node.getBoundingClientRect();
+        const lineRect = line.getBoundingClientRect();
+        const height = Math.ceil(lineRect.bottom - editorRect.top + 16);
+        node.style.setProperty(properties[0], `${height}px`, "important");
+        node.style.setProperty(properties[1], `${height}px`, "important");
+        node.style.setProperty(properties[2], "hidden", "important");
+      }, selectedSnapshotClipProperties);
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     }
     const snapshot = await captureElementSnapshot({
@@ -1180,6 +1197,16 @@ async function captureMarkdownPreviewSnapshot({ artifactRoot, fixture, metadata,
     }
     if (metadata.phase === "selected-imported-highlight") {
       await editor.evaluate((node) => node.removeAttribute("data-markdown-selected-source-snapshot"));
+      await editor.evaluate((node, payload) => {
+        for (const property of payload.properties) {
+          const previous = payload.previous[property];
+          if (previous.value) node.style.setProperty(property, previous.value, previous.priority);
+          else node.style.removeProperty(property);
+        }
+      }, {
+        previous: previousSelectedSnapshotClip,
+        properties: selectedSnapshotClipProperties
+      });
       await editor.evaluate((node, payload) => {
         if (payload.value) node.style.setProperty(payload.property, payload.value, payload.priority);
         else node.style.removeProperty(payload.property);

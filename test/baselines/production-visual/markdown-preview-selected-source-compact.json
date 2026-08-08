@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/markdown-preview-selected-source-compact.png",
-    "sha256": "08ee8bcb16d55beb6f9c4d49ffacf358880ca9efbf5e667409bfdc5461744b03",
+    "sha256": "bab9bd623e8198783982a6fff487bda02a5c4969f6d0f4d55adb6cd099d3e4b3",
     "width": 792,
-    "height": 572
+    "height": 468
   },
   "comparison": {
     "threshold": 0.1,
@@ -20,5 +20,5 @@
     "maxDiffRatio": 0
   },
   "verifiedAt": "2026-08-07",
-  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
+  "sourceTask": "tasks/done/scope-markdown-selection-visual-baseline.md"
 }
