@@ -38,6 +38,17 @@ const result = await withLotionUIHarness("embedded-view-ui", async ({ artifactRo
       await openPage(page, fixture.blankPageId);
       await page.getByText("Embedded Benchmark Blank").first().waitFor({ timeout: 8_000 });
       await assertNoDocumentHorizontalOverflow(page, `embedded blank ${viewport.name} count ${count}`);
+      const measurementMode = results.length === 0 ? "cold-start" : "steady-state";
+      if (measurementMode === "steady-state") {
+        await openPage(page, fixture.embeddedPageId);
+        await page.waitForFunction(
+          (expected) => document.querySelectorAll(".embedded-table").length >= expected,
+          count,
+          { timeout: 15_000 }
+        );
+        await openPage(page, fixture.blankPageId);
+        await page.getByText("Embedded Benchmark Blank").first().waitFor({ timeout: 8_000 });
+      }
       const started = await page.evaluate(() => performance.now());
       await openPage(page, fixture.embeddedPageId);
       await page.waitForFunction(
@@ -74,6 +85,7 @@ const result = await withLotionUIHarness("embedded-view-ui", async ({ artifactRo
       results.push({
         viewport: viewport.name,
         embeddedViews: count,
+        measurementMode,
         rowsPerDatabase: args.rowsPerDatabase,
         renderMs: Number((ended - started).toFixed(1)),
         rendered,
