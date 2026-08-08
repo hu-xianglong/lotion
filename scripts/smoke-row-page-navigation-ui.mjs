@@ -41,9 +41,9 @@ const result = await withLotionUIHarness("row-page-navigation", async ({ artifac
     await row.locator(".title-cell-open").first().click();
     await page.getByText(fixture.rowTitle).first().waitFor({ timeout: 8_000 });
     await page.getByText("Row page opened from the database table Open button.").first().waitFor({ timeout: 8_000 });
-    await expandPageDetailsPanel(page);
     const ended = await page.evaluate(() => performance.now());
     const openMs = Number((ended - started).toFixed(1));
+    await expandPageDetailsPanel(page);
     const activeTabText = (await page.locator(".tab.active").first().textContent({ timeout: 5_000 }))?.trim() ?? "";
     if (!activeTabText.includes(fixture.rowTitle)) {
       throw new Error(`Active tab does not include row title "${fixture.rowTitle}": ${activeTabText}`);

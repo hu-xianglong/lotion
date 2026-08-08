@@ -918,6 +918,17 @@ test("row-page navigation artifact contract validates navigation screenshots and
   }
 });
 
+test("row-page navigation open budget stops before page-details interactions", async () => {
+  const source = await readFile(join(process.cwd(), "scripts/smoke-row-page-navigation-ui.mjs"), "utf8");
+  const bodyVisible = source.indexOf("Row page opened from the database table Open button.");
+  const timerStopped = source.indexOf("const ended = await page.evaluate(() => performance.now());", bodyVisible);
+  const detailsExpanded = source.indexOf("await expandPageDetailsPanel(page);", bodyVisible);
+
+  assert.ok(bodyVisible >= 0, "row-page smoke must wait for visible body content");
+  assert.ok(timerStopped > bodyVisible, "row-page open timing must include the first body render");
+  assert.ok(detailsExpanded > timerStopped, "page-details interactions must remain outside the row-page open budget");
+});
+
 test("row-page navigation artifact contract reports missing source opens", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-row-page-navigation-contract-fail-"));
   const artifactRoot = join(root, "visual");
