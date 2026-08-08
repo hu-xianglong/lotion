@@ -135,9 +135,40 @@ async function assertSearchLayout(page, label, { expectResults, expectFilters })
     await assertWithinViewport(page, page.locator(".global-search-filters").first(), `${label} search filters`, 8);
   }
   if (expectResults) {
-    const firstVisibleHit = page.locator(".global-search-hit:visible").first();
-    await firstVisibleHit.waitFor({ timeout: 8_000 });
-    await assertWithinViewport(page, firstVisibleHit, `${label} first search hit`, 8);
+    const rectHandle = await page.waitForFunction(() => {
+      for (const hit of document.querySelectorAll(".global-search-hit")) {
+        const style = getComputedStyle(hit);
+        const rect = hit.getBoundingClientRect();
+        if (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity) > 0 &&
+          rect.width > 0 &&
+          rect.height > 0
+        ) {
+          return {
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height
+          };
+        }
+      }
+      return false;
+    }, null, { timeout: 8_000 });
+    const rect = await rectHandle.jsonValue();
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error(`Cannot assert viewport bounds for ${label} first search hit; missing viewport size.`);
+    if (
+      rect.left < -8 ||
+      rect.top < -8 ||
+      rect.right > viewport.width + 8 ||
+      rect.bottom > viewport.height + 8
+    ) {
+      throw new Error(`${label} first search hit is outside viewport ${JSON.stringify(viewport)}: ${JSON.stringify(rect)}`);
+    }
   }
   await assertNoDocumentHorizontalOverflow(page, `search title ${label}`, 8);
 }

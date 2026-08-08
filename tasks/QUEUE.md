@@ -779,6 +779,7 @@ surface.
 | 726 | done | Restore clean-checkout quality gate | `tasks/done/restore-clean-checkout-quality-gate.md` | clean Node 22 reproduction, exact generated-fixture allowlist, runtime/harness race repairs, complete UI and production visual gates |
 | 727 | done | Cross-timezone row property visual baseline | `tasks/done/cross-timezone-row-property-visual-baseline.md` | UTC vs America/Los_Angeles fixture determinism, strict three-viewport baselines, remote quality-gate verification |
 | 728 | done | Scope Markdown selection visual baseline | `tasks/done/scope-markdown-selection-visual-baseline.md` | selected-source crop isolation, strict three-viewport baselines, remote quality-gate verification |
+| 729 | done | Stabilize search-result geometry assertion | `tasks/done/stabilize-search-result-geometry-assertion.md` | atomic visible-hit geometry, built-in command regression, remote quality-gate verification |
 
 ## Latency Benchmark Coverage
 
