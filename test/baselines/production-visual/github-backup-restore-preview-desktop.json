@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/github-backup-restore-preview-desktop.png",
-    "sha256": "07a0c1d27a145365d85ae2b314f0a4f296de9bf17fea6e0d8c9fe33b2e0bdf68",
+    "sha256": "a2d64d75231c0b6b16c7aad3447cbcc570ef684bd6803cd72f72c267dcd5de2a",
     "width": 960,
     "height": 906
   },
@@ -20,5 +20,5 @@
     "maxDiffRatio": 0
   },
   "verifiedAt": "2026-08-07",
-  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
+  "sourceTask": "tasks/done/unified-github-backup-date-rendering.md"
 }

@@ -199,12 +199,12 @@ async function stabilizeBackupEvidence(page) {
     const deterministic = [
       {
         message: "Backup snapshot 2",
-        createdAt: "2026-06-12T12:00:00.000Z",
+        createdAt: "2026-06-12T05:00:00",
         sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       {
         message: "Backup snapshot 1",
-        createdAt: "2026-06-11T12:00:00.000Z",
+        createdAt: "2026-06-11T05:00:00",
         sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
     ];

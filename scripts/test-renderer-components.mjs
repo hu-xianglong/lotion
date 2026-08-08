@@ -2578,6 +2578,7 @@ function testGitHubBackupPanelInitial(html) {
   assert.match(html, />Run backup<\/button>/, "manual backup action should render");
   assert.match(html, /Backed up 3 changed files\./, "status message should render");
   assert.match(html, /<dt>Last backup<\/dt>/, "last backup metric should render");
+  assert.match(html, /2026-06-12 10:30/, "last backup should use Lotion's global date and time format");
   assert.match(html, /<dt>Commit<\/dt>\s*<dd>abc1234<\/dd>/, "last commit metric should render");
   assert.match(html, /<dt>Files<\/dt>\s*<dd>12<\/dd>/, "file count metric should render");
   assert.match(html, /Local mock mode stores a deterministic fake GitHub remote/, "local mock safety note should render");
@@ -4591,10 +4592,11 @@ function rendererComponentEntry() {
       return renderToStaticMarkup(
         React.createElement(GitHubBackupPanel, {
           ctx: makeGitHubBackupPluginContext(),
+          dateTimeDefaults: { dateFormat: "iso", timeFormat: "h24" },
           initialStatus: {
             state: "backed_up",
             message: "Backed up 3 changed files.",
-            lastBackupAt: "2026-06-12T10:30:00.000Z",
+            lastBackupAt: "2026-06-12T10:30:00",
             lastCommitSha: "abc1234",
             fileCount: 12
           },
@@ -4604,7 +4606,7 @@ function rendererComponentEntry() {
               id: "lotion-backups/pages/weekly-review.md@abc1234",
               sha: "abc1234",
               message: "Lotion backup 2026-06-12",
-              createdAt: "2026-06-12T10:30:00.000Z",
+              createdAt: "2026-06-12T10:30:00",
               path: "lotion-backups/pages/weekly-review.md",
               title: "Weekly Review",
               pageId: "pg_weekly"
@@ -4615,7 +4617,7 @@ function rendererComponentEntry() {
               id: "lotion-backups/pages/weekly-review.md@abc1234",
               sha: "abc1234",
               message: "Lotion backup 2026-06-12",
-              createdAt: "2026-06-12T10:30:00.000Z",
+              createdAt: "2026-06-12T10:30:00",
               path: "lotion-backups/pages/weekly-review.md",
               title: "Weekly Review",
               pageId: "pg_weekly"

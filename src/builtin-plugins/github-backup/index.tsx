@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readStoredDateTimeDisplayDefaults } from "../../renderer/lib/settings.js";
+import { formatDateForField, type DateTimeDisplayDefaults } from "../../shared/date-values.js";
 import type { Disposable, PluginContext, PluginManifest } from "../../shared/plugin-api.js";
 import type { PageDocument } from "../../shared/types.js";
 import type {
@@ -18,6 +20,10 @@ const SETTINGS_KEY = "githubBackupSettings";
 
 export function githubBackupPreviewLabel(pageTitle: string): string {
   return `Page snapshot · ${pageTitle}`;
+}
+
+export function formatGitHubBackupTime(value: string, defaults?: Partial<DateTimeDisplayDefaults>): string {
+  return formatDateForField(value, { type: "updated_time" }, defaults);
 }
 
 export const manifest: PluginManifest = {
@@ -72,7 +78,7 @@ export function renderGitHubBackupPanel(el: HTMLElement, ctx: PluginContext): Di
     entry.disposeTimer = undefined;
   }
   const renderVersion = entry.version;
-  entry.root.render(<GitHubBackupPanel ctx={ctx} />);
+  entry.root.render(<GitHubBackupPanel ctx={ctx} dateTimeDefaults={readStoredDateTimeDisplayDefaults()} />);
   return {
     dispose() {
       const current = githubBackupRoots.get(el);
@@ -111,6 +117,7 @@ async function openGitHubBackupModal(ctx: PluginContext): Promise<void> {
 
 export interface GitHubBackupPanelProps {
   ctx: PluginContext;
+  dateTimeDefaults?: DateTimeDisplayDefaults;
   initialStatus?: GitHubBackupStatus;
   initialActivePage?: PageDocument | null;
   initialHistory?: GitHubBackupVersion[];
@@ -119,6 +126,7 @@ export interface GitHubBackupPanelProps {
 
 export function GitHubBackupPanel({
   ctx,
+  dateTimeDefaults = readStoredDateTimeDisplayDefaults(),
   initialStatus,
   initialActivePage = null,
   initialHistory = [],
@@ -227,7 +235,7 @@ export function GitHubBackupPanel({
 
   async function restoreVersion() {
     if (!activePage || !preview) return;
-    const confirmed = await ctx.ui.confirm(`Restore ${activePage.meta.title} from ${preview.version.createdAt}?`);
+    const confirmed = await ctx.ui.confirm(`Restore ${activePage.meta.title} from ${formatGitHubBackupTime(preview.version.createdAt, dateTimeDefaults)}?`);
     if (!confirmed) return;
     setBusy(true);
     try {
@@ -326,7 +334,7 @@ export function GitHubBackupPanel({
           <dl>
             <div>
               <dt>Last backup</dt>
-              <dd>{status.lastBackupAt ? new Date(status.lastBackupAt).toLocaleString() : "None"}</dd>
+              <dd>{status.lastBackupAt ? formatGitHubBackupTime(status.lastBackupAt, dateTimeDefaults) : "None"}</dd>
             </div>
             <div>
               <dt>Commit</dt>
@@ -364,7 +372,7 @@ export function GitHubBackupPanel({
               onClick={() => void previewVersion(version)}
             >
               <span>{version.message}</span>
-              <small>{new Date(version.createdAt).toLocaleString()} · {version.sha}</small>
+              <small>{formatGitHubBackupTime(version.createdAt, dateTimeDefaults)} · {version.sha}</small>
             </button>
           ))}
         </div>

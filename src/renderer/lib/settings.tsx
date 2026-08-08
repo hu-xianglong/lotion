@@ -111,12 +111,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     return normalizeSidebarTags(window.localStorage.getItem(SIDEBAR_TAGS_KEY));
   });
   const [defaultDateFormat, setDefaultDateFormatState] = useState<DateDisplayFormat>(() => {
-    if (typeof window === "undefined") return DEFAULT_DATE_DISPLAY_FORMAT;
-    return normalizeDateFormat(window.localStorage.getItem(DEFAULT_DATE_FORMAT_KEY));
+    return readStoredDateTimeDisplayDefaults().dateFormat;
   });
   const [defaultTimeFormat, setDefaultTimeFormatState] = useState<TimeDisplayFormat>(() => {
-    if (typeof window === "undefined") return DEFAULT_TIME_DISPLAY_FORMAT;
-    return normalizeTimeFormat(window.localStorage.getItem(DEFAULT_TIME_FORMAT_KEY));
+    return readStoredDateTimeDisplayDefaults().timeFormat;
   });
   const [shortcutOverrides, setShortcutOverridesState] = useState<ShortcutOverrides>(() => {
     if (typeof window === "undefined") return {};
@@ -222,6 +220,15 @@ export function useDateTimeDisplayDefaults(): DateTimeDisplayDefaults {
     () => ({ dateFormat: defaultDateFormat, timeFormat: defaultTimeFormat }),
     [defaultDateFormat, defaultTimeFormat]
   );
+}
+
+export function readStoredDateTimeDisplayDefaults(
+  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined" ? null : window.localStorage
+): DateTimeDisplayDefaults {
+  return {
+    dateFormat: normalizeDateFormat(storage?.getItem(DEFAULT_DATE_FORMAT_KEY)),
+    timeFormat: normalizeTimeFormat(storage?.getItem(DEFAULT_TIME_FORMAT_KEY))
+  };
 }
 
 export function normalizeDateFormat(value: unknown): DateDisplayFormat {
