@@ -699,10 +699,12 @@ test("storage, file cache, dates, formula helpers, app config, and git service c
     try {
       for (const timezone of ["UTC", "America/Los_Angeles"]) {
         process.env.TZ = timezone;
-        assert.equal(
-          formatDateForField("2026-01-01T00:00:00", { type: "created_time" }),
-          "January 1, 2026 12:00 AM"
-        );
+        for (const year of [2024, 2025, 2026]) {
+          assert.equal(
+            formatDateForField(`${year}-01-01T00:00:00`, { type: "created_time" }),
+            `January 1, ${year} 12:00 AM`
+          );
+        }
       }
     } finally {
       if (originalTimezone === undefined) delete process.env.TZ;

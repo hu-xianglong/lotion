@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/database-created-views-compact.png",
-    "sha256": "a7efe1228d4dbd06117c153f75d96ff0f238759eba0a6a30cde6354886e5f70b",
+    "sha256": "9a9c151b0a322cdd9b45b9c4020b09d2bb66652dc847656e378ae9e38486c5d8",
     "width": 792,
     "height": 777
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-08-07",
-  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
+  "verifiedAt": "2026-08-08",
+  "sourceTask": "tasks/done/cross-timezone-created-views-visual-baseline.md"
 }

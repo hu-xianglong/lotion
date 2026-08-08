@@ -1064,7 +1064,7 @@ async function createDatabaseCreatedViewsFixture(viewportName) {
   ], [
     {
       id: "row_mid",
-      created_time: "2025-01-01T00:00:00.000Z",
+      created_time: "2025-01-01T00:00:00",
       updated_time: now,
       title: "Middle created row",
       page_file: "",
@@ -1073,7 +1073,7 @@ async function createDatabaseCreatedViewsFixture(viewportName) {
     },
     {
       id: "row_new",
-      created_time: "2026-01-01T00:00:00.000Z",
+      created_time: "2026-01-01T00:00:00",
       updated_time: now,
       title: "Newest created row",
       page_file: "",
@@ -1082,7 +1082,7 @@ async function createDatabaseCreatedViewsFixture(viewportName) {
     },
     {
       id: "row_old",
-      created_time: "2024-01-01T00:00:00.000Z",
+      created_time: "2024-01-01T00:00:00",
       updated_time: now,
       title: "Oldest created row",
       page_file: "",
