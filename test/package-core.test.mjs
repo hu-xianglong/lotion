@@ -2930,6 +2930,20 @@ test("entity backlinks use a persisted workspace graph cache and invalidate on e
   const root = await mkdtemp(join(tmpdir(), "lotion-backlink-cache-"));
   let entities;
   let reloadedEntities;
+  const originalWatch = fileService.watch.bind(fileService);
+  const activeWatchers = new Set();
+  let watchCalls = 0;
+  fileService.watch = (...args) => {
+    watchCalls += 1;
+    const watcher = originalWatch(...args);
+    const close = watcher.close.bind(watcher);
+    watcher.close = () => {
+      activeWatchers.delete(watcher);
+      return close();
+    };
+    activeWatchers.add(watcher);
+    return watcher;
+  };
   try {
     const config = new AppConfigService(join(root, "config.json"));
     const workspace = new WorkspaceService(config);
@@ -2958,6 +2972,12 @@ test("entity backlinks use a persisted workspace graph cache and invalidate on e
     const firstStats = entities.backlinkCacheStats();
     assert.ok(firstStats);
     assert.equal(firstStats.markdownLinkCount, 1);
+    assert.equal(watchCalls, 0, "one-shot backlink reads must not arm recursive watchers");
+
+    const unsubscribe = entities.subscribeBacklinkUpdates(() => {});
+    assert.ok(watchCalls > 0, "live backlink subscribers must arm external-edit watchers");
+    unsubscribe();
+    assert.equal(activeWatchers.size, 0, "the final unsubscribe must close backlink watchers");
 
     const cacheRaw = await readFile(join(workspaceRoot, ".lotion-cache", "backlinks.json"), "utf8");
     const cacheJson = JSON.parse(cacheRaw);
@@ -3028,6 +3048,7 @@ test("entity backlinks use a persisted workspace graph cache and invalidate on e
       backlink.excerpt === target.meta.title
     ), true);
   } finally {
+    fileService.watch = originalWatch;
     entities?.dispose();
     reloadedEntities?.dispose();
     await rm(root, { recursive: true, force: true });
@@ -3039,6 +3060,7 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
   let entities;
   let restartedEntities;
   let originalReadText;
+  let stopWatching;
   try {
     const config = new AppConfigService(join(root, "config.json"));
     const workspace = new WorkspaceService(config);
@@ -3067,6 +3089,8 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
       if (String(path).endsWith(".md")) markdownRefreshReads.push(String(path));
       return originalReadText(path);
     };
+    stopWatching = entities.subscribeBacklinkUpdates(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
 
     const awaitBacklinkUpdate = () => new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -3094,6 +3118,8 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
 
     const userBytesBeforeRecovery = await readFile(sourceAbsolutePath);
     const pagesCsvBytesBeforeRecovery = await readFile(pagesCsvAbsolutePath);
+    stopWatching();
+    stopWatching = undefined;
     entities.dispose();
     entities = undefined;
     await writeFile(join(workspaceRoot, ".lotion-cache", "backlinks.json"), "{corrupt derived cache", "utf8");
@@ -3103,6 +3129,7 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
     assert.deepEqual(await readFile(pagesCsvAbsolutePath), pagesCsvBytesBeforeRecovery, "derived-cache recovery must not modify CSV source bytes");
   } finally {
     if (originalReadText) fileService.readText = originalReadText;
+    stopWatching?.();
     entities?.dispose();
     restartedEntities?.dispose();
     await rm(root, { recursive: true, force: true });

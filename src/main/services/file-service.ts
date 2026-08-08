@@ -2,6 +2,7 @@ import {
   createReadStream as fsCreateReadStream,
   existsSync as fsExistsSync,
   readdirSync as fsReaddirSync,
+  realpathSync as fsRealpathSync,
   statSync as fsStatSync,
   watch as fsWatch
 } from "node:fs";
@@ -17,8 +18,11 @@ import {
   writeFile as fsWriteFile,
   type FileHandle
 } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import type { Dirent, FSWatcher, ReadStream, WatchListener } from "node:fs";
+
+const require = createRequire(import.meta.url);
 
 export type FileServiceDirent = Dirent;
 export interface FileMutationEvent {
@@ -259,6 +263,30 @@ export class FileService {
   }
 
   watch(path: string, listener: WatchListener<string>, options?: { recursive?: boolean }): FSWatcher {
+    if (options?.recursive && process.platform === "darwin") {
+      const { watch } = require("fsevents") as {
+        watch(root: string, handler: (path: string) => void): () => Promise<void>;
+      };
+      let stopped = false;
+      const root = normalizePath(path);
+      const canonicalRoot = fsRealpathSync.native(root);
+      const stop = watch(root, (changedPath) => {
+        listener("change", relative(canonicalRoot, changedPath));
+      });
+      return {
+        close() {
+          if (stopped) return;
+          stopped = true;
+          void stop();
+        },
+        ref() {
+          return this;
+        },
+        unref() {
+          return this;
+        }
+      } as FSWatcher;
+    }
     return options ? fsWatch(path, options, listener) : fsWatch(path, listener);
   }
 

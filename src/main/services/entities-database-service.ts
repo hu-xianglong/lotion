@@ -231,7 +231,11 @@ export class EntitiesDatabaseService {
 
   subscribeBacklinkUpdates(listener: () => void): () => void {
     this.backlinkUpdateListeners.add(listener);
-    return () => this.backlinkUpdateListeners.delete(listener);
+    if (this.backlinkCache) this.ensureBacklinkWatchers(this.backlinkCache);
+    return () => {
+      this.backlinkUpdateListeners.delete(listener);
+      if (this.backlinkUpdateListeners.size === 0) this.resetBacklinkWatchers();
+    };
   }
 
   dispose(): void {
@@ -264,6 +268,7 @@ export class EntitiesDatabaseService {
   }
 
   private ensureBacklinkWatchers(graph: BacklinkGraphCache): void {
+    if (this.backlinkUpdateListeners.size === 0) return;
     const root = this.currentWorkspaceRoot();
     if (!root || this.backlinkWatcherRoot === root) return;
     for (const watcher of this.backlinkWatchers) watcher.close();
