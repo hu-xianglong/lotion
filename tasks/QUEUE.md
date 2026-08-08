@@ -777,6 +777,7 @@ surface.
 | 724 | done | Restore GitHub Release packaging | `tasks/done/restore-github-release-packaging.md` | clean isolated `npm ci`, locked project-local builder, full local gates, verified arm64 package, successful GitHub arm64/x64 package and startup jobs |
 | 725 | done | Unsigned macOS preview installation | `tasks/done/unsigned-macos-preview-installation.md` | README download, architecture selection, Gatekeeper override, terminal fallback, source-build option, subscriber-owned backlink watcher cleanup |
 | 726 | done | Restore clean-checkout quality gate | `tasks/done/restore-clean-checkout-quality-gate.md` | clean Node 22 reproduction, exact generated-fixture allowlist, runtime/harness race repairs, complete UI and production visual gates |
+| 727 | done | Cross-timezone row property visual baseline | `tasks/done/cross-timezone-row-property-visual-baseline.md` | UTC vs America/Los_Angeles fixture determinism, strict three-viewport baselines, remote quality-gate verification |
 
 ## Latency Benchmark Coverage
 

@@ -18,7 +18,8 @@ import { assertProductionVisualBaseline } from "./production-visual-baseline.mjs
 
 export async function createRowPagePropertyVisualFixture(viewportName = "default") {
   const root = await mkdtemp(join(tmpdir(), `lotion-row-property-visual-${viewportName}-`));
-  const now = "2026-01-01T00:00:00.000Z";
+  // Keep the visual fixture's wall-clock value stable across runner time zones.
+  const now = "2026-01-01T00:00:00";
   const homeId = "pg_row_property_home";
   const homeTitle = "Row Property Visual Home";
   const targetPageId = "pg_row_property_related";

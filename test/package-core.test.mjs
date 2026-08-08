@@ -695,6 +695,19 @@ test("storage, file cache, dates, formula helpers, app config, and git service c
       "2026-05-27"
     );
     assert.equal(formatDateForField("not a date", { type: "date" }), "not a date");
+    const originalTimezone = process.env.TZ;
+    try {
+      for (const timezone of ["UTC", "America/Los_Angeles"]) {
+        process.env.TZ = timezone;
+        assert.equal(
+          formatDateForField("2026-01-01T00:00:00", { type: "created_time" }),
+          "January 1, 2026 12:00 AM"
+        );
+      }
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
 
     const formulaFields = [
       { id: "score", name: "Score", type: "number" },
