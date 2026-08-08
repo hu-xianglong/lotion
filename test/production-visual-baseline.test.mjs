@@ -218,7 +218,13 @@ test("committed database-interaction settings baseline rejects a deliberate pixe
   try {
     const expectedPath = join(process.cwd(), "test", "baselines", "production-visual", "database-interaction-settings-compact.png");
     const png = PNG.sync.read(await readFile(expectedPath));
-    setPixel(png, Math.floor(png.width / 2), Math.floor(png.height / 2), [255, 0, 255, 255]);
+    const centerX = Math.floor(png.width / 2);
+    const centerY = Math.floor(png.height / 2);
+    for (let y = centerY - 2; y <= centerY + 2; y += 1) {
+      for (let x = centerX - 2; x <= centerX + 2; x += 1) {
+        setPixel(png, x, y, [255, 0, 255, 255]);
+      }
+    }
     const actualPath = join(root, "database-interaction-settings-mutated.png");
     const artifactRoot = join(root, "artifacts");
     await mkdir(artifactRoot, { recursive: true });

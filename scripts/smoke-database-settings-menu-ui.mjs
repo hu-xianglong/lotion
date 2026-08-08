@@ -160,12 +160,11 @@ async function runScenario({ artifactRoot, page, viewport }) {
 async function openDatabase(page, entityId) {
   await page.locator(".main-content").waitFor({ timeout: 8_000 });
   await page.waitForFunction(() => Boolean(window.lotion?.databases?.get), null, { timeout: 8_000 });
-  await page.locator(".page-header .title-input, .page-header h1").first().waitFor({ timeout: 8_000 });
   await page.evaluate((databaseId) => window.dispatchEvent(new CustomEvent("lotion:open-entity", {
     detail: { kind: "database", entityId: databaseId }
   })), entityId);
   const expectedName = entityId === SYSTEM_DATABASE_ID ? "pages" : "Tasks";
-  await page.locator(".page-header h1").filter({ hasText: new RegExp(`^${expectedName}$`, "i") }).waitFor({ timeout: 8_000 });
+  await page.locator(".database-title-wrap h1").filter({ hasText: new RegExp(`^${expectedName}$`, "i") }).waitFor({ timeout: 8_000 });
   const table = page.locator(".database-table:not(.embedded-table)").first();
   await table.waitFor({ timeout: 8_000 });
   return table;

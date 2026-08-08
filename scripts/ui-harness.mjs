@@ -23,6 +23,8 @@ export async function withLotionUIHarness(name, run, options = {}) {
   let browser;
   let page;
   let previousWorkspacePath = "";
+  let previousLocale;
+  let previousLocaleCaptured = false;
   let devProcess;
   let runResult = null;
 
@@ -61,6 +63,8 @@ export async function withLotionUIHarness(name, run, options = {}) {
     await page.waitForFunction(() => Boolean(window.lotion?.workspace), null, { timeout: 15_000 });
     await page.evaluate(() => window.lotion.runtime.ready());
     previousWorkspacePath = await currentNonSmokeWorkspacePath(page);
+    previousLocale = await page.evaluate(() => window.localStorage.getItem("lotion.locale"));
+    previousLocaleCaptured = true;
 
     const context = {
       artifactRoot,
@@ -134,8 +138,13 @@ export async function withLotionUIHarness(name, run, options = {}) {
     }).catch(() => undefined);
     throw error;
   } finally {
+    if (page && previousLocaleCaptured) {
+      await restoreLocalStorageValue(page, "lotion.locale", previousLocale).catch(() => undefined);
+    }
     if (page && previousWorkspacePath) {
       await openWorkspaceAndReload(page, previousWorkspacePath).catch(() => undefined);
+    } else if (page && previousLocaleCaptured) {
+      await reloadRendererPage(page).catch(() => undefined);
     }
     if (page) {
       for (const root of tempWorkspaces) {
@@ -228,10 +237,7 @@ export async function withPreservedLocalStorageValue(page, key, run) {
   let restored = false;
   const restore = async () => {
     if (restored) return;
-    await page.evaluate(({ storageKey, value }) => {
-      if (value === null) window.localStorage.removeItem(storageKey);
-      else window.localStorage.setItem(storageKey, value);
-    }, { storageKey: key, value: previousValue });
+    await restoreLocalStorageValue(page, key, previousValue);
     restored = true;
   };
   try {
@@ -239,6 +245,13 @@ export async function withPreservedLocalStorageValue(page, key, run) {
   } finally {
     await restore();
   }
+}
+
+export async function restoreLocalStorageValue(page, key, value) {
+  await page.evaluate(({ storageKey, value: previousValue }) => {
+    if (previousValue === null) window.localStorage.removeItem(storageKey);
+    else window.localStorage.setItem(storageKey, previousValue);
+  }, { storageKey: key, value });
 }
 
 function isIgnorableReloadNavigationError(error) {
@@ -748,6 +761,7 @@ async function ensureAppLifecycle(cdpUrl, devLog, options = {}) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const child = spawn("npm", ["run", "dev"], {
       cwd: process.cwd(),
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         LOTION_CDP_PORT: String(options.cdpPort ?? cdpPortFromUrl(cdpUrl) ?? 9222),
@@ -1031,6 +1045,7 @@ function summarizeArtifactContract(contract) {
     ...(typeof contract.perceptualBaselineCount === "number" ? { perceptualBaselineCount: contract.perceptualBaselineCount } : {}),
     ...(typeof contract.diagnosticCount === "number" ? { diagnosticCount: contract.diagnosticCount } : {}),
     ...(typeof contract.renderThresholdMs === "number" ? { renderThresholdMs: contract.renderThresholdMs } : {}),
+    ...(typeof contract.coldStartRenderThresholdMs === "number" ? { coldStartRenderThresholdMs: contract.coldStartRenderThresholdMs } : {}),
     ...(typeof contract.maxRenderMs === "number" ? { maxRenderMs: contract.maxRenderMs } : {}),
     ...(Array.isArray(contract.renderTimings)
       ? {
@@ -1309,11 +1324,20 @@ async function writeStartupFailureArtifacts({ artifactRoot, devLog, error, name 
 }
 
 async function stopDevProcess(child) {
-  if (!child || child.exitCode !== null) return;
-  child.kill("SIGINT");
+  if (!child) return;
+  signalDevProcess(child, "SIGINT");
+  if (process.platform !== "win32" && child.pid) {
+    const deadline = Date.now() + 3_000;
+    while (isDevProcessGroupAlive(child.pid) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (isDevProcessGroupAlive(child.pid)) signalDevProcess(child, "SIGKILL");
+    return;
+  }
+  if (child.exitCode !== null) return;
   await new Promise((resolve) => {
     const timer = setTimeout(() => {
-      if (child.exitCode === null) child.kill("SIGKILL");
+      signalDevProcess(child, "SIGKILL");
       resolve(undefined);
     }, 3_000);
     child.once("exit", () => {
@@ -1321,6 +1345,34 @@ async function stopDevProcess(child) {
       resolve(undefined);
     });
   });
+}
+
+function isDevProcessGroupAlive(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return false;
+    throw error;
+  }
+}
+
+function signalDevProcess(child, signal) {
+  try {
+    if (process.platform !== "win32" && child.pid) {
+      process.kill(-child.pid, signal);
+    } else if (child.exitCode === null) {
+      child.kill(signal);
+    }
+  } catch (error) {
+    if (error?.code === "ESRCH") return;
+    if (error?.code === "EPERM" && child.exitCode === null) {
+      child.kill(signal);
+      return;
+    }
+    throw error;
+  }
 }
 
 function safeName(value) {

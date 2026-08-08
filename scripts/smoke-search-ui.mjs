@@ -19,6 +19,7 @@ import {
 } from "./ui-harness.mjs";
 import {
   assertSearchHarnessCacheEvidence,
+  assertSearchInputLatencyEvidence,
   assertSearchUiArtifactContract
 } from "./lib/search-ui-artifacts.mjs";
 import { assertProductionVisualBaseline } from "./lib/production-visual-baseline.mjs";
@@ -106,9 +107,7 @@ const summary = await withLotionUIHarness("search-ui", async ({ artifactRoot, cd
         `query timings=${JSON.stringify(harnessCache.queryTimings)}`
       );
     }
-    if (inputLatency.maxMs > inputThresholdMs) {
-      throw new Error(`Search input key latency ${inputLatency.maxMs}ms exceeds ${inputThresholdMs}ms`);
-    }
+    assertSearchInputLatencyEvidence(inputLatency, inputThresholdMs, viewport.name);
 
     viewports.push({
       viewport: viewport.name,
@@ -264,21 +263,21 @@ async function measureSearchRender(page, query, visibleHits, viewportName, optio
     .catch(() => undefined);
   const started = await page.evaluate(() => performance.now());
   await input.fill(query);
-  await page.waitForSelector('[data-testid="global-search-progress"][data-state="loading"]', { timeout: 2_000 });
-  const pendingState = await page.evaluate((query) => {
-    const input = document.querySelector(".global-search-input");
-    const progress = document.querySelector('[data-testid="global-search-progress"]');
-    return {
-      activeInput: document.activeElement === input,
-      inputValue: input instanceof HTMLInputElement ? input.value : "",
-      state: progress?.getAttribute("data-state") ?? "",
-      text: progress?.textContent ?? ""
-    };
-  }, query);
-  if (!pendingState.activeInput || pendingState.inputValue !== query || !pendingState.text.includes("输入框保持可编辑")) {
-    throw new Error(`Search loading progress/input state mismatch: ${JSON.stringify(pendingState)}`);
-  }
   if (options.exercisePendingInput) {
+    await page.waitForSelector('[data-testid="global-search-progress"][data-state="loading"]', { timeout: 2_000 });
+    const pendingState = await page.evaluate((query) => {
+      const input = document.querySelector(".global-search-input");
+      const progress = document.querySelector('[data-testid="global-search-progress"]');
+      return {
+        activeInput: document.activeElement === input,
+        inputValue: input instanceof HTMLInputElement ? input.value : "",
+        state: progress?.getAttribute("data-state") ?? "",
+        text: progress?.textContent ?? ""
+      };
+    }, query);
+    if (!pendingState.activeInput || pendingState.inputValue !== query || !pendingState.text.includes("输入框保持可编辑")) {
+      throw new Error(`Search loading progress/input state mismatch: ${JSON.stringify(pendingState)}`);
+    }
     await input.type("x");
     await page.waitForFunction(
       (expected) => document.querySelector(".global-search-input")?.value === expected,

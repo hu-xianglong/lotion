@@ -109,9 +109,9 @@ export function PageProperties({ meta, onChange, onSearchTag }: PagePropertiesPr
     if ((meta.date ?? "") === date) return;
     void controllerRef.current?.submit({ date });
   }
-  function commitUrl() {
+  async function commitUrl() {
     if ((meta.url ?? "") === url) return;
-    void controllerRef.current?.submit({ url });
+    await controllerRef.current?.submit({ url });
   }
 
   return (
@@ -237,9 +237,11 @@ function PageUrlProperty({
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
-  onCommit: () => void;
+  onCommit: () => Promise<void> | void;
   disabled?: boolean;
 }) {
+  const openButtonRef = useRef<HTMLButtonElement>(null);
+  const skipNextBlurCommitRef = useRef(false);
   const raw = value.trim();
   const href = normalizeUrlForOpen(raw);
   const display = raw || placeholder;
@@ -266,12 +268,26 @@ function PageUrlProperty({
         placeholder="https://"
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        onBlur={onCommit}
+        onBlur={() => {
+          if (skipNextBlurCommitRef.current) {
+            skipNextBlurCommitRef.current = false;
+            return;
+          }
+          onCommit();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter") (event.target as HTMLInputElement).blur();
+          if (event.key === "Tab" && !event.shiftKey) {
+            event.preventDefault();
+            skipNextBlurCommitRef.current = true;
+            void Promise.resolve(onCommit()).finally(() => {
+              focusUrlOpenButton(openButtonRef);
+            });
+          }
         }}
       />
       <button
+        ref={openButtonRef}
         type="button"
         className="url-cell-open"
         disabled={disabled || !href}
@@ -291,6 +307,18 @@ function PageUrlProperty({
       </button>
     </span>
   );
+}
+
+function focusUrlOpenButton(buttonRef: React.RefObject<HTMLButtonElement | null>, attemptsLeft = 30) {
+  requestAnimationFrame(() => {
+    const button = buttonRef.current
+      ?? document.querySelector<HTMLButtonElement>(".page-properties .page-property-url-cell .url-cell-open");
+    if (button && !button.disabled) {
+      button.focus();
+      if (document.activeElement === button) return;
+    }
+    if (attemptsLeft > 1) focusUrlOpenButton(buttonRef, attemptsLeft - 1);
+  });
 }
 
 function normalizeUrlForOpen(raw: string): string {

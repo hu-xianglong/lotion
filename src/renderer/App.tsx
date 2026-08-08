@@ -650,6 +650,7 @@ function AppContent() {
         : readPersistedTabs();
       const restored = rawRestored ? sanitizePersistedTabs(rawRestored, pages, databases) : null;
       setState((current) => {
+        const navigationChanged = navigationVersionRef.current !== navigationVersionAtStart;
         let tabs = restored?.tabs ?? current.tabs;
         const activeTabIndex = restored?.activeTabIndex ?? current.activeTabIndex;
         if (!tabs[activeTabIndex]?.item && pages[0]) {
@@ -666,7 +667,7 @@ function AppContent() {
           databases,
           pagesTree,
           favorites,
-          recents,
+          recents: navigationChanged ? current.recents : recents,
           isLoading: true,
           tabs,
           activeTabIndex

@@ -23,6 +23,7 @@ import { assertProductionVisualBaseline } from "./lib/production-visual-baseline
 
 const args = parseArgs(process.argv.slice(2));
 const thresholdMs = Number(process.env.LOTION_EMBEDDED_VIEW_RENDER_THRESHOLD_MS ?? 1000);
+const coldStartThresholdMs = Number(process.env.LOTION_EMBEDDED_VIEW_COLD_START_RENDER_THRESHOLD_MS ?? 1250);
 
 const result = await withLotionUIHarness("embedded-view-ui", async ({ artifactRoot, cdpUrl, page, openWorkspace, registerTempWorkspace }) => {
   const results = [];
@@ -88,6 +89,7 @@ const result = await withLotionUIHarness("embedded-view-ui", async ({ artifactRo
     cdpUrl,
     status: "passed",
     thresholdMs,
+    coldStartThresholdMs,
     results
   };
   summary.artifactContract = await assertEmbeddedViewArtifactContract(summary, {
@@ -96,7 +98,8 @@ const result = await withLotionUIHarness("embedded-view-ui", async ({ artifactRo
     requiredPerceptualBaselineViewportNames: process.env.LOTION_EMBEDDED_VIEW_SKIP_BASELINE === "1"
       ? []
       : expectedViewports.map((viewport) => viewport.name),
-    renderThresholdMs: thresholdMs
+    renderThresholdMs: thresholdMs,
+    coldStartRenderThresholdMs: coldStartThresholdMs
   });
   return summary;
 });

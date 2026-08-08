@@ -19,7 +19,8 @@ const stats = {
   markdownFiles: 0,
   urlFields: 0,
   searchFiles: 0,
-  ignoredEmptyScaffolds: 0
+  ignoredEmptyScaffolds: 0,
+  omittedGeneratedDataFiles: 0
 };
 
 assert(existsSync(join(workspaceRoot, "lotion.json")), `workspace has lotion.json: ${workspaceRoot}`);
@@ -43,11 +44,20 @@ for (const db of dbDirs) {
   }
   stats.databases += 1;
   assert(hasSchema, `${db.rel}/schema.json exists`);
-  assert(hasData, `${db.rel}/data.csv exists`);
-  if (!hasSchema || !hasData) continue;
+  if (!hasSchema) {
+    assert(hasData, `${db.rel}/data.csv exists`);
+    continue;
+  }
 
   const schema = await readJson(schemaPath);
   dbDirById.set(schema.id, db);
+  if (!hasData && args.allowMissingGeneratedData.has(schema.id)) {
+    stats.omittedGeneratedDataFiles += 1;
+    continue;
+  }
+  assert(hasData, `${db.rel}/data.csv exists`);
+  if (!hasData) continue;
+
   const fieldIds = new Set();
   for (const field of schema.fields ?? []) {
     if (!field.id) report(`${db.rel}/schema.json: field without id`);
@@ -196,7 +206,8 @@ console.log(
     `${stats.missingBodyFiles} lazy page bodies`,
     `${stats.urlFields} URL fields`,
     `${stats.searchFiles} searchable files`,
-    `${stats.ignoredEmptyScaffolds} empty database scaffolds ignored`
+    `${stats.ignoredEmptyScaffolds} empty database scaffolds ignored`,
+    `${stats.omittedGeneratedDataFiles} generated data files omitted`
   ].join(" ")
 );
 
@@ -205,7 +216,8 @@ function parseArgs(argv) {
     workspace: null,
     expectQueries: [],
     expectDatabaseTitleContains: [],
-    forbidSystemPageSourceFragments: []
+    forbidSystemPageSourceFragments: [],
+    allowMissingGeneratedData: new Set()
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -221,6 +233,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--forbid-system-page-source-fragment") {
       parsed.forbidSystemPageSourceFragments.push(value);
+      index += 1;
+    } else if (arg === "--allow-missing-generated-data") {
+      parsed.allowMissingGeneratedData.add(value);
       index += 1;
     } else if (!arg.startsWith("-") && !parsed.workspace) {
       parsed.workspace = arg;

@@ -42,6 +42,7 @@ const result = await withLotionUIHarness("white-theme-ui", async ({ artifactRoot
     await openWorkspace(fixture.root);
     await openPage(page, fixture.pageId);
     await waitForWhiteThemePage(page, fixture.pageTitle);
+    await waitForWhiteThemeRecent(page, fixture.pageTitle);
 
     const scrollState = await stabilizeWhiteThemePage(page);
     const pageState = {
@@ -169,6 +170,14 @@ async function waitForWhiteThemePage(page, pageTitle) {
       editor.textContent?.includes(title)
     );
   }, pageTitle, { timeout: 20_000 });
+}
+
+async function waitForWhiteThemeRecent(page, pageTitle) {
+  await page.waitForFunction((title) => {
+    const matches = Array.from(document.querySelectorAll(".sidebar .nav-item"))
+      .filter((item) => item.textContent?.includes(title));
+    return matches.length >= 2;
+  }, pageTitle, { timeout: 8_000 });
 }
 
 async function stabilizeWhiteThemePage(page) {

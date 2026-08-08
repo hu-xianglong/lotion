@@ -867,6 +867,10 @@ async function captureSecondarySnapshot({ artifactRoot, collapsed, expanded, fix
         }
       `;
       document.head.appendChild(style);
+      for (const detail of document.querySelectorAll("[data-page-history-snapshot] .page-history-version small")) {
+        detail.setAttribute("data-page-history-snapshot-text", detail.textContent ?? "");
+        detail.textContent = (detail.textContent ?? "").replace(/\b[0-9a-f]{7,40}\b/gi, "0000000");
+      }
     });
     await stabilizeHistorySnapshot(page, historyPanel);
     const history = await collectHistoryVisibleState(page);
@@ -904,6 +908,10 @@ async function captureSecondarySnapshot({ artifactRoot, collapsed, expanded, fix
       else node.setAttribute("data-page-history-snapshot", previous);
     }, previousSnapshotAttribute);
     await page.evaluate(() => {
+      for (const detail of document.querySelectorAll("[data-page-history-snapshot-text]")) {
+        detail.textContent = detail.getAttribute("data-page-history-snapshot-text") ?? "";
+        detail.removeAttribute("data-page-history-snapshot-text");
+      }
       for (const style of document.querySelectorAll("[data-page-history-snapshot-style]")) style.remove();
     });
     await content.evaluate((node, style) => {

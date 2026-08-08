@@ -9,16 +9,25 @@
   },
   "image": {
     "path": "test/baselines/production-visual/advanced-search-stale-results-desktop.png",
-    "sha256": "637ee115c2b57498279a9b931247e2c7359bcdeb106d78aded0c5dabd1d50fa3",
-    "width": 822,
-    "height": 650
+    "sha256": "e63ab4e3b50ffa2c3d852daaab09a39b0bc486e5d177a3a218a27aa3549b2ab0",
+    "width": 811,
+    "height": 672
   },
   "comparison": {
     "threshold": 0.1,
     "includeAA": false,
     "maxDiffPixels": 0,
-    "maxDiffRatio": 0
+    "maxDiffRatio": 0,
+    "ignoredRegions": [
+      {
+        "x": 200,
+        "y": 650,
+        "width": 430,
+        "height": 22,
+        "reason": "the panel shadow composites against live workspace content below the captured surface"
+      }
+    ]
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

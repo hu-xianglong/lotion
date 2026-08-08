@@ -238,12 +238,18 @@ export class EntitiesDatabaseService {
     };
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.unsubscribeFileMutations();
-    this.resetBacklinkWatchers();
     if (this.backlinkRefreshTimer) clearTimeout(this.backlinkRefreshTimer);
     this.backlinkRefreshTimer = undefined;
-    this.backlinkUpdateListeners.clear();
+    this.pendingBacklinkPaths.clear();
+    const pendingRefresh = this.backlinkRefreshPromise;
+    try {
+      if (pendingRefresh) await pendingRefresh;
+    } finally {
+      this.resetBacklinkWatchers();
+      this.backlinkUpdateListeners.clear();
+    }
   }
 
   backlinkCacheStats(): BacklinkCacheStats | null {

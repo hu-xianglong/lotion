@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/database-interaction-settings-wide.png",
-    "sha256": "88d3a557a23357b900b79f9871c8a70f2988df98a76058c3b53e4688a7e44429",
+    "sha256": "b1c4d4f875d0757986b1b3a0b2bb93e1c640fbacfaad8f409e38c79e784f522d",
     "width": 1728,
     "height": 1100
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

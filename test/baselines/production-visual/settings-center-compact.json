@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/settings-center-compact.png",
-    "sha256": "c07f2c17fbed9f06c717c393d312b3c6bb1b00179085ff0fb1669d47282e8e48",
+    "sha256": "e65ca20ef8c67b68bbb4d12eb8293e3c5452bdff88e06fac181173c8155cbc29",
     "width": 744,
-    "height": 569
+    "height": 568
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

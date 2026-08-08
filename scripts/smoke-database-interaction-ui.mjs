@@ -291,30 +291,55 @@ async function captureInteractionSnapshot({ artifactRoot, page, phase, surface, 
       : '[role="dialog"][aria-label="Sort"]', { timeout: 8_000 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.waitForTimeout(50);
-  const completeSurfaceState = await collectInteractionSurfaceState({ page, phase, surface, table });
-  assertCompleteInteractionSurfaceState(completeSurfaceState, viewport.name, phase);
-  const snapshot = await captureElementSnapshot({
-    artifactRoot,
-    locator: page.locator("body"),
-    metadata: { completeSurfaceState, phase, viewport: viewport.name },
-    name: `database-interaction-${phase.replace(/-(scope-)?menu$/, "")}-${viewport.name}`,
-    page,
-    viewport,
-    waitForStable: false
-  });
-  const baselinePolicy = phase === "settings-scope-menu" ? {
-    compact: "test/baselines/production-visual/database-interaction-settings-compact.json",
-    desktop: "test/baselines/production-visual/database-interaction-settings-desktop.json",
-    wide: "test/baselines/production-visual/database-interaction-settings-wide.json"
-  }[viewport.name] : null;
-  const perceptualBaseline = baselinePolicy && process.env.LOTION_DATABASE_INTERACTION_SKIP_BASELINE !== "1"
-    ? await assertProductionVisualBaseline({
-      actualPath: snapshot.imagePath,
+  await normalizeInteractionSnapshotTelemetry(page);
+  try {
+    const completeSurfaceState = await collectInteractionSurfaceState({ page, phase, surface, table });
+    assertCompleteInteractionSurfaceState(completeSurfaceState, viewport.name, phase);
+    const snapshot = await captureElementSnapshot({
       artifactRoot,
-      policyPath: baselinePolicy
-    })
-    : null;
-  return { ...snapshot, completeSurfaceState, perceptualBaseline };
+      locator: page.locator("body"),
+      metadata: { completeSurfaceState, phase, viewport: viewport.name },
+      name: `database-interaction-${phase.replace(/-(scope-)?menu$/, "")}-${viewport.name}`,
+      page,
+      viewport,
+      waitForStable: false
+    });
+    const baselinePolicy = phase === "settings-scope-menu" ? {
+      compact: "test/baselines/production-visual/database-interaction-settings-compact.json",
+      desktop: "test/baselines/production-visual/database-interaction-settings-desktop.json",
+      wide: "test/baselines/production-visual/database-interaction-settings-wide.json"
+    }[viewport.name] : null;
+    const perceptualBaseline = baselinePolicy && process.env.LOTION_DATABASE_INTERACTION_SKIP_BASELINE !== "1"
+      ? await assertProductionVisualBaseline({
+        actualPath: snapshot.imagePath,
+        artifactRoot,
+        policyPath: baselinePolicy
+      })
+      : null;
+    return { ...snapshot, completeSurfaceState, perceptualBaseline };
+  } finally {
+    await restoreInteractionSnapshotTelemetry(page);
+  }
+}
+
+async function normalizeInteractionSnapshotTelemetry(page) {
+  await page.evaluate(() => {
+    for (const rowCount of document.querySelectorAll(".table-row-count")) {
+      const text = rowCount.textContent ?? "";
+      if (!/loaded in \d+(?:\.\d+)? ms/i.test(text)) continue;
+      rowCount.setAttribute("data-interaction-original-text", text);
+      rowCount.textContent = text.replace(/loaded in \d+(?:\.\d+)? ms/i, "loaded in 0 ms");
+    }
+  });
+}
+
+async function restoreInteractionSnapshotTelemetry(page) {
+  await page.evaluate(() => {
+    for (const rowCount of document.querySelectorAll("[data-interaction-original-text]")) {
+      rowCount.textContent = rowCount.getAttribute("data-interaction-original-text") ?? rowCount.textContent;
+      rowCount.removeAttribute("data-interaction-original-text");
+    }
+  });
 }
 
 async function collectInteractionSurfaceState({ page, phase, surface, table }) {

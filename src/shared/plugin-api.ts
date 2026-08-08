@@ -515,6 +515,7 @@ export interface ModalOptions<T> {
   title: string;
   render(el: HTMLElement, resolve: (value: T | null) => void): Disposable | void;
   width?: number;
+  className?: string;
 }
 
 export interface ContextMenuItem {

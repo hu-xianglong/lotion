@@ -8,6 +8,7 @@ import { useLotionActions, type LotionActions } from "../../context/lotion-actio
 import { useI18n, type Locale } from "../../lib/i18n";
 import { useSettings } from "../../lib/settings";
 import { pluginHost } from "../../plugin-host";
+import { ensureBuiltinPlugins } from "../../plugin-host/builtin-loader";
 import { shortcutMap } from "../../../shared/shortcuts";
 import { tagManageKind } from "../../state/app-store";
 
@@ -212,7 +213,11 @@ export function GlobalSearchPanel({ pages, databases, recents, initialPattern = 
   const actions = useLotionActions();
   const { locale } = useI18n();
   const { shortcutOverrides } = useSettings();
-  const commandIndex = useMemo(() => buildCommandIndex(actions, locale), [actions, locale]);
+  const [pluginRevision, setPluginRevision] = useState(0);
+  const commandIndex = useMemo(
+    () => buildCommandIndex(actions, locale),
+    [actions, locale, pluginRevision]
+  );
   const shortcutsById = useMemo(() => shortcutMap(shortcutOverrides), [shortcutOverrides]);
   const [pattern, setPattern] = useState(initialPattern);
   const [settledPattern, setSettledPattern] = useState("");
@@ -234,6 +239,21 @@ export function GlobalSearchPanel({ pages, databases, recents, initialPattern = 
 
   useEffect(() => {
     inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refreshCommands = () => {
+      if (active) setPluginRevision((revision) => revision + 1);
+    };
+    window.addEventListener("lotion:builtin-plugins-ready", refreshCommands);
+    void ensureBuiltinPlugins().then(refreshCommands).catch((error) => {
+      console.error("[lotion] failed to prepare built-in search commands:", error);
+    });
+    return () => {
+      active = false;
+      window.removeEventListener("lotion:builtin-plugins-ready", refreshCommands);
+    };
   }, []);
 
   useEffect(() => {

@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/white-theme-page-desktop.png",
-    "sha256": "9689e6cc227de66a550d0450c1fe8aa269e98f050555c78f316267ef41c17f1f",
+    "sha256": "4c5ee9f3394e36dd8c86c7f4799617d34ef07187b09f9dd1c4a51832eba4d1ca",
     "width": 1440,
     "height": 1000
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

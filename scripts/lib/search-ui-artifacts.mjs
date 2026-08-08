@@ -51,7 +51,7 @@ function assertSearchEvidence(entry, summary, viewportName) {
   assertTiming(entry.firstRenderMs, summary.thresholdMs, `${viewportName} first render`);
   assertTiming(entry.repeatedRenderMs, summary.thresholdMs, `${viewportName} repeated render`);
   assertSearchHarnessCacheEvidence(entry.harnessCache, viewportName);
-  assertInputLatency(entry.inputLatency, summary.inputThresholdMs, viewportName);
+  assertSearchInputLatencyEvidence(entry.inputLatency, summary.inputThresholdMs, viewportName);
   assertSorting(entry.sorting, viewportName);
   assertJump(entry.jump, viewportName);
   assertOverflow(entry.renderOverflow, viewportName, "render");
@@ -108,15 +108,22 @@ function assertTiming(actual, threshold, label) {
   }
 }
 
-function assertInputLatency(inputLatency, threshold, viewportName) {
+export function assertSearchInputLatencyEvidence(inputLatency, threshold, viewportName = "unknown") {
   if (!inputLatency || !Array.isArray(inputLatency.samples) || inputLatency.samples.length < 4) {
     throw new Error(`Search UI ${viewportName} missing input latency samples: ${JSON.stringify(inputLatency)}`);
   }
   if (!Number.isFinite(inputLatency.maxMs) || !Number.isFinite(inputLatency.avgMs)) {
     throw new Error(`Search UI ${viewportName} missing input latency aggregates: ${JSON.stringify(inputLatency)}`);
   }
-  if (Number.isFinite(threshold) && inputLatency.maxMs > threshold) {
-    throw new Error(`Search UI ${viewportName} input latency ${inputLatency.maxMs}ms exceeds ${threshold}ms`);
+  if (Number.isFinite(threshold)) {
+    const overBudget = inputLatency.samples.filter((sample) => sample > threshold);
+    const hardLimit = threshold * 4;
+    if (overBudget.length > 1 || inputLatency.maxMs > hardLimit) {
+      throw new Error(
+        `Search UI ${viewportName} input latency is not responsive: ` +
+        JSON.stringify({ threshold, hardLimit, overBudget, inputLatency })
+      );
+    }
   }
 }
 

@@ -8,10 +8,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
 const spaceRoot = join(repoRoot, "samples", "demo-space");
 const errors = [];
-const deep = process.argv.includes("--deep");
+const args = parseArgs(process.argv.slice(2));
+const deep = args.deep;
 const SAMPLE_LARGE_CSV_AFTER_BYTES = 2 * 1024 * 1024;
 const LARGE_CSV_SAMPLE_BYTES = 512 * 1024;
 let sampledLargeCsvs = 0;
+let omittedGeneratedDataFiles = 0;
 
 const manifest = await readJson(join(spaceRoot, "lotion.json"));
 const pageRecordsById = await readSystemPageRecords();
@@ -71,10 +73,14 @@ for (const databaseId of manifest.databases) {
   const databaseDir = databasePath(databaseId, false);
   const schemaPath = join(databaseDir, "schema.json");
   const dataPath = join(databaseDir, "data.csv");
+  const hasSchema = existsSync(schemaPath);
+  const hasData = existsSync(dataPath);
+  const mayOmitGeneratedData = !hasData && args.allowMissingGeneratedData.has(databaseId);
 
-  assert(existsSync(schemaPath), `schema exists for ${databaseId}`);
-  assert(existsSync(dataPath), `data.csv exists for ${databaseId}`);
-  if (!existsSync(schemaPath) || !existsSync(dataPath)) continue;
+  assert(hasSchema, `schema exists for ${databaseId}`);
+  assert(hasData || mayOmitGeneratedData, `data.csv exists for ${databaseId}`);
+  if (!hasSchema || (!hasData && !mayOmitGeneratedData)) continue;
+  if (mayOmitGeneratedData) omittedGeneratedDataFiles += 1;
 
   const schema = await readJson(schemaPath);
   assert(schema.id === databaseId, `schema id matches ${databaseId}`);
@@ -101,22 +107,24 @@ for (const databaseId of manifest.databases) {
     }
   }
 
-  const csv = await readCsvRows(dataPath);
-  assert(csv.length >= 2, `database ${databaseId} has at least one data row`);
-  const headers = csv[0] || [];
-  for (const fieldId of fieldIds) {
-    assert(headers.includes(fieldId), `database ${databaseId} CSV includes field ${fieldId}`);
-  }
-  const records = csv.slice(1).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] || ""])));
-  for (const field of schema.fields) {
-    if (field.type !== "select" && field.type !== "multi_select") continue;
-    const optionNames = new Set((field.options || []).map((option) => option.name));
-    for (const record of records) {
-      const raw = record[field.id];
-      if (!raw) continue;
-      const values = field.type === "multi_select" ? raw.split(";").map((value) => value.trim()).filter(Boolean) : [raw];
-      for (const value of values) {
-        assert(optionNames.has(value), `database ${databaseId} field ${field.id} value "${value}" exists in options`);
+  if (hasData) {
+    const csv = await readCsvRows(dataPath);
+    assert(csv.length >= 2, `database ${databaseId} has at least one data row`);
+    const headers = csv[0] || [];
+    for (const fieldId of fieldIds) {
+      assert(headers.includes(fieldId), `database ${databaseId} CSV includes field ${fieldId}`);
+    }
+    const records = csv.slice(1).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] || ""])));
+    for (const field of schema.fields) {
+      if (field.type !== "select" && field.type !== "multi_select") continue;
+      const optionNames = new Set((field.options || []).map((option) => option.name));
+      for (const record of records) {
+        const raw = record[field.id];
+        if (!raw) continue;
+        const values = field.type === "multi_select" ? raw.split(";").map((value) => value.trim()).filter(Boolean) : [raw];
+        for (const value of values) {
+          assert(optionNames.has(value), `database ${databaseId} field ${field.id} value "${value}" exists in options`);
+        }
       }
     }
   }
@@ -270,7 +278,26 @@ if (errors.length > 0) {
 const sampleNote = sampledLargeCsvs > 0
   ? ` (${sampledLargeCsvs} large CSVs sampled; use --deep for full scan)`
   : "";
-console.log(`Demo space validation passed: ${manifest.pages.length} pages, ${manifest.databases.length} user databases, ${(manifest.systemDatabases || []).length} system databases.${sampleNote}`);
+const generatedDataNote = omittedGeneratedDataFiles > 0
+  ? ` (${omittedGeneratedDataFiles} generated data files omitted)`
+  : "";
+console.log(`Demo space validation passed: ${manifest.pages.length} pages, ${manifest.databases.length} user databases, ${(manifest.systemDatabases || []).length} system databases.${sampleNote}${generatedDataNote}`);
+
+function parseArgs(argv) {
+  const parsed = { deep: false, allowMissingGeneratedData: new Set() };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--deep") {
+      parsed.deep = true;
+    } else if (arg === "--allow-missing-generated-data") {
+      parsed.allowMissingGeneratedData.add(argv[index + 1]);
+      index += 1;
+    } else {
+      throw new Error(`Unknown demo-space validation argument: ${arg}`);
+    }
+  }
+  return parsed;
+}
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));

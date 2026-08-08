@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/row-page-property-panel-wide.png",
-    "sha256": "4e2bc5ffbd7892665e81acbf9432dfdd2a2da3942d63480c62fc2c0eeb446f1b",
+    "sha256": "7a2d62593f0903ba6a713cf51afaf284b110186acb4e5b6affc625a8be4c0d42",
     "width": 712,
     "height": 513
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/design-system-compact.png",
-    "sha256": "9548751ffe8c5832ccf1e0112ee338fed5fd2ce592f4e8c7b60dcacf5f1db629",
+    "sha256": "04b1caa629b2bfd282bf180ef8f8e65bfcd2577f0537fc2b5c2a5835a36434eb",
     "width": 733,
     "height": 1986
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

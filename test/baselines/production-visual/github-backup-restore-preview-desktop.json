@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/github-backup-restore-preview-desktop.png",
-    "sha256": "e1da97367d2e4ce39f71a4197574013617a25d33d5e9c50b957ea5408bccace8",
+    "sha256": "07a0c1d27a145365d85ae2b314f0a4f296de9bf17fea6e0d8c9fe33b2e0bdf68",
     "width": 960,
-    "height": 907
+    "height": 906
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

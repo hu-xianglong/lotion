@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/search-ai-chat-handoff-desktop.png",
-    "sha256": "49200d2a978f52f4631887ad8647558fae710ef2a63e90a49c7abc58ba6f30a2",
+    "sha256": "75eb00cd4b6da3b4a0be28e3a6b135a97d3a537d8a7f6c8744ffbce06e11d3d5",
     "width": 880,
     "height": 368
   },
@@ -17,8 +17,17 @@
     "threshold": 0.1,
     "includeAA": false,
     "maxDiffPixels": 0,
-    "maxDiffRatio": 0
+    "maxDiffRatio": 0,
+    "ignoredRegions": [
+      {
+        "x": 874,
+        "y": 364,
+        "width": 6,
+        "height": 4,
+        "reason": "the rounded panel edge composites against live workspace pixels at the bottom-right corner"
+      }
+    ]
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

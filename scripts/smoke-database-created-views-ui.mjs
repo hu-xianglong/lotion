@@ -244,6 +244,7 @@ async function runCreatedViewsSmoke({ artifactRoot, fixture, page, viewport }) {
     retryCommittedExactlyOnce: retryMutation.filterValue === INJECTED_FAILURE_VALUE
   };
 
+  await waitForIdlePopover(page, ".filter-popover", "filter retry");
   await page.locator(".filter-popover").press("Escape");
   await page.locator(".filter-popover").waitFor({ state: "detached", timeout: 8_000 });
   const beforeSortFailure = await page.evaluate(async ({ databaseId, viewId }) => {
@@ -322,6 +323,7 @@ async function runCreatedViewsSmoke({ artifactRoot, fixture, page, viewport }) {
     retryCommittedExactlyOnce: sortRetryMutation.direction === "asc"
   };
 
+  await waitForIdlePopover(page, ".sort-popover", "sort retry");
   await sortPopover.press("Escape");
   await sortPopover.waitFor({ state: "detached", timeout: 8_000 });
   const beforeViewSettingsFailure = await page.evaluate(async ({ databaseId, viewId }) => {
@@ -692,6 +694,12 @@ async function captureCreatedViewsSnapshot({ artifactRoot, evidence, page, table
       }
     `;
     document.head.appendChild(style);
+    for (const rowCount of document.querySelectorAll(".table-row-count")) {
+      const text = rowCount.textContent ?? "";
+      if (!/loaded in \d+(?:\.\d+)? ms/i.test(text)) continue;
+      rowCount.setAttribute("data-created-views-original-text", text);
+      rowCount.textContent = text.replace(/loaded in \d+(?:\.\d+)? ms/i, "loaded in 0 ms");
+    }
   });
   try {
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -728,6 +736,10 @@ async function captureCreatedViewsSnapshot({ artifactRoot, evidence, page, table
   } finally {
     await page.evaluate(() => {
       for (const style of document.querySelectorAll("[data-created-views-snapshot-style]")) style.remove();
+      for (const rowCount of document.querySelectorAll("[data-created-views-original-text]")) {
+        rowCount.textContent = rowCount.getAttribute("data-created-views-original-text") ?? rowCount.textContent;
+        rowCount.removeAttribute("data-created-views-original-text");
+      }
     });
   }
 }
@@ -751,6 +763,10 @@ async function collectCreatedViewsCompleteSurfaceState(table) {
       const style = getComputedStyle(node);
       return { opacity: Number(style.opacity), visibility: style.visibility };
     };
+    const rowText = (row) => [
+      row?.textContent ?? "",
+      ...Array.from(row?.querySelectorAll("input, textarea") ?? []).map((input) => input.value).filter(Boolean)
+    ].join(" ").replace(/\s+/g, " ").trim();
     const header = surface.querySelector(".page-header");
     const title = header?.querySelector(".database-title-wrap h1");
     const subtitle = header?.querySelector(".database-subtitle");
@@ -797,7 +813,7 @@ async function collectCreatedViewsCompleteSurfaceState(table) {
       subtitleText: subtitle?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       visibleTabTexts: tabs.map((candidate) => candidate.textContent?.replace(/\s+/g, " ").trim() ?? ""),
       activeTabText: activeTab?.textContent?.replace(/\s+/g, " ").trim() ?? "",
-      rowTexts: dataRows.map((row) => row.textContent?.replace(/\s+/g, " ").trim() ?? ""),
+      rowTexts: dataRows.map(rowText),
       rowCountText: rowCount?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       renderedDataRowCount: dataRows.length,
       filterPopoverCount: document.querySelectorAll(".filter-popover").length,
@@ -936,10 +952,14 @@ async function waitForFirstVisibleRowTitle(page, expectedTitle) {
       const rows = Array.from(document.querySelectorAll(".database-table tbody tr"))
         .filter((row) => !row.classList.contains("virtual-spacer") && !row.classList.contains("add-row"));
       const first = rows[0];
+      const editableValues = first
+        ? Array.from(first.querySelectorAll("input, textarea")).map((input) => input.value).filter(Boolean)
+        : [];
+      const firstText = [first?.textContent ?? "", ...editableValues].join(" ").replace(/\s+/g, " ").trim();
       return {
-        firstText: first?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        firstText,
         rowCount: rows.length,
-        ok: Boolean(first?.textContent?.includes(title))
+        ok: firstText.includes(title)
       };
     },
     expectedTitle,
@@ -958,6 +978,22 @@ async function pollPageValue(page, evaluate, arg, isReady, label, timeout = 8_00
     await page.waitForTimeout(100);
   }
   throw new Error(`${label} timed out. Last value: ${JSON.stringify(lastValue)}`);
+}
+
+async function waitForIdlePopover(page, selector, label) {
+  await pollPageValue(
+    page,
+    (targetSelector) => {
+      const popover = document.querySelector(targetSelector);
+      return {
+        exists: Boolean(popover),
+        busy: popover?.getAttribute("aria-busy") ?? null
+      };
+    },
+    selector,
+    (value) => value?.exists === true && value.busy === "false",
+    `${label} popover idle`
+  );
 }
 
 async function createDatabaseCreatedViewsFixture(viewportName) {

@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/settings-center-desktop.png",
-    "sha256": "4619ccf2558ad487371616d220ca42b18f25ae9ba6e39494b151ed62f27fa27a",
+    "sha256": "699855790c1d4e60e74c6a91020b92f4e88cab12229edec835fae3fb93fa2854",
     "width": 912,
-    "height": 535
+    "height": 534
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

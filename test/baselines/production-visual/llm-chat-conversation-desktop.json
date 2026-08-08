@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/llm-chat-conversation-desktop.png",
-    "sha256": "30670143759a8d85aa0ad42dfbafab23f92e7089eca72eadbdd8aca83ddc326b",
+    "sha256": "5119b94bee489bf5f3cfe829284b430b414593d8b5759338d31a2a6714676e92",
     "width": 560,
     "height": 969
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

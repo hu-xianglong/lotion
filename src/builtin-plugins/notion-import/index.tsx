@@ -41,6 +41,7 @@ function openNotionImportModal(ctx: PluginContext): Promise<unknown | null> {
   return ctx.ui.modal({
     title: "Import from Notion",
     width: 760,
+    className: "notion-dialog",
     render: (el, resolve) => {
       const root = createRoot(el);
       root.render(<NotionImportPanel onClose={() => resolve(null)} />);

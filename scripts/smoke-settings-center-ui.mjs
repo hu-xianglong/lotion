@@ -30,15 +30,22 @@ const result = await withLotionUIHarness("settings-center-ui", async ({ artifact
 
     await openSettingsFromSidebar(page);
     const initial = await assertSettingsCenter(page, viewport.name, "General");
-    const dateTimeDefaults = await verifyDateTimeDefaultSettings(page, viewport.name);
-    const dateTimeSnapshot = await captureElementSnapshot({
-      artifactRoot,
-      locator: page.locator('[data-testid="settings-center"]').first(),
-      metadata: { dateTimeDefaults, phase: "global-date-time-defaults", viewport: viewport.name },
-      name: `settings-center-date-time-${viewport.name}`,
-      page,
-      viewport
-    });
+    const originalDateTimeDefaults = await readDateTimeDefaultSettings(page);
+    let dateTimeDefaults;
+    let dateTimeSnapshot;
+    try {
+      dateTimeDefaults = await verifyDateTimeDefaultSettings(page, viewport.name);
+      dateTimeSnapshot = await captureElementSnapshot({
+        artifactRoot,
+        locator: page.locator('[data-testid="settings-center"]').first(),
+        metadata: { dateTimeDefaults, phase: "global-date-time-defaults", viewport: viewport.name },
+        name: `settings-center-date-time-${viewport.name}`,
+        page,
+        viewport
+      });
+    } finally {
+      await restoreDateTimeDefaultSettings(page, originalDateTimeDefaults, viewport.name);
+    }
     const searchJump = await verifySettingsSearchJump(page, viewport.name);
     const searchAiDeepLink = await verifySearchAiSettingsDeepLink(page, viewport.name);
     const importSection = await verifyPluginSettingsSection(page, viewport.name, "Import", ["Latest import report", "Audit imported workspace"]);
@@ -146,6 +153,33 @@ async function verifyDateTimeDefaultSettings(page, viewportName) {
   }
   await assertSettingsGeometry(page, `date-time defaults ${viewportName}`);
   return state;
+}
+
+async function readDateTimeDefaultSettings(page) {
+  const center = page.locator('[data-testid="settings-center"]').first();
+  const dateFormat = center.getByLabel(/Default date format|默认日期格式/);
+  const timeFormat = center.getByLabel(/Default time format|默认时间格式/);
+  await dateFormat.waitFor({ timeout: 8_000 });
+  await timeFormat.waitFor({ timeout: 8_000 });
+  return {
+    dateFormat: await dateFormat.inputValue(),
+    timeFormat: await timeFormat.inputValue()
+  };
+}
+
+async function restoreDateTimeDefaultSettings(page, original, viewportName) {
+  const center = page.locator('[data-testid="settings-center"]').first();
+  await center.getByLabel(/Default date format|默认日期格式/).selectOption(original.dateFormat);
+  await center.getByLabel(/Default time format|默认时间格式/).selectOption(original.timeFormat);
+  await page.waitForFunction(
+    ({ dateFormat, timeFormat }) => (
+      window.localStorage.getItem("lotion.settings.defaultDateFormat") === dateFormat
+      && window.localStorage.getItem("lotion.settings.defaultTimeFormat") === timeFormat
+    ),
+    original,
+    { timeout: 8_000 }
+  );
+  await assertSettingsGeometry(page, `restored date-time defaults ${viewportName}`);
 }
 
 async function verifySettingsSearchJump(page, viewportName) {

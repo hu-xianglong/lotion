@@ -680,14 +680,13 @@ export const DatabaseTable = memo(function DatabaseTable({
     scroller.scrollTop += event.deltaY;
   }
 
-  async function deleteRow(rowId: string, rethrow = false) {
+  async function deleteRow(rowId: string) {
     const title = String(bundle.records.find((record) => String(record.id) === rowId)?.title ?? "Untitled");
     try {
       await cache.deleteRow({ databaseId: bundle.schema.id, rowId });
       setRowRecovery({ rowId, title, status: "deleted" });
     } catch (error) {
       setRowRecovery({ rowId, title, status: "delete-error", error: mutationErrorMessage(error) });
-      if (rethrow) throw error;
     }
   }
 
@@ -1706,7 +1705,7 @@ export const DatabaseTable = memo(function DatabaseTable({
           onDuplicate={async () => { await cache.duplicateRow({ databaseId: bundle.schema.id, rowId: rowMenu.rowId }); }}
           onCopyLink={() => { close(); void navigator.clipboard.writeText(databaseRowLink(bundle.schema.id, rowMenu.rowId)); }}
           onEdit={() => { close(); openRowPage(bundle.schema.id, rowMenu.rowId); }}
-          onDelete={async () => { if (window.confirm(`Delete “${String(record.title ?? "Untitled")}”? You can restore it from Deleted items.`)) await deleteRow(rowMenu.rowId, true); }} />;
+          onDelete={async () => { if (window.confirm(`Delete “${String(record.title ?? "Untitled")}”? You can restore it from Deleted items.`)) await deleteRow(rowMenu.rowId); }} />;
       })()}
 
       {deletedRowsOpen && <DeletedRowsDialog rows={bundle.schema.deletedRows ?? []} onClose={() => setDeletedRowsOpen(false)} onRestore={async (rowId) => { await cache.restoreRow({ databaseId: bundle.schema.id, rowId }); }} onPermanentlyDelete={async (rowId) => { await cache.permanentlyDeleteRow({ databaseId: bundle.schema.id, rowId }); }} />}

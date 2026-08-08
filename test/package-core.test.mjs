@@ -3049,8 +3049,8 @@ test("entity backlinks use a persisted workspace graph cache and invalidate on e
     ), true);
   } finally {
     fileService.watch = originalWatch;
-    entities?.dispose();
-    reloadedEntities?.dispose();
+    await entities?.dispose();
+    await reloadedEntities?.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -3107,12 +3107,14 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
     let updated = awaitBacklinkUpdate();
     const unlinkedMarkdown = "# External Source\n\nThe external link was removed.\n";
     await writeFile(sourceAbsolutePath, unlinkedMarkdown, "utf8");
+    fileService.noteExternalMutation(sourceAbsolutePath);
     await updated;
     assert.equal((await entities.backlinks(target.meta.id)).some((backlink) => backlink.source.entityId === source.meta.id), false);
     assert.deepEqual([...new Set(markdownRefreshReads)], [sourceAbsolutePath], "external refresh should parse only the changed Markdown source");
 
     updated = awaitBacklinkUpdate();
     await writeFile(sourceAbsolutePath, linkedMarkdown, "utf8");
+    fileService.noteExternalMutation(sourceAbsolutePath);
     await updated;
     assert.equal((await entities.backlinks(target.meta.id)).some((backlink) => backlink.source.entityId === source.meta.id), true);
 
@@ -3120,7 +3122,7 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
     const pagesCsvBytesBeforeRecovery = await readFile(pagesCsvAbsolutePath);
     stopWatching();
     stopWatching = undefined;
-    entities.dispose();
+    await entities.dispose();
     entities = undefined;
     await writeFile(join(workspaceRoot, ".lotion-cache", "backlinks.json"), "{corrupt derived cache", "utf8");
     restartedEntities = new EntitiesDatabaseService(workspace);
@@ -3130,8 +3132,8 @@ test("entity backlinks incrementally refresh external Markdown edits and rebuild
   } finally {
     if (originalReadText) fileService.readText = originalReadText;
     stopWatching?.();
-    entities?.dispose();
-    restartedEntities?.dispose();
+    await entities?.dispose();
+    await restartedEntities?.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });

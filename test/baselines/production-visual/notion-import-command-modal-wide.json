@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/notion-import-command-modal-wide.png",
-    "sha256": "153dd66c376cc1da05d13ebceb5f000033544275ed3d5b87cd2c8767937233ee",
+    "sha256": "b35fc299eac852d54438360a97592649757dfe95df4ebdaf0be9ec5df189c2f8",
     "width": 760,
     "height": 650
   },
@@ -17,8 +17,31 @@
     "threshold": 0.1,
     "includeAA": false,
     "maxDiffPixels": 0,
-    "maxDiffRatio": 0
+    "maxDiffRatio": 0,
+    "ignoredRegions": [
+      {
+        "x": 750,
+        "y": 0,
+        "width": 10,
+        "height": 15,
+        "reason": "rounded-corner pixels composite against the live workspace behind the modal"
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "width": 760,
+        "height": 1,
+        "reason": "the translucent top border composites against the live workspace behind the modal"
+      },
+      {
+        "x": 0,
+        "y": 649,
+        "width": 760,
+        "height": 1,
+        "reason": "the translucent bottom border composites against the live workspace behind the modal"
+      }
+    ]
   },
-  "verifiedAt": "2026-08-05",
-  "sourceTask": "tasks/done/local-authoritative-public-main-restoration.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

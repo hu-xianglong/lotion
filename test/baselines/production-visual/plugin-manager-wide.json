@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/plugin-manager-wide.png",
-    "sha256": "c263a1d5f402c402e659cf137b130b9e55a2cba5cb381b7f2de02d7dd771a483",
+    "sha256": "623754027509c35c2e06672fd84d8ae5fa68215f2148dd0ebb53899098c08952",
     "width": 912,
-    "height": 2259
+    "height": 2306
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

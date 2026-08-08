@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/search-ai-chat-handoff-compact.png",
-    "sha256": "bceb7a9ce5fb6d4b39a61647213d2ef0d70b9dedd2545c8f256f226b510ebcc1",
+    "sha256": "30ce6c2565b416031724b374c5743165fa30f18cbb05b82bc9c85133817e6ecb",
     "width": 880,
     "height": 368
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

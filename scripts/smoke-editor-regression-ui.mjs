@@ -3229,6 +3229,11 @@ async function assertDirectClickOpensLinkAndBlankClickEdits(page, fixture, optio
   const blankPoint = await blankPointAfterText(page, options.visibleText);
   await page.mouse.click(blankPoint.x, blankPoint.y);
   await assertEditorFocused(page, `${options.label} blank-space click focus`);
+  await nextAnimationFrame(page);
+  const blankClickOpenRequests = await readCapturedOpenRequests(page, capture);
+  if (blankClickOpenRequests.length !== before.length) {
+    throw new Error(`${options.label} blank-space click unexpectedly opened a link: ${JSON.stringify(blankClickOpenRequests)}`);
+  }
   await page.keyboard.type(options.editToken);
   await waitForEditorText(page, options.editToken, `${options.label} edited token`);
   const markdown = await waitForPageMarkdown(page, fixture.mainPageId, options.editToken, `${options.label} edit autosave`);
@@ -6196,6 +6201,7 @@ async function textPoint(page, text, options = {}) {
 
 async function blankPointAfterText(page, text) {
   return page.evaluate((needle) => {
+    const linkSelector = ".cm-md-link, .cm-md-url, .cm-md-link-icon, [data-md-url]";
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
@@ -6209,14 +6215,29 @@ async function blankPointAfterText(page, text) {
       const line = node.parentElement?.closest(".cm-line");
       const lineRect = line?.getBoundingClientRect();
       if (!lineRect || !textRect.width || !textRect.height) continue;
-      const x = Math.min(lineRect.right - 16, Math.max(textRect.right + 48, lineRect.left + 280));
-      if (x <= textRect.right + 8) {
-        throw new Error(`No blank editable area after ${needle}: ${JSON.stringify({ textRect, lineRect })}`);
+      const y = textRect.top + textRect.height / 2;
+      const candidates = [];
+      for (let x = lineRect.right - 16; x >= textRect.right + 12; x -= 8) {
+        candidates.push(x);
       }
-      return {
-        x,
-        y: textRect.top + textRect.height / 2
-      };
+      for (let x = lineRect.left + 16; x <= textRect.left - 12; x += 8) {
+        candidates.push(x);
+      }
+      for (const x of candidates) {
+        const target = document.elementFromPoint(x, y);
+        if (!target || !line.contains(target) || target.closest(linkSelector)) continue;
+        return { x, y };
+      }
+      const emptyLines = Array.from(document.querySelectorAll(".cm-content .cm-line"))
+        .filter((candidate) => !(candidate.textContent ?? "").trim());
+      for (const emptyLine of emptyLines) {
+        const emptyRect = emptyLine.getBoundingClientRect();
+        const point = { x: emptyRect.left + 12, y: emptyRect.top + emptyRect.height / 2 };
+        const target = document.elementFromPoint(point.x, point.y);
+        if (!target || !emptyLine.contains(target) || target.closest(linkSelector)) continue;
+        return point;
+      }
+      throw new Error(`No non-link editable area near ${needle}: ${JSON.stringify({ textRect, lineRect })}`);
     }
     throw new Error(`Could not locate visible text for blank-space click: ${needle}`);
   }, text);

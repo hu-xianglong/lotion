@@ -78,6 +78,7 @@ export interface LotionCustomerApiOptions {
 
 export interface LotionCustomerApi {
   readonly version: typeof LOTION_CUSTOMER_API_VERSION;
+  dispose(): Promise<void>;
   workspace: {
     createAt(root: string, input?: CreateWorkspaceInput): Promise<SpaceManifest>;
     open(path: string): Promise<SpaceManifest>;
@@ -184,9 +185,15 @@ export function createLotionCustomerApi(options: LotionCustomerApiOptions = {}):
   const entities = new EntitiesDatabaseService(workspace);
   const notion = new NotionImportService(appConfig);
   const metrics = new LotionApiMetricsRecorder();
+  let disposed = false;
 
   const api: LotionCustomerApi = {
     version: LOTION_CUSTOMER_API_VERSION,
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      await entities.dispose();
+    },
     workspace: {
       createAt: (root, input) => workspace.createAt(root, input),
       open: (path) => workspace.open(path),

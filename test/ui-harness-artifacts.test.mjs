@@ -39,6 +39,7 @@ import { assertRowPagePropertyVisualArtifactContract } from "../scripts/lib/row-
 import { assertSearchAiArtifactContract } from "../scripts/lib/search-ai-artifacts.mjs";
 import {
   assertSearchHarnessCacheEvidence,
+  assertSearchInputLatencyEvidence,
   assertSearchUiArtifactContract
 } from "../scripts/lib/search-ui-artifacts.mjs";
 import { assertSettingsCenterArtifactContract, requiredSettingsCenterCategories } from "../scripts/lib/settings-center-artifacts.mjs";
@@ -1309,6 +1310,24 @@ test("search UI performance harness evidence rejects regenerated synthetic hit s
   }, "desktop"), /regenerated synthetic hits/);
 });
 
+test("search UI input latency tolerates one scheduler spike but rejects sustained stalls", () => {
+  assert.doesNotThrow(() => assertSearchInputLatencyEvidence({
+    samples: [8, 9, 7, 227, 8, 10, 9, 8],
+    maxMs: 227,
+    avgMs: 35.8
+  }, 80, "desktop"));
+  assert.throws(() => assertSearchInputLatencyEvidence({
+    samples: [8, 81, 7, 95, 8, 10, 9, 8],
+    maxMs: 95,
+    avgMs: 28.3
+  }, 80, "desktop"), /not responsive/);
+  assert.throws(() => assertSearchInputLatencyEvidence({
+    samples: [8, 9, 7, 321, 8, 10, 9, 8],
+    maxMs: 321,
+    avgMs: 47.5
+  }, 80, "desktop"), /not responsive/);
+});
+
 test("search UI artifact contract reports missing sort options", async () => {
   const root = await mkdtemp(join(tmpdir(), "lotion-search-ui-contract-fail-"));
   try {
@@ -2035,6 +2054,7 @@ test("embedded view artifact contract validates table screenshots and load-more 
     assert.equal(contract.status, "passed");
     assert.deepEqual(contract.expectedViewportNames, ["desktop", "compact"]);
     assert.equal(contract.renderThresholdMs, 1000);
+    assert.equal(contract.coldStartRenderThresholdMs, 1250);
     assert.equal(contract.maxRenderMs, 120);
     assert.deepEqual(contract.renderTimings, [
       { viewport: "desktop", embeddedViews: 1, rowsPerDatabase: 120, renderMs: 120 },
@@ -2082,7 +2102,48 @@ test("embedded view artifact contract rejects any over-budget non-snapshot scena
         status: "passed",
         results: [entry, slowEntry]
       }, { expectedViewportNames: ["desktop"], renderThresholdMs: 1000 }),
-      /10 embedded views rendered in 1000\.1ms for desktop, exceeding 1000ms/
+      /10 embedded views rendered in 1000\.1ms for desktop, exceeding the steady-state budget of 1000ms/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("embedded view artifact contract gives only the first cold render a separate budget", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lotion-embedded-view-cold-budget-contract-"));
+  try {
+    const imagePath = join(root, "embedded-table.png");
+    const metadataPath = join(root, "embedded-table.json");
+    const entry = embeddedViewContractEntry("desktop", { imagePath, metadataPath });
+    entry.renderMs = 1100;
+    await writeFile(imagePath, "fake screenshot", "utf8");
+    await writeFile(metadataPath, `${JSON.stringify({
+      viewport: { name: "desktop", width: 1440, height: 1000 },
+      metadata: {
+        phase: "embedded-table",
+        embeddedViews: entry.embeddedViews,
+        rowsPerDatabase: entry.rowsPerDatabase,
+        columnOrder: entry.columnOrder,
+        pagination: entry.pagination,
+        completeSurfaceState: entry.visualSnapshot.completeSurfaceState
+      }
+    })}\n`, "utf8");
+
+    const contract = await assertEmbeddedViewArtifactContract({ status: "passed", results: [entry] }, {
+      expectedViewportNames: ["desktop"],
+      renderThresholdMs: 1000,
+      coldStartRenderThresholdMs: 1250
+    });
+    assert.equal(contract.maxRenderMs, 1100);
+
+    entry.renderMs = 1250.1;
+    await assert.rejects(
+      () => assertEmbeddedViewArtifactContract({ status: "passed", results: [entry] }, {
+        expectedViewportNames: ["desktop"],
+        renderThresholdMs: 1000,
+        coldStartRenderThresholdMs: 1250
+      }),
+      /exceeding the cold-start budget of 1250ms/
     );
   } finally {
     await rm(root, { recursive: true, force: true });

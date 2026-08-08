@@ -49,8 +49,37 @@ test("workspace smoke ignores empty scaffolds but rejects partial databases", as
       name: "Draft",
       fields: []
     }), "utf8");
+    await writeFile(join(root, "lotion.json"), JSON.stringify({
+      version: 1,
+      spaceId: "sp_test",
+      name: "Validator fixture",
+      pages: [],
+      databases: ["db_draft"],
+      systemDatabases: []
+    }), "utf8");
     await assert.rejects(
       () => execFileAsync(process.execPath, [validatorPath, root]),
+      (error) => {
+        assert.match(error.stderr, /Draft--db_draft\/data\.csv exists/);
+        return true;
+      }
+    );
+
+    const acceptedGeneratedDatabase = await execFileAsync(process.execPath, [
+      validatorPath,
+      root,
+      "--allow-missing-generated-data",
+      "db_draft"
+    ]);
+    assert.match(acceptedGeneratedDatabase.stdout, /1 generated data files omitted/);
+
+    await assert.rejects(
+      () => execFileAsync(process.execPath, [
+        validatorPath,
+        root,
+        "--allow-missing-generated-data",
+        "db_other"
+      ]),
       (error) => {
         assert.match(error.stderr, /Draft--db_draft\/data\.csv exists/);
         return true;

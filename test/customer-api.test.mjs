@@ -55,20 +55,25 @@ test("package exports expose public customer and plugin APIs", () => {
   );
 });
 
-test("shared customer API contract matches package and renderer public surfaces", () => {
+test("shared customer API contract matches package and renderer public surfaces", async () => {
   const api = createLotionCustomerApi({ appConfig: createMemoryConfig() });
-  assert.deepEqual(publicFunctionShape(api), flattenApiContract(LOTION_PACKAGE_API_CONTRACT));
+  try {
+    assert.deepEqual(publicFunctionShape(api), flattenApiContract(LOTION_PACKAGE_API_CONTRACT));
 
-  const rendererMethods = flattenApiContract(LOTION_RENDERER_API_CONTRACT);
-  assert.equal(rendererMethods.includes("metrics.list"), true);
-  assert.equal(rendererMethods.includes("metrics.summary"), true);
-  assert.equal(rendererMethods.includes("metrics.clear"), true);
-  assert.equal(rendererMethods.includes("debug.openLog"), true);
+    const rendererMethods = flattenApiContract(LOTION_RENDERER_API_CONTRACT);
+    assert.equal(rendererMethods.includes("metrics.list"), true);
+    assert.equal(rendererMethods.includes("metrics.summary"), true);
+    assert.equal(rendererMethods.includes("metrics.clear"), true);
+    assert.equal(rendererMethods.includes("debug.openLog"), true);
 
-  const ipcMethods = new Set(Object.values(LOTION_IPC_CHANNEL_METHOD_IDS));
-  const eventOnlyMethods = new Set(["debug.openLog", "notion.onProgress"]);
-  const missingIpcMappings = rendererMethods.filter((methodId) => !eventOnlyMethods.has(methodId) && !ipcMethods.has(methodId));
-  assert.deepEqual(missingIpcMappings, []);
+    const ipcMethods = new Set(Object.values(LOTION_IPC_CHANNEL_METHOD_IDS));
+    const eventOnlyMethods = new Set(["debug.openLog", "notion.onProgress"]);
+    const missingIpcMappings = rendererMethods.filter((methodId) => !eventOnlyMethods.has(methodId) && !ipcMethods.has(methodId));
+    assert.deepEqual(missingIpcMappings, []);
+  } finally {
+    await api.dispose();
+    await api.dispose();
+  }
 });
 
 test("customer API metrics records success and errors without payload bodies", async () => {
@@ -102,6 +107,7 @@ test("customer API metrics records success and errors without payload bodies", a
     await api.metrics.clear();
     assert.deepEqual(await api.metrics.list(), []);
   } finally {
+    await api.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -123,6 +129,7 @@ test("customer API serializes concurrent page metadata and markdown updates", as
     assert.equal(persisted.markdown.includes("Autosaved body."), true);
     assert.equal(persisted.meta.smallText, true);
   } finally {
+    await api.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -145,6 +152,7 @@ test("customer API keeps pages database caches scoped to the active workspace", 
     assert.deepEqual(bPages.map((page) => page.id), [bPage.meta.id]);
     assert.equal((await api.pages.get(bPage.meta.id)).meta.smallText, true);
   } finally {
+    await api.dispose();
     await rm(rootA, { recursive: true, force: true });
     await rm(rootB, { recursive: true, force: true });
   }
@@ -477,6 +485,7 @@ test("customer API supports workspace, pages, databases, row pages, attachments,
     assert.equal(manifestAfterPageDelete.pages.includes(disposablePage.meta.id), false);
     assert.notEqual(manifestAfterPageDelete.activePageId, disposablePage.meta.id);
   } finally {
+    await api.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });

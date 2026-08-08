@@ -51,7 +51,10 @@ async function runScenario({ artifactRoot, page, viewport }) {
   assert.equal(await tableScroll.evaluate((element) => element.scrollLeft), scrollLeft, "peek close should preserve table scroll");
   assert.equal(await row.getByLabel("Select row 1", { exact: true }).isChecked(), true, "peek close should preserve selection");
   assert.equal(await page.evaluate((rowId) => document.activeElement?.closest(`[data-row-id="${rowId}"]`) !== null, ROW_ID), true, "peek close should restore focus to the origin row");
-  await row.getByText(editedTitle, { exact: true }).waitFor();
+  await page.waitForFunction(({ rowId, title }) => {
+    const input = document.querySelector(`tr[data-row-id="${CSS.escape(rowId)}"] .title-cell-editor input`);
+    return input instanceof HTMLInputElement && input.value === title;
+  }, { rowId: ROW_ID, title: editedTitle }, { timeout: 8_000 });
 
   await selectView(table, page, "Smoke list");
   await page.locator(".list-view-row", { hasText: editedTitle }).click();
@@ -81,8 +84,7 @@ async function runScenario({ artifactRoot, page, viewport }) {
   await page.keyboard.press("Escape");
 
   await selectView(table, page, "Smoke calendar");
-  await page.getByRole("button", { name: "‹" }).click();
-  await page.getByRole("button", { name: "‹" }).click();
+  await navigateCalendarToRecordMonth(page, ROW_ID, "due_date");
   await page.locator(".calendar-cell-row", { hasText: editedTitle }).click();
   await page.locator(".row-page-peek-backdrop.center_peek .row-page-peek").waitFor();
   await page.keyboard.press("Escape");
@@ -128,6 +130,37 @@ async function runScenario({ artifactRoot, page, viewport }) {
     deepLinkFullPage: true,
     snapshot: { imagePath: snapshot.imagePath, metadataPath: snapshot.metadataPath }
   };
+}
+
+async function navigateCalendarToRecordMonth(page, rowId, dateFieldId) {
+  const target = await page.evaluate(async ({ databaseId, fieldId, targetRowId }) => {
+    const record = (await window.lotion.databases.get(databaseId)).records
+      .find((candidate) => String(candidate.id) === targetRowId);
+    const match = String(record?.[fieldId] ?? "").match(/^(\d{4})-(\d{1,2})/);
+    return match ? { year: Number(match[1]), month: Number(match[2]) } : null;
+  }, { databaseId: DATABASE_ID, fieldId: dateFieldId, targetRowId: rowId });
+  assert.ok(target, `calendar fixture ${rowId} must have a parseable ${dateFieldId}`);
+
+  const label = page.locator(".calendar-month-label").first();
+  const currentText = (await label.textContent({ timeout: 8_000 }))?.trim() ?? "";
+  const currentMatch = currentText.match(/^(\d{4})\s*年\s*(\d{1,2})\s*月$/);
+  assert.ok(currentMatch, `calendar month label must be parseable: ${currentText}`);
+  const currentIndex = Number(currentMatch[1]) * 12 + Number(currentMatch[2]) - 1;
+  const targetIndex = target.year * 12 + target.month - 1;
+  const direction = Math.sign(targetIndex - currentIndex);
+  const steps = Math.abs(targetIndex - currentIndex);
+  assert.ok(steps <= 120, `calendar fixture month is unexpectedly far away: ${JSON.stringify({ currentText, target })}`);
+
+  const navigationButton = page.locator(".calendar-nav").nth(direction < 0 ? 0 : 1);
+  for (let step = 0; step < steps; step += 1) {
+    const previousText = (await label.textContent())?.trim() ?? "";
+    await navigationButton.click();
+    await page.waitForFunction(
+      (previousLabel) => document.querySelector(".calendar-month-label")?.textContent?.trim() !== previousLabel,
+      previousText,
+      { timeout: 8_000 }
+    );
+  }
 }
 
 async function ensureViews(page) {

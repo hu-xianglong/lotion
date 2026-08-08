@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/markdown-preview-selected-source-wide.png",
-    "sha256": "f19d3068fcfe359f925a439554f685e754c5b1677e72699adc01a90d5c41cee6",
+    "sha256": "268b46dd4cb8806babf060777ec9b85d78e944956e0ce768d1e659f4e27550ae",
     "width": 1480,
     "height": 843
   },
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

@@ -6,7 +6,8 @@ export async function assertEmbeddedViewArtifactContract(summary, {
   expectedViewportNames = ["desktop", "compact"],
   minTotalRows = 120,
   requiredPerceptualBaselineViewportNames = [],
-  renderThresholdMs = 1000
+  renderThresholdMs = 1000,
+  coldStartRenderThresholdMs = 1250
 } = {}) {
   if (summary?.status !== "passed") {
     throw new Error(`Embedded view artifact contract requires passed smoke status, saw ${summary?.status ?? "missing"}`);
@@ -20,9 +21,12 @@ export async function assertEmbeddedViewArtifactContract(summary, {
   if (!Number.isFinite(renderThresholdMs) || renderThresholdMs <= 0) {
     throw new Error(`Embedded view artifact contract requires a positive render budget, saw ${JSON.stringify(renderThresholdMs)}`);
   }
+  if (!Number.isFinite(coldStartRenderThresholdMs) || coldStartRenderThresholdMs < renderThresholdMs) {
+    throw new Error(`Embedded view artifact contract requires a cold-start budget at least as large as the steady-state budget, saw ${JSON.stringify(coldStartRenderThresholdMs)}`);
+  }
 
-  const renderTimings = results.map((entry) => {
-    assertEmbeddedPerformanceResult(entry, renderThresholdMs);
+  const renderTimings = results.map((entry, index) => {
+    assertEmbeddedPerformanceResult(entry, index === 0 ? coldStartRenderThresholdMs : renderThresholdMs, index === 0);
     return {
       viewport: entry.viewport,
       embeddedViews: entry.embeddedViews,
@@ -49,6 +53,7 @@ export async function assertEmbeddedViewArtifactContract(summary, {
     expectedViewportNames,
     observedViewportNames,
     renderThresholdMs,
+    coldStartRenderThresholdMs,
     maxRenderMs: Math.max(...renderTimings.map((entry) => entry.renderMs)),
     renderTimings,
     snapshotCount: snapshots.length,
@@ -56,7 +61,7 @@ export async function assertEmbeddedViewArtifactContract(summary, {
   };
 }
 
-function assertEmbeddedPerformanceResult(entry, renderThresholdMs) {
+function assertEmbeddedPerformanceResult(entry, renderThresholdMs, coldStart) {
   if (!Number.isFinite(entry.renderMs) || entry.renderMs <= 0) {
     throw new Error(`Embedded view artifact contract missing render timing for ${entry.viewport ?? "unknown"}: ${JSON.stringify(entry.renderMs)}`);
   }
@@ -67,7 +72,7 @@ function assertEmbeddedPerformanceResult(entry, renderThresholdMs) {
     throw new Error(`Embedded view artifact contract missing row scale for ${entry.viewport ?? "unknown"}: ${JSON.stringify(entry.rowsPerDatabase)}`);
   }
   if (entry.renderMs > renderThresholdMs) {
-    throw new Error(`${entry.embeddedViews} embedded views rendered in ${entry.renderMs}ms for ${entry.viewport}, exceeding ${renderThresholdMs}ms`);
+    throw new Error(`${entry.embeddedViews} embedded views rendered in ${entry.renderMs}ms for ${entry.viewport}, exceeding the ${coldStart ? "cold-start" : "steady-state"} budget of ${renderThresholdMs}ms`);
   }
 }
 

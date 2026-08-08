@@ -9,7 +9,7 @@
   },
   "image": {
     "path": "test/baselines/production-visual/notion-import-command-modal-compact.png",
-    "sha256": "482e88a9455050342a2d7bdbd199dbbd5928ab0fb7e2ea2a21df38485adadde0",
+    "sha256": "bc4f689ba0bd980ce801d02a5955dc23295ba35c6a0dfc3fae476490e6f276d4",
     "width": 760,
     "height": 650
   },
@@ -28,6 +28,6 @@
       }
     ]
   },
-  "verifiedAt": "2026-08-05",
-  "sourceTask": "tasks/done/notion-import-rounded-corner-visual-baseline-determinism.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

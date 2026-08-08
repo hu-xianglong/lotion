@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/advanced-search-stale-results-compact.png",
-    "sha256": "637ee115c2b57498279a9b931247e2c7359bcdeb106d78aded0c5dabd1d50fa3",
-    "width": 822,
-    "height": 650
+    "sha256": "84237b80a57ac8883cd2528f2984ac44fb3e74c3dc92272833dfc057abb117c1",
+    "width": 811,
+    "height": 672
   },
   "comparison": {
     "threshold": 0.1,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/production-visual-real-workspace-nightly-aggregation.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

@@ -9,9 +9,9 @@
   },
   "image": {
     "path": "test/baselines/production-visual/page-history-restore-preview-wide.png",
-    "sha256": "0494ceb2f488d3313a3a1bc4afb0048f2c316b50cabed312273e74353bc9db81",
+    "sha256": "1ee9c45b8a8a7a6730f2aab4681f6900b696ca4290f52352797dc70ea9e354d9",
     "width": 712,
-    "height": 489
+    "height": 486
   },
   "comparison": {
     "threshold": 0.2,
@@ -19,6 +19,6 @@
     "maxDiffPixels": 0,
     "maxDiffRatio": 0
   },
-  "verifiedAt": "2026-07-23",
-  "sourceTask": "tasks/done/page-cover-offset-transactional-recovery.md"
+  "verifiedAt": "2026-08-07",
+  "sourceTask": "tasks/done/restore-clean-checkout-quality-gate.md"
 }

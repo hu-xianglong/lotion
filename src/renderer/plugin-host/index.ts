@@ -182,6 +182,9 @@ function openPluginModal<T>(options: ModalOptions<T>): Promise<T | null> {
 
     const dialog = document.createElement("section");
     dialog.className = "plugin-modal";
+    if (options.className) {
+      dialog.classList.add(...options.className.split(/\s+/).filter(Boolean));
+    }
     dialog.setAttribute("role", "dialog");
     dialog.setAttribute("aria-modal", "true");
     dialog.tabIndex = -1;
